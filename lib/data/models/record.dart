@@ -1,4 +1,12 @@
-import 'package:flutter/foundation.dart';
+bool _listEquals<T>(List<T>? a, List<T>? b) {
+  if (a == null) return b == null;
+  if (b == null || a.length != b.length) return false;
+  if (identical(a, b)) return true;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
 
 class Record {
   final String id;
@@ -93,7 +101,7 @@ class Record {
           timezoneId == other.timezoneId &&
           createdAtEpochMs == other.createdAtEpochMs &&
           updatedAtEpochMs == other.updatedAtEpochMs &&
-          listEquals(tagIds, other.tagIds);
+          _listEquals(tagIds, other.tagIds);
 
   @override
   int get hashCode =>

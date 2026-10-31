@@ -1,8 +1,10 @@
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import '../models/models.dart';
+
+const bool _kIsWeb = bool.fromEnvironment('dart.library.js_util') ||
+    bool.fromEnvironment('dart.library.js_interop');
 
 class TempoDatabase {
   final Database _db;
@@ -107,7 +109,7 @@ CREATE TABLE IF NOT EXISTS tombstones (
   static DatabaseFactory _resolveDatabaseFactory(DatabaseFactory? factory) {
     if (factory != null) return factory;
 
-    if (!kIsWeb &&
+    if (!_kIsWeb &&
         (Platform.isMacOS || Platform.isLinux || Platform.isWindows)) {
       sqfliteFfiInit();
       return databaseFactoryFfi;
