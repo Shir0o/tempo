@@ -16,6 +16,7 @@ A locked product and technical architecture specification (`PRODUCT.md`, `CONTEX
 - [03: SQLite Schema and Timer State Machine](issues/03-local-sqlite-schema-and-state-machine.md): Normalized relational schema with monotonic UTC epoch arithmetic, 60-second heartbeat crash recovery, strict single-active-timer semantics via atomic `SWITCH`, and dedicated `tombstones` table for sync hygiene.
 - [04: Wear OS UI, Tile, and Complication Spec](issues/04-wear-os-ui-and-tile-spec.md): Eliminate discovery friction via watch-face complication shortcuts and a 3-slot smart tile; protect against false touches using a 3s Undo window and 600ms hold-to-stop; prevent notification suppression via Action-and-Exit auto-finishing.
 - [05: Desktop macOS Menu Bar & OS Automation](issues/05-desktop-macos-menu-bar-and-automation-spec.md): Low-profile `NSStatusItem` displaying active time; keyboard-navigable Quick Popover with `1`-`9` hotkeys; universal `timetracker://` deep link bus for peer apps (`bnpb`), Raycast, macOS Shortcuts, and Android Tasker intents.
+- [06: MCP Server Tools and Privacy Guardrails](issues/06-mcp-server-tools-and-privacy-guardrails-spec.md): Offline stdio MCP CLI on macOS connecting directly to SQLite; deterministic `PIISanitizer` redacting contact names following `w/` and `with ` with anonymous tokens; rich analytical tools with write operations disabled by default.
 
 
 ## Not yet specified

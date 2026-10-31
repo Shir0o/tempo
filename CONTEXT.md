@@ -50,6 +50,10 @@ _Avoid_: Menu window, tray dialog, popup
 The cross-platform `timetracker://` URL scheme and Android Intent bridge enabling peer apps and system automations to start, stop, and query timers.
 _Avoid_: Custom scheme, IPC handler, command URL
 
+**PIISanitizer**:
+A deterministic redaction engine within the MCPBridge that pseudonymizes contact names and masks personal metadata before AI consumption.
+_Avoid_: Anonymizer, filter, redactor
+
 ### Integrations & Interoperability
 
 **NameMarker**:
