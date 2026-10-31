@@ -103,29 +103,31 @@ void main() {
   });
 
   group('CSV Schema Formatting & STT Parity', () {
-    test('formats header exactly matching 8-column Simple Time Tracker schema',
-        () async {
-      final engine = CsvExportEngine(
-        database: db,
-        targetFile: targetFile,
-        epochToDateTime: fixedEpochToDateTime,
-      );
-      addTearDown(engine.dispose);
+    test(
+      'formats header exactly matching 8-column Simple Time Tracker schema',
+      () async {
+        final engine = CsvExportEngine(
+          database: db,
+          targetFile: targetFile,
+          epochToDateTime: fixedEpochToDateTime,
+        );
+        addTearDown(engine.dispose);
 
-      final csvString = await engine.generateCsvString();
-      final lines = csvString.split('\n');
+        final csvString = await engine.generateCsvString();
+        final lines = csvString.split('\n');
 
-      expect(lines.first, equals(CsvExportEngine.csvHeader));
-      expect(
-        lines.first,
-        equals(
-          'activity name,time started,time ended,comment,categories,record tags,duration,duration minutes',
-        ),
-      );
-      // Header-only output ends with single empty trailing entry from split('\n')
-      expect(lines.length, equals(2));
-      expect(lines[1], isEmpty);
-    });
+        expect(lines.first, equals(CsvExportEngine.csvHeader));
+        expect(
+          lines.first,
+          equals(
+            'activity name,time started,time ended,comment,categories,record tags,duration,duration minutes',
+          ),
+        );
+        // Header-only output ends with single empty trailing entry from split('\n')
+        expect(lines.length, equals(2));
+        expect(lines[1], isEmpty);
+      },
+    );
 
     test('formats duration with unpadded integers matching STT quirks', () {
       // 0 ms -> 0:0:0
@@ -153,260 +155,276 @@ void main() {
       expect(CsvExportEngine.formatDurationMinutes(90187000), equals(1503));
     });
 
-    test('escapes and quotes string columns while keeping numeric/timestamps raw',
-        () async {
-      // 2025-09-17 11:46:37 UTC = 1758109597000 ms
-      // 1 hour later = 1758113197000 ms
-      final record = Record(
-        id: 'rec-1',
-        activityId: testActivityQuotes.id,
-        startedAtEpochMs: 1758109597000,
-        endedAtEpochMs: 1758113197000,
-        durationMs: 3600000,
-        comment: 'Discussed "Architecture" & plans\nw/ Abel',
-        timezoneId: 'UTC',
-        createdAtEpochMs: 1758113197000,
-        updatedAtEpochMs: 1758113197000,
-        tagIds: [tagContact.id, tagClientQuotes.id],
-      );
-      await db.insertRecord(record);
+    test(
+      'escapes and quotes string columns while keeping numeric/timestamps raw',
+      () async {
+        // 2025-09-17 11:46:37 UTC = 1758109597000 ms
+        // 1 hour later = 1758113197000 ms
+        final record = Record(
+          id: 'rec-1',
+          activityId: testActivityQuotes.id,
+          startedAtEpochMs: 1758109597000,
+          endedAtEpochMs: 1758113197000,
+          durationMs: 3600000,
+          comment: 'Discussed "Architecture" & plans\nw/ Abel',
+          timezoneId: 'UTC',
+          createdAtEpochMs: 1758113197000,
+          updatedAtEpochMs: 1758113197000,
+          tagIds: [tagContact.id, tagClientQuotes.id],
+        );
+        await db.insertRecord(record);
 
-      final engine = CsvExportEngine(
-        database: db,
-        targetFile: targetFile,
-        epochToDateTime: fixedEpochToDateTime,
-      );
-      addTearDown(engine.dispose);
+        final engine = CsvExportEngine(
+          database: db,
+          targetFile: targetFile,
+          epochToDateTime: fixedEpochToDateTime,
+        );
+        addTearDown(engine.dispose);
 
-      final csvString = await engine.generateCsvString();
+        final csvString = await engine.generateCsvString();
 
-      // Using RFC 4180 CSV decoder to inspect decoded fields
-      final rows = Csv(autoDetect: false).decode(csvString);
-      expect(rows.length, equals(2));
+        // Using RFC 4180 CSV decoder to inspect decoded fields
+        final rows = Csv(autoDetect: false).decode(csvString);
+        expect(rows.length, equals(2));
 
-      final dataRow = rows[1];
-      expect(dataRow[0], equals('Reviewing "Deep Work"'));
-      expect(dataRow[1], equals('2025-09-17 11:46:37'));
-      expect(dataRow[2], equals('2025-09-17 12:46:37'));
-      expect(dataRow[3], equals('Discussed "Architecture" & plans\nw/ Abel'));
-      expect(dataRow[4], equals('')); // Categories empty
-      expect(dataRow[5], equals('Contact, VIP "Client"'));
-      expect(dataRow[6], equals('1:0:0'));
-      expect(dataRow[7], equals('60'));
+        final dataRow = rows[1];
+        expect(dataRow[0], equals('Reviewing "Deep Work"'));
+        expect(dataRow[1], equals('2025-09-17 11:46:37'));
+        expect(dataRow[2], equals('2025-09-17 12:46:37'));
+        expect(dataRow[3], equals('Discussed "Architecture" & plans\nw/ Abel'));
+        expect(dataRow[4], equals('')); // Categories empty
+        expect(dataRow[5], equals('Contact, VIP "Client"'));
+        expect(dataRow[6], equals('1:0:0'));
+        expect(dataRow[7], equals('60'));
 
-      // Check exact raw serial representation of double quotes
-      expect(
-        csvString,
-        contains(
-          '"Reviewing ""Deep Work""",2025-09-17 11:46:37,2025-09-17 12:46:37,"Discussed ""Architecture"" & plans\nw/ Abel","","Contact, VIP ""Client""",1:0:0,60\n',
-        ),
-      );
-    });
+        // Check exact raw serial representation of double quotes
+        expect(
+          csvString,
+          contains(
+            '"Reviewing ""Deep Work""",2025-09-17 11:46:37,2025-09-17 12:46:37,"Discussed ""Architecture"" & plans\nw/ Abel","","Contact, VIP ""Client""",1:0:0,60\n',
+          ),
+        );
+      },
+    );
 
-    test('serializes empty comments and empty tags as pair of double quotes',
-        () async {
-      final record = Record(
-        id: 'rec-empty',
-        activityId: testActivityCoding.id,
-        startedAtEpochMs: 1758109597000,
-        endedAtEpochMs: 1758110746000,
-        durationMs: 1149000, // 19m 9s
-        comment: '',
-        timezoneId: 'UTC',
-        createdAtEpochMs: 1758110746000,
-        updatedAtEpochMs: 1758110746000,
-        tagIds: const [],
-      );
-      await db.insertRecord(record);
+    test(
+      'serializes empty comments and empty tags as pair of double quotes',
+      () async {
+        final record = Record(
+          id: 'rec-empty',
+          activityId: testActivityCoding.id,
+          startedAtEpochMs: 1758109597000,
+          endedAtEpochMs: 1758110746000,
+          durationMs: 1149000, // 19m 9s
+          comment: '',
+          timezoneId: 'UTC',
+          createdAtEpochMs: 1758110746000,
+          updatedAtEpochMs: 1758110746000,
+          tagIds: const [],
+        );
+        await db.insertRecord(record);
 
-      final engine = CsvExportEngine(
-        database: db,
-        targetFile: targetFile,
-        epochToDateTime: fixedEpochToDateTime,
-      );
-      addTearDown(engine.dispose);
+        final engine = CsvExportEngine(
+          database: db,
+          targetFile: targetFile,
+          epochToDateTime: fixedEpochToDateTime,
+        );
+        addTearDown(engine.dispose);
 
-      final csvString = await engine.generateCsvString();
-      expect(
-        csvString,
-        contains('"Coding",2025-09-17 11:46:37,2025-09-17 12:05:46,"","","",0:19:9,19\n'),
-      );
-    });
+        final csvString = await engine.generateCsvString();
+        expect(
+          csvString,
+          contains(
+            '"Coding",2025-09-17 11:46:37,2025-09-17 12:05:46,"","","",0:19:9,19\n',
+          ),
+        );
+      },
+    );
 
-    test('orders exported records chronologically by timeStarted ascending',
-        () async {
-      final recordLater = Record(
-        id: 'rec-later',
-        activityId: testActivityCoding.id,
-        startedAtEpochMs: 1758200000000,
-        endedAtEpochMs: 1758203600000,
-        durationMs: 3600000,
-        comment: 'Later session',
-        timezoneId: 'UTC',
-        createdAtEpochMs: 1758203600000,
-        updatedAtEpochMs: 1758203600000,
-      );
-      final recordEarlier = Record(
-        id: 'rec-earlier',
-        activityId: testActivityLunch.id,
-        startedAtEpochMs: 1758100000000,
-        endedAtEpochMs: 1758103600000,
-        durationMs: 3600000,
-        comment: 'Earlier session',
-        timezoneId: 'UTC',
-        createdAtEpochMs: 1758103600000,
-        updatedAtEpochMs: 1758103600000,
-      );
+    test(
+      'orders exported records chronologically by timeStarted ascending',
+      () async {
+        final recordLater = Record(
+          id: 'rec-later',
+          activityId: testActivityCoding.id,
+          startedAtEpochMs: 1758200000000,
+          endedAtEpochMs: 1758203600000,
+          durationMs: 3600000,
+          comment: 'Later session',
+          timezoneId: 'UTC',
+          createdAtEpochMs: 1758203600000,
+          updatedAtEpochMs: 1758203600000,
+        );
+        final recordEarlier = Record(
+          id: 'rec-earlier',
+          activityId: testActivityLunch.id,
+          startedAtEpochMs: 1758100000000,
+          endedAtEpochMs: 1758103600000,
+          durationMs: 3600000,
+          comment: 'Earlier session',
+          timezoneId: 'UTC',
+          createdAtEpochMs: 1758103600000,
+          updatedAtEpochMs: 1758103600000,
+        );
 
-      // Insert later record first into database
-      await db.insertRecord(recordLater);
-      await db.insertRecord(recordEarlier);
+        // Insert later record first into database
+        await db.insertRecord(recordLater);
+        await db.insertRecord(recordEarlier);
 
-      final engine = CsvExportEngine(
-        database: db,
-        targetFile: targetFile,
-        epochToDateTime: fixedEpochToDateTime,
-      );
-      addTearDown(engine.dispose);
+        final engine = CsvExportEngine(
+          database: db,
+          targetFile: targetFile,
+          epochToDateTime: fixedEpochToDateTime,
+        );
+        addTearDown(engine.dispose);
 
-      final csvString = await engine.generateCsvString();
-      final rows = Csv(autoDetect: false).decode(csvString);
+        final csvString = await engine.generateCsvString();
+        final rows = Csv(autoDetect: false).decode(csvString);
 
-      expect(rows.length, equals(3)); // Header + 2 rows
-      expect(rows[1][0], equals('Lunch')); // Earlier first
-      expect(rows[2][0], equals('Coding')); // Later second
-    });
+        expect(rows.length, equals(3)); // Header + 2 rows
+        expect(rows[1][0], equals('Lunch')); // Earlier first
+        expect(rows[2][0], equals('Coding')); // Later second
+      },
+    );
   });
 
   group('BNPB Parser Compatibility & SHA-256 Fingerprint', () {
-    test('generates CSV fully compatible with BNPB TimeTrackerParser ingestion',
-        () async {
-      // Record 1: Tagged with "Contact" -> Should be ingested by BNPB
-      final contactRecord = Record(
-        id: 'rec-contact',
-        activityId: testActivityLunch.id,
-        startedAtEpochMs: 1758109597000,
-        endedAtEpochMs: 1758113197000,
-        durationMs: 3600000,
-        comment: 'w/ Abel',
-        timezoneId: 'UTC',
-        createdAtEpochMs: 1758113197000,
-        updatedAtEpochMs: 1758113197000,
-        tagIds: [tagContact.id],
-      );
+    test(
+      'generates CSV fully compatible with BNPB TimeTrackerParser ingestion',
+      () async {
+        // Record 1: Tagged with "Contact" -> Should be ingested by BNPB
+        final contactRecord = Record(
+          id: 'rec-contact',
+          activityId: testActivityLunch.id,
+          startedAtEpochMs: 1758109597000,
+          endedAtEpochMs: 1758113197000,
+          durationMs: 3600000,
+          comment: 'w/ Abel',
+          timezoneId: 'UTC',
+          createdAtEpochMs: 1758113197000,
+          updatedAtEpochMs: 1758113197000,
+          tagIds: [tagContact.id],
+        );
 
-      // Record 2: Not tagged with "Contact" -> Skipped by BNPB
-      final nonContactRecord = Record(
-        id: 'rec-solo',
-        activityId: testActivityCoding.id,
-        startedAtEpochMs: 1758200000000,
-        endedAtEpochMs: 1758203600000,
-        durationMs: 3600000,
-        comment: 'Solo work without tags',
-        timezoneId: 'UTC',
-        createdAtEpochMs: 1758203600000,
-        updatedAtEpochMs: 1758203600000,
-        tagIds: const [],
-      );
+        // Record 2: Not tagged with "Contact" -> Skipped by BNPB
+        final nonContactRecord = Record(
+          id: 'rec-solo',
+          activityId: testActivityCoding.id,
+          startedAtEpochMs: 1758200000000,
+          endedAtEpochMs: 1758203600000,
+          durationMs: 3600000,
+          comment: 'Solo work without tags',
+          timezoneId: 'UTC',
+          createdAtEpochMs: 1758203600000,
+          updatedAtEpochMs: 1758203600000,
+          tagIds: const [],
+        );
 
-      // Record 3: Multi-tagged with "Contact, Important" and "with " marker
-      final meetingRecord = Record(
-        id: 'rec-meeting',
-        activityId: testActivityLunch.id,
-        startedAtEpochMs: 1758300000000,
-        endedAtEpochMs: 1758303600000,
-        durationMs: 3600000,
-        comment: 'Kickoff with Alice Smith',
-        timezoneId: 'UTC',
-        createdAtEpochMs: 1758303600000,
-        updatedAtEpochMs: 1758303600000,
-        tagIds: [tagContact.id, tagImportant.id],
-      );
+        // Record 3: Multi-tagged with "Contact, Important" and "with " marker
+        final meetingRecord = Record(
+          id: 'rec-meeting',
+          activityId: testActivityLunch.id,
+          startedAtEpochMs: 1758300000000,
+          endedAtEpochMs: 1758303600000,
+          durationMs: 3600000,
+          comment: 'Kickoff with Alice Smith',
+          timezoneId: 'UTC',
+          createdAtEpochMs: 1758303600000,
+          updatedAtEpochMs: 1758303600000,
+          tagIds: [tagContact.id, tagImportant.id],
+        );
 
-      await db.insertRecord(contactRecord);
-      await db.insertRecord(nonContactRecord);
-      await db.insertRecord(meetingRecord);
+        await db.insertRecord(contactRecord);
+        await db.insertRecord(nonContactRecord);
+        await db.insertRecord(meetingRecord);
 
-      final engine = CsvExportEngine(
-        database: db,
-        targetFile: targetFile,
-        epochToDateTime: fixedEpochToDateTime,
-      );
-      addTearDown(engine.dispose);
+        final engine = CsvExportEngine(
+          database: db,
+          targetFile: targetFile,
+          epochToDateTime: fixedEpochToDateTime,
+        );
+        addTearDown(engine.dispose);
 
-      final csvContent = await engine.generateCsvString();
+        final csvContent = await engine.generateCsvString();
 
-      // Simulate BNPB's exact parsing logic from TimeTrackerParser
-      final rows = Csv(autoDetect: false).decode(csvContent);
-      expect(rows, isNotEmpty);
+        // Simulate BNPB's exact parsing logic from TimeTrackerParser
+        final rows = Csv(autoDetect: false).decode(csvContent);
+        expect(rows, isNotEmpty);
 
-      final headerRow =
-          rows.first.map((e) => e.toString().trim().toLowerCase()).toList();
-      final activityIdx = headerRow.indexOf('activity name');
-      final startIdx = headerRow.indexOf('time started');
-      final commentIdx = headerRow.indexOf('comment');
-      final tagsIdx = headerRow.indexOf('record tags');
-      final durationMinIdx = headerRow.indexOf('duration minutes');
+        final headerRow = rows.first
+            .map((e) => e.toString().trim().toLowerCase())
+            .toList();
+        final activityIdx = headerRow.indexOf('activity name');
+        final startIdx = headerRow.indexOf('time started');
+        final commentIdx = headerRow.indexOf('comment');
+        final tagsIdx = headerRow.indexOf('record tags');
+        final durationMinIdx = headerRow.indexOf('duration minutes');
 
-      expect(activityIdx, isNot(-1));
-      expect(startIdx, isNot(-1));
-      expect(tagsIdx, isNot(-1));
-      expect(commentIdx, isNot(-1));
-      expect(durationMinIdx, isNot(-1));
+        expect(activityIdx, isNot(-1));
+        expect(startIdx, isNot(-1));
+        expect(tagsIdx, isNot(-1));
+        expect(commentIdx, isNot(-1));
+        expect(durationMinIdx, isNot(-1));
 
-      final stagedCandidates = <Map<String, dynamic>>[];
-      for (var i = 1; i < rows.length; i++) {
-        final row = rows[i];
-        final tags = row[tagsIdx].toString();
-        if (!tags.toLowerCase().contains('contact')) {
-          continue; // Skipped, exactly like BNPB
+        final stagedCandidates = <Map<String, dynamic>>[];
+        for (var i = 1; i < rows.length; i++) {
+          final row = rows[i];
+          final tags = row[tagsIdx].toString();
+          if (!tags.toLowerCase().contains('contact')) {
+            continue; // Skipped, exactly like BNPB
+          }
+
+          final activityName = row[activityIdx].toString().trim();
+          final timeStartedStr = row[startIdx].toString().trim();
+          final comment = row[commentIdx].toString().trim();
+          final durationStr = row[durationMinIdx].toString().trim();
+          final durationMinutes = int.tryParse(durationStr);
+
+          // Deterministic SHA-256 fingerprint matching BNPB:
+          final raw =
+              '$timeStartedStr|${durationMinutes ?? ''}|$activityName|$comment';
+          final fingerprint = sha256.convert(utf8.encode(raw)).toString();
+
+          stagedCandidates.add({
+            'activityName': activityName,
+            'timeStarted': timeStartedStr,
+            'comment': comment,
+            'durationMinutes': durationMinutes,
+            'fingerprint': fingerprint,
+          });
         }
 
-        final activityName = row[activityIdx].toString().trim();
-        final timeStartedStr = row[startIdx].toString().trim();
-        final comment = row[commentIdx].toString().trim();
-        final durationStr = row[durationMinIdx].toString().trim();
-        final durationMinutes = int.tryParse(durationStr);
+        // Exactly 2 of the 3 records should be staged
+        expect(stagedCandidates.length, equals(2));
 
-        // Deterministic SHA-256 fingerprint matching BNPB:
-        final raw =
-            '$timeStartedStr|${durationMinutes ?? ''}|$activityName|$comment';
-        final fingerprint = sha256.convert(utf8.encode(raw)).toString();
+        // Candidate 1: Lunch w/ Abel
+        expect(stagedCandidates[0]['activityName'], equals('Lunch'));
+        expect(stagedCandidates[0]['comment'], equals('w/ Abel'));
+        expect(
+          stagedCandidates[0]['timeStarted'],
+          equals('2025-09-17 11:46:37'),
+        );
+        expect(stagedCandidates[0]['durationMinutes'], equals(60));
 
-        stagedCandidates.add({
-          'activityName': activityName,
-          'timeStarted': timeStartedStr,
-          'comment': comment,
-          'durationMinutes': durationMinutes,
-          'fingerprint': fingerprint,
-        });
-      }
+        final expectedFingerprint1 = sha256
+            .convert(utf8.encode('2025-09-17 11:46:37|60|Lunch|w/ Abel'))
+            .toString();
+        expect(
+          stagedCandidates[0]['fingerprint'],
+          equals(expectedFingerprint1),
+        );
 
-      // Exactly 2 of the 3 records should be staged
-      expect(stagedCandidates.length, equals(2));
+        // Candidate 2: Lunch Kickoff with Alice Smith
+        expect(stagedCandidates[1]['activityName'], equals('Lunch'));
+        expect(
+          stagedCandidates[1]['comment'],
+          equals('Kickoff with Alice Smith'),
+        );
+        expect(stagedCandidates[1]['durationMinutes'], equals(60));
+      },
+    );
 
-      // Candidate 1: Lunch w/ Abel
-      expect(stagedCandidates[0]['activityName'], equals('Lunch'));
-      expect(stagedCandidates[0]['comment'], equals('w/ Abel'));
-      expect(stagedCandidates[0]['timeStarted'], equals('2025-09-17 11:46:37'));
-      expect(stagedCandidates[0]['durationMinutes'], equals(60));
-
-      final expectedFingerprint1 = sha256
-          .convert(utf8.encode('2025-09-17 11:46:37|60|Lunch|w/ Abel'))
-          .toString();
-      expect(stagedCandidates[0]['fingerprint'], equals(expectedFingerprint1));
-
-      // Candidate 2: Lunch Kickoff with Alice Smith
-      expect(stagedCandidates[1]['activityName'], equals('Lunch'));
-      expect(
-        stagedCandidates[1]['comment'],
-        equals('Kickoff with Alice Smith'),
-      );
-      expect(stagedCandidates[1]['durationMinutes'], equals(60));
-    });
-
-    test('reproducible SHA-256 deduplication fingerprint remains identical across exports',
-        () async {
+    test('reproducible SHA-256 deduplication fingerprint remains identical across exports', () async {
       final record = Record(
         id: 'rec-hash-check',
         activityId: testActivityLunch.id,
@@ -451,55 +469,56 @@ void main() {
   });
 
   group('Atomic Write-Flush-Rename Pipeline', () {
-    test('writes to sibling temporary file and atomically renames to target',
-        () async {
-      final record = Record(
-        id: 'rec-atomic',
-        activityId: testActivityCoding.id,
-        startedAtEpochMs: 1758109597000,
-        endedAtEpochMs: 1758113197000,
-        durationMs: 3600000,
-        comment: 'Atomic test',
-        timezoneId: 'UTC',
-        createdAtEpochMs: 1758113197000,
-        updatedAtEpochMs: 1758113197000,
-      );
-      await db.insertRecord(record);
+    test(
+      'writes to sibling temporary file and atomically renames to target',
+      () async {
+        final record = Record(
+          id: 'rec-atomic',
+          activityId: testActivityCoding.id,
+          startedAtEpochMs: 1758109597000,
+          endedAtEpochMs: 1758113197000,
+          durationMs: 3600000,
+          comment: 'Atomic test',
+          timezoneId: 'UTC',
+          createdAtEpochMs: 1758113197000,
+          updatedAtEpochMs: 1758113197000,
+        );
+        await db.insertRecord(record);
 
-      var generatedUuid = 'test-uuid-1234';
-      final engine = CsvExportEngine(
-        database: db,
-        targetFile: targetFile,
-        generateUuid: () => generatedUuid,
-        epochToDateTime: fixedEpochToDateTime,
-      );
-      addTearDown(engine.dispose);
+        var generatedUuid = 'test-uuid-1234';
+        final engine = CsvExportEngine(
+          database: db,
+          targetFile: targetFile,
+          generateUuid: () => generatedUuid,
+          epochToDateTime: fixedEpochToDateTime,
+        );
+        addTearDown(engine.dispose);
 
-      final exported = await engine.exportImmediately();
+        final exported = await engine.exportImmediately();
 
-      expect(await exported.exists(), isTrue);
-      expect(exported.path, equals(targetFile.path));
+        expect(await exported.exists(), isTrue);
+        expect(exported.path, equals(targetFile.path));
 
-      // Sibling temp file must NOT exist after successful atomic rename
-      final expectedTempPath = p.join(
-        tempDir.path,
-        '.${CsvExportEngine.defaultFileName}.tmp.$generatedUuid',
-      );
-      expect(await File(expectedTempPath).exists(), isFalse);
+        // Sibling temp file must NOT exist after successful atomic rename
+        final expectedTempPath = p.join(
+          tempDir.path,
+          '.${CsvExportEngine.defaultFileName}.tmp.$generatedUuid',
+        );
+        expect(await File(expectedTempPath).exists(), isFalse);
 
-      // Verify no other temporary files were left behind
-      final tempFiles = tempDir
-          .listSync()
-          .where((f) => p.basename(f.path).startsWith('.'))
-          .toList();
-      expect(tempFiles, isEmpty);
+        // Verify no other temporary files were left behind
+        final tempFiles = tempDir
+            .listSync()
+            .where((f) => p.basename(f.path).startsWith('.'))
+            .toList();
+        expect(tempFiles, isEmpty);
 
-      final content = await exported.readAsString();
-      expect(content, contains('"Coding",2025-09-17 11:46:37'));
-    });
+        final content = await exported.readAsString();
+        expect(content, contains('"Coding",2025-09-17 11:46:37'));
+      },
+    );
 
-    test('atomically replaces pre-existing file without leaving stale or corrupted bytes',
-        () async {
+    test('atomically replaces pre-existing file without leaving stale or corrupted bytes', () async {
       // Pre-populate target file with stale/corrupted content
       await targetFile.writeAsString('CORRUPT_STALE_DATA_LINE_1\nLINE_2');
       expect(await targetFile.readAsString(), contains('CORRUPT_STALE_DATA'));
@@ -591,47 +610,51 @@ void main() {
   });
 
   group('Debounce & Mutex Concurrency Control', () {
-    test('coalesces multiple rapid scheduleExport calls into a single write',
-        () async {
-      final engine = CsvExportEngine(
-        database: db,
-        targetFile: targetFile,
-        debounceDuration: const Duration(milliseconds: 100),
-        epochToDateTime: fixedEpochToDateTime,
-      );
-      addTearDown(engine.dispose);
+    test(
+      'coalesces multiple rapid scheduleExport calls into a single write',
+      () async {
+        final engine = CsvExportEngine(
+          database: db,
+          targetFile: targetFile,
+          debounceDuration: const Duration(milliseconds: 100),
+          epochToDateTime: fixedEpochToDateTime,
+        );
+        addTearDown(engine.dispose);
 
-      // Trigger multiple rapid schedule calls
-      final f1 = engine.scheduleExport();
-      final f2 = engine.scheduleExport();
-      final f3 = engine.scheduleExport();
+        // Trigger multiple rapid schedule calls
+        final f1 = engine.scheduleExport();
+        final f2 = engine.scheduleExport();
+        final f3 = engine.scheduleExport();
 
-      expect(engine.isExportScheduled, isTrue);
+        expect(engine.isExportScheduled, isTrue);
 
-      // All callers awaiting scheduleExport should resolve to the same exported File
-      final results = await Future.wait([f1, f2, f3]);
-      expect(results[0].path, equals(targetFile.path));
-      expect(results[1].path, equals(targetFile.path));
-      expect(results[2].path, equals(targetFile.path));
+        // All callers awaiting scheduleExport should resolve to the same exported File
+        final results = await Future.wait([f1, f2, f3]);
+        expect(results[0].path, equals(targetFile.path));
+        expect(results[1].path, equals(targetFile.path));
+        expect(results[2].path, equals(targetFile.path));
 
-      expect(engine.isExportScheduled, isFalse);
-      expect(await targetFile.exists(), isTrue);
-    });
+        expect(engine.isExportScheduled, isFalse);
+        expect(await targetFile.exists(), isTrue);
+      },
+    );
 
-    test('zero-delay debounce exports immediately without timer delay',
-        () async {
-      final engine = CsvExportEngine(
-        database: db,
-        targetFile: targetFile,
-        debounceDuration: Duration.zero,
-        epochToDateTime: fixedEpochToDateTime,
-      );
-      addTearDown(engine.dispose);
+    test(
+      'zero-delay debounce exports immediately without timer delay',
+      () async {
+        final engine = CsvExportEngine(
+          database: db,
+          targetFile: targetFile,
+          debounceDuration: Duration.zero,
+          epochToDateTime: fixedEpochToDateTime,
+        );
+        addTearDown(engine.dispose);
 
-      final file = await engine.scheduleExport();
-      expect(await file.exists(), isTrue);
-      expect(engine.isExportScheduled, isFalse);
-    });
+        final file = await engine.scheduleExport();
+        expect(await file.exists(), isTrue);
+        expect(engine.isExportScheduled, isFalse);
+      },
+    );
 
     test('exportImmediately cancels any pending debounced timer', () async {
       final engine = CsvExportEngine(
@@ -658,45 +681,46 @@ void main() {
   });
 
   group('TimerStateMachine Integration', () {
-    test('timer stop automatically triggers debounced export to target CSV',
-        () async {
-      final engine = CsvExportEngine(
-        database: db,
-        targetFile: targetFile,
-        debounceDuration: Duration.zero, // Zero-delay for synchronous test
-        epochToDateTime: fixedEpochToDateTime,
-      );
-      addTearDown(engine.dispose);
+    test(
+      'timer stop automatically triggers debounced export to target CSV',
+      () async {
+        final engine = CsvExportEngine(
+          database: db,
+          targetFile: targetFile,
+          debounceDuration: Duration.zero, // Zero-delay for synchronous test
+          epochToDateTime: fixedEpochToDateTime,
+        );
+        addTearDown(engine.dispose);
 
-      int mockTime = 1758109597000;
-      final sm = TimerStateMachine(
-        database: db,
-        csvExportEngine: engine,
-        nowUtcMs: () => mockTime,
-        generateId: () => 'sm-rec-1',
-        getTimezoneId: () => 'UTC',
-      );
-      addTearDown(sm.dispose);
+        int mockTime = 1758109597000;
+        final sm = TimerStateMachine(
+          database: db,
+          csvExportEngine: engine,
+          nowUtcMs: () => mockTime,
+          generateId: () => 'sm-rec-1',
+          getTimezoneId: () => 'UTC',
+        );
+        addTearDown(sm.dispose);
 
-      await sm.start(testActivityLunch.id, comment: 'w/ Abel');
+        await sm.start(testActivityLunch.id, comment: 'w/ Abel');
 
-      // Fast-forward 1 hour (3600000 ms)
-      mockTime += 3600000;
+        // Fast-forward 1 hour (3600000 ms)
+        mockTime += 3600000;
 
-      // Stop timer: triggers debounced export
-      final stoppedRecord = await sm.stop();
-      expect(stoppedRecord.id, equals('sm-rec-1'));
+        // Stop timer: triggers debounced export
+        final stoppedRecord = await sm.stop();
+        expect(stoppedRecord.id, equals('sm-rec-1'));
 
-      // Verify file was written immediately
-      expect(await targetFile.exists(), isTrue);
-      final content = await targetFile.readAsString();
-      expect(content, contains('"Lunch",2025-09-17 11:46:37'));
-      expect(content, contains('"w/ Abel"'));
-      expect(content, contains('1:0:0,60'));
-    });
+        // Verify file was written immediately
+        expect(await targetFile.exists(), isTrue);
+        final content = await targetFile.readAsString();
+        expect(content, contains('"Lunch",2025-09-17 11:46:37'));
+        expect(content, contains('"w/ Abel"'));
+        expect(content, contains('1:0:0,60'));
+      },
+    );
 
-    test('timer switchActivity automatically triggers debounced export of committed record',
-        () async {
+    test('timer switchActivity automatically triggers debounced export of committed record', () async {
       final engine = CsvExportEngine(
         database: db,
         targetFile: targetFile,
@@ -731,8 +755,7 @@ void main() {
       expect(content, contains('0:30:0,30'));
     });
 
-    test('crash recovery truncateToHeartbeat automatically triggers debounced export',
-        () async {
+    test('crash recovery truncateToHeartbeat automatically triggers debounced export', () async {
       final engine = CsvExportEngine(
         database: db,
         targetFile: targetFile,
@@ -777,36 +800,38 @@ void main() {
       expect(content, contains('1:0:0,60'));
     });
 
-    test('attachExportEngine dynamically binds engine to existing state machine',
-        () async {
-      final engine = CsvExportEngine(
-        database: db,
-        targetFile: targetFile,
-        debounceDuration: Duration.zero,
-        epochToDateTime: fixedEpochToDateTime,
-      );
-      addTearDown(engine.dispose);
+    test(
+      'attachExportEngine dynamically binds engine to existing state machine',
+      () async {
+        final engine = CsvExportEngine(
+          database: db,
+          targetFile: targetFile,
+          debounceDuration: Duration.zero,
+          epochToDateTime: fixedEpochToDateTime,
+        );
+        addTearDown(engine.dispose);
 
-      int mockTime = 1758109597000;
-      final sm = TimerStateMachine(
-        database: db,
-        nowUtcMs: () => mockTime,
-        generateId: () => 'sm-rec-dyn',
-        getTimezoneId: () => 'UTC',
-      );
-      addTearDown(sm.dispose);
+        int mockTime = 1758109597000;
+        final sm = TimerStateMachine(
+          database: db,
+          nowUtcMs: () => mockTime,
+          generateId: () => 'sm-rec-dyn',
+          getTimezoneId: () => 'UTC',
+        );
+        addTearDown(sm.dispose);
 
-      expect(sm.csvExportEngine, isNull);
-      sm.attachExportEngine(engine);
-      expect(sm.csvExportEngine, equals(engine));
+        expect(sm.csvExportEngine, isNull);
+        sm.attachExportEngine(engine);
+        expect(sm.csvExportEngine, equals(engine));
 
-      await sm.start(testActivityLunch.id);
-      mockTime += 1800000;
-      await sm.stop();
+        await sm.start(testActivityLunch.id);
+        mockTime += 1800000;
+        await sm.stop();
 
-      expect(await targetFile.exists(), isTrue);
-      final content = await targetFile.readAsString();
-      expect(content, contains('"Lunch"'));
-    });
+        expect(await targetFile.exists(), isTrue);
+        final content = await targetFile.readAsString();
+        expect(content, contains('"Lunch"'));
+      },
+    );
   });
 }

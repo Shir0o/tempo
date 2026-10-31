@@ -1,5 +1,7 @@
 import 'dart:async';
+
 import 'package:flutter/services.dart';
+
 import '../core/state/timer_state_machine.dart';
 import '../data/database/tempo_database.dart';
 import '../data/models/activity.dart';
@@ -24,7 +26,8 @@ class WatchAction {
     return WatchAction(
       type: map['action'] as String? ?? 'UNKNOWN',
       activityId: map['activityId'] as String?,
-      timestampEpochMs: (map['timestampEpochMs'] as num?)?.toInt() ??
+      timestampEpochMs:
+          (map['timestampEpochMs'] as num?)?.toInt() ??
           DateTime.now().toUtc().millisecondsSinceEpoch,
       actionId: map['actionId'] as String?,
       comment: map['comment'] as String?,
@@ -75,13 +78,17 @@ class WearableSyncService {
   Future<bool> syncActivities(List<Activity> activities) async {
     if (_isDisposed) return false;
     try {
-      final list = activities.map((a) => {
-            'id': a.id,
-            'name': a.name,
-            'colorHex': a.colorHex,
-            'iconName': a.iconName,
-            'isPinned': a.isPinned,
-          }).toList();
+      final list = activities
+          .map(
+            (a) => {
+              'id': a.id,
+              'name': a.name,
+              'colorHex': a.colorHex,
+              'iconName': a.iconName,
+              'isPinned': a.isPinned,
+            },
+          )
+          .toList();
 
       final result = await channel.invokeMethod<bool>('syncActivities', {
         'activities': list,

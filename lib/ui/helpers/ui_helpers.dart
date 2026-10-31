@@ -4,7 +4,10 @@ import 'package:intl/intl.dart';
 /// Helper utilities for UI formatting, color parsing, and icon mapping in Tempo.
 class UiHelpers {
   /// Parses a hex color string (e.g. "#4CAF50", "4CAF50", "#FF4CAF50") to [Color].
-  static Color parseHexColor(String? hexString, {Color fallback = const Color(0xFF4CAF50)}) {
+  static Color parseHexColor(
+    String? hexString, {
+    Color fallback = const Color(0xFF4CAF50),
+  }) {
     if (hexString == null || hexString.isEmpty) return fallback;
     var hex = hexString.replaceAll('#', '').trim();
     if (hex.length == 6) {

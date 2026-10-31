@@ -116,7 +116,11 @@ class StatsCalculator {
 
       case StatsPeriod.month:
         final start = DateTime(referenceDate.year, referenceDate.month, 1);
-        final nextMonth = DateTime(referenceDate.year, referenceDate.month + 1, 1);
+        final nextMonth = DateTime(
+          referenceDate.year,
+          referenceDate.month + 1,
+          1,
+        );
         final lastDay = nextMonth.subtract(const Duration(days: 1));
         final end = DateTime(
           lastDay.year,
@@ -156,8 +160,7 @@ class StatsCalculator {
       totalDurationMs += r.durationMs;
       durationByActivity[r.activityId] =
           (durationByActivity[r.activityId] ?? 0) + r.durationMs;
-      countByActivity[r.activityId] =
-          (countByActivity[r.activityId] ?? 0) + 1;
+      countByActivity[r.activityId] = (countByActivity[r.activityId] ?? 0) + 1;
     }
 
     final breakdowns = <ActivityStat>[];
@@ -173,23 +176,26 @@ class StatsCalculator {
           : 0.0;
       final count = countByActivity[actId] ?? 0;
 
-      breakdowns.add(ActivityStat(
-        activityId: actId,
-        name: name,
-        colorHex: colorHex,
-        iconName: iconName,
-        durationMs: actDuration,
-        percentage: percentage,
-        sessionCount: count,
-      ));
+      breakdowns.add(
+        ActivityStat(
+          activityId: actId,
+          name: name,
+          colorHex: colorHex,
+          iconName: iconName,
+          durationMs: actDuration,
+          percentage: percentage,
+          sessionCount: count,
+        ),
+      );
     }
 
     // Sort descending by duration
     breakdowns.sort((a, b) => b.durationMs.compareTo(a.durationMs));
 
     final sessionCount = periodRecords.length;
-    final averageSessionDurationMs =
-        sessionCount > 0 ? (totalDurationMs / sessionCount).round() : 0;
+    final averageSessionDurationMs = sessionCount > 0
+        ? (totalDurationMs / sessionCount).round()
+        : 0;
     final mostActiveHabit = breakdowns.isNotEmpty ? breakdowns.first : null;
 
     return StatsReport(

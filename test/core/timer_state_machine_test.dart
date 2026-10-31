@@ -195,26 +195,29 @@ void main() {
       expect(savedRecord.tagIds, containsAll([tagDeepWork.id, tagClient.id]));
     });
 
-    test('stopping a paused timer preserves duration at paused timestamp', () async {
-      final sm = createStateMachine();
-      addTearDown(sm.dispose);
+    test(
+      'stopping a paused timer preserves duration at paused timestamp',
+      () async {
+        final sm = createStateMachine();
+        addTearDown(sm.dispose);
 
-      mockTime = 2000000;
-      await sm.start(activityA.id);
+        mockTime = 2000000;
+        await sm.start(activityA.id);
 
-      // Active for 50,000 ms
-      mockTime = 2050000;
-      await sm.pause();
+        // Active for 50,000 ms
+        mockTime = 2050000;
+        await sm.pause();
 
-      // Stop 1 hour later while still paused
-      mockTime = 5650000;
-      final record = await sm.stop();
+        // Stop 1 hour later while still paused
+        mockTime = 5650000;
+        final record = await sm.stop();
 
-      expect(record.startedAtEpochMs, 2000000);
-      expect(record.endedAtEpochMs, 2050000);
-      expect(record.durationMs, 50000);
-      expect(await db.getActiveTimer(), isNull);
-    });
+        expect(record.startedAtEpochMs, 2000000);
+        expect(record.endedAtEpochMs, 2050000);
+        expect(record.durationMs, 50000);
+        expect(await db.getActiveTimer(), isNull);
+      },
+    );
 
     test('multiple pause and resume cycles accumulate accurately', () async {
       final sm = createStateMachine();
@@ -252,134 +255,146 @@ void main() {
   });
 
   group('Atomic Switch Behavior', () {
-    test('starting activity B while A is running properly saves A and starts B', () async {
-      Record? committedViaHook;
-      final sm = createStateMachine(
-        onRecordCommitted: (rec) async {
-          committedViaHook = rec;
-        },
-      );
-      addTearDown(sm.dispose);
+    test(
+      'starting activity B while A is running properly saves A and starts B',
+      () async {
+        Record? committedViaHook;
+        final sm = createStateMachine(
+          onRecordCommitted: (rec) async {
+            committedViaHook = rec;
+          },
+        );
+        addTearDown(sm.dispose);
 
-      // Start Activity A
-      mockTime = 1000000;
-      await sm.start(
-        activityA.id,
-        comment: 'Working on A',
-        tagIds: [tagDeepWork.id],
-      );
+        // Start Activity A
+        mockTime = 1000000;
+        await sm.start(
+          activityA.id,
+          comment: 'Working on A',
+          tagIds: [tagDeepWork.id],
+        );
 
-      // 45 seconds later, switch to Activity B via start()
-      mockTime = 1045000;
-      final switchedTimer = await sm.start(
-        activityB.id,
-        comment: 'Switching to B',
-        tagIds: [tagClient.id],
-      );
+        // 45 seconds later, switch to Activity B via start()
+        mockTime = 1045000;
+        final switchedTimer = await sm.start(
+          activityB.id,
+          comment: 'Switching to B',
+          tagIds: [tagClient.id],
+        );
 
-      expect(switchedTimer.activityId, activityB.id);
-      expect(switchedTimer.startedAtEpochMs, 1045000);
-      expect(switchedTimer.currentComment, 'Switching to B');
-      expect(switchedTimer.initialTagIds, equals([tagClient.id]));
-      expect(switchedTimer.revision, 2);
+        expect(switchedTimer.activityId, activityB.id);
+        expect(switchedTimer.startedAtEpochMs, 1045000);
+        expect(switchedTimer.currentComment, 'Switching to B');
+        expect(switchedTimer.initialTagIds, equals([tagClient.id]));
+        expect(switchedTimer.revision, 2);
 
-      // Verify stopped record for Activity A
-      expect(sm.lastStoppedRecord, isNotNull);
-      final stoppedRecord = sm.lastStoppedRecord!;
-      expect(stoppedRecord.activityId, activityA.id);
-      expect(stoppedRecord.startedAtEpochMs, 1000000);
-      expect(stoppedRecord.endedAtEpochMs, 1045000);
-      expect(stoppedRecord.durationMs, 45000);
-      expect(stoppedRecord.comment, 'Working on A');
-      expect(stoppedRecord.tagIds, equals([tagDeepWork.id]));
-      expect(committedViaHook, equals(stoppedRecord));
+        // Verify stopped record for Activity A
+        expect(sm.lastStoppedRecord, isNotNull);
+        final stoppedRecord = sm.lastStoppedRecord!;
+        expect(stoppedRecord.activityId, activityA.id);
+        expect(stoppedRecord.startedAtEpochMs, 1000000);
+        expect(stoppedRecord.endedAtEpochMs, 1045000);
+        expect(stoppedRecord.durationMs, 45000);
+        expect(stoppedRecord.comment, 'Working on A');
+        expect(stoppedRecord.tagIds, equals([tagDeepWork.id]));
+        expect(committedViaHook, equals(stoppedRecord));
 
-      // Verify SQLite state: Exactly 1 record saved, active_timer is B
-      final allRecords = await db.getRecords();
-      expect(allRecords.length, 1);
-      expect(allRecords.first.id, stoppedRecord.id);
-      expect(allRecords.first.activityId, activityA.id);
+        // Verify SQLite state: Exactly 1 record saved, active_timer is B
+        final allRecords = await db.getRecords();
+        expect(allRecords.length, 1);
+        expect(allRecords.first.id, stoppedRecord.id);
+        expect(allRecords.first.activityId, activityA.id);
 
-      final activeInDb = await db.getActiveTimer();
-      expect(activeInDb, isNotNull);
-      expect(activeInDb!.activityId, activityB.id);
-      expect(activeInDb.startedAtEpochMs, 1045000);
+        final activeInDb = await db.getActiveTimer();
+        expect(activeInDb, isNotNull);
+        expect(activeInDb!.activityId, activityB.id);
+        expect(activeInDb.startedAtEpochMs, 1045000);
 
-      // Now switchActivity called directly while B is running
-      mockTime = 1070000;
-      final finalSwitched = await sm.switchActivity(
-        activityA.id,
-        comment: 'Back to A',
-      );
-      expect(finalSwitched.activityId, activityA.id);
-      expect(finalSwitched.startedAtEpochMs, 1070000);
+        // Now switchActivity called directly while B is running
+        mockTime = 1070000;
+        final finalSwitched = await sm.switchActivity(
+          activityA.id,
+          comment: 'Back to A',
+        );
+        expect(finalSwitched.activityId, activityA.id);
+        expect(finalSwitched.startedAtEpochMs, 1070000);
 
-      // Database should now have 2 completed records (A and B)
-      final allRecordsAfter = await db.getRecords();
-      expect(allRecordsAfter.length, 2);
-      expect(allRecordsAfter[0].activityId, activityB.id);
-      expect(allRecordsAfter[0].durationMs, 25000); // 1070000 - 1045000
-      expect(allRecordsAfter[1].activityId, activityA.id);
-    });
+        // Database should now have 2 completed records (A and B)
+        final allRecordsAfter = await db.getRecords();
+        expect(allRecordsAfter.length, 2);
+        expect(allRecordsAfter[0].activityId, activityB.id);
+        expect(allRecordsAfter[0].durationMs, 25000); // 1070000 - 1045000
+        expect(allRecordsAfter[1].activityId, activityA.id);
+      },
+    );
 
-    test('switchActivity when idle acts as start without saving any record', () async {
-      final sm = createStateMachine();
-      addTearDown(sm.dispose);
+    test(
+      'switchActivity when idle acts as start without saving any record',
+      () async {
+        final sm = createStateMachine();
+        addTearDown(sm.dispose);
 
-      mockTime = 500000;
-      final timer = await sm.switchActivity(
-        activityA.id,
-        comment: 'Fresh start via switch',
-      );
+        mockTime = 500000;
+        final timer = await sm.switchActivity(
+          activityA.id,
+          comment: 'Fresh start via switch',
+        );
 
-      expect(timer.activityId, activityA.id);
-      expect(timer.startedAtEpochMs, 500000);
-      expect(timer.revision, 1);
-      expect(sm.lastStoppedRecord, isNull);
+        expect(timer.activityId, activityA.id);
+        expect(timer.startedAtEpochMs, 500000);
+        expect(timer.revision, 1);
+        expect(sm.lastStoppedRecord, isNull);
 
-      final records = await db.getRecords();
-      expect(records, isEmpty);
-    });
+        final records = await db.getRecords();
+        expect(records, isEmpty);
+      },
+    );
 
-    test('switchActivity rolls back atomically if new activity does not exist', () async {
-      final sm = createStateMachine();
-      addTearDown(sm.dispose);
+    test(
+      'switchActivity rolls back atomically if new activity does not exist',
+      () async {
+        final sm = createStateMachine();
+        addTearDown(sm.dispose);
 
-      mockTime = 1000000;
-      await sm.start(activityA.id, comment: 'Active session');
+        mockTime = 1000000;
+        await sm.start(activityA.id, comment: 'Active session');
 
-      mockTime = 1030000;
-      expect(
-        () => sm.switchActivity('non-existent-activity-id'),
-        throwsA(isA<ArgumentError>()),
-      );
+        mockTime = 1030000;
+        expect(
+          () => sm.switchActivity('non-existent-activity-id'),
+          throwsA(isA<ArgumentError>()),
+        );
 
-      // Verify that Activity A is still active and no record was inserted!
-      final active = await db.getActiveTimer();
-      expect(active, isNotNull);
-      expect(active!.activityId, activityA.id);
-      expect(await db.getRecords(), isEmpty);
-    });
+        // Verify that Activity A is still active and no record was inserted!
+        final active = await db.getActiveTimer();
+        expect(active, isNotNull);
+        expect(active!.activityId, activityA.id);
+        expect(await db.getRecords(), isEmpty);
+      },
+    );
   });
 
   group('Heartbeat Management', () {
-    test('tickHeartbeat updates last_heartbeat_epoch_ms in SQLite and memory', () async {
-      final sm = createStateMachine();
-      addTearDown(sm.dispose);
+    test(
+      'tickHeartbeat updates last_heartbeat_epoch_ms in SQLite and memory',
+      () async {
+        final sm = createStateMachine();
+        addTearDown(sm.dispose);
 
-      mockTime = 1000000;
-      await sm.start(activityA.id);
+        mockTime = 1000000;
+        await sm.start(activityA.id);
 
-      expect(sm.activeTimer!.lastHeartbeatEpochMs, 1000000);
+        expect(sm.activeTimer!.lastHeartbeatEpochMs, 1000000);
 
-      // 60s later: tick heartbeat
-      mockTime = 1060000;
-      await sm.tickHeartbeat();
+        // 60s later: tick heartbeat
+        mockTime = 1060000;
+        await sm.tickHeartbeat();
 
-      expect(sm.activeTimer!.lastHeartbeatEpochMs, 1060000);
-      final inDb = await db.getActiveTimer();
-      expect(inDb!.lastHeartbeatEpochMs, 1060000);
-    });
+        expect(sm.activeTimer!.lastHeartbeatEpochMs, 1060000);
+        final inDb = await db.getActiveTimer();
+        expect(inDb!.lastHeartbeatEpochMs, 1060000);
+      },
+    );
 
     test('heartbeat loop executes periodically while active', () async {
       final sm = createStateMachine(
@@ -421,121 +436,140 @@ void main() {
   });
 
   group('Boot-Up Crash Recovery (>6 Hour Gap)', () {
-    test('detects abnormal shutdown when gap exceeds 6 hours (21,600,000 ms)', () async {
-      final sm = createStateMachine();
-      addTearDown(sm.dispose);
+    test(
+      'detects abnormal shutdown when gap exceeds 6 hours (21,600,000 ms)',
+      () async {
+        final sm = createStateMachine();
+        addTearDown(sm.dispose);
 
-      // Seed an active timer into the DB as if the app crashed
-      final startedTime = 1000000;
-      final crashHeartbeatTime = startedTime + 3600000; // 1 hour into session
-      final simulatedActiveTimer = ActiveTimer(
-        activityId: activityA.id,
-        startedAtEpochMs: startedTime,
-        isPaused: false,
-        accumulatedPauseMs: 0,
-        currentComment: 'Crashed session',
-        initialTagIds: [tagDeepWork.id],
-        lastHeartbeatEpochMs: crashHeartbeatTime,
-        revision: 1,
-      );
-      await db.setActiveTimer(simulatedActiveTimer);
+        // Seed an active timer into the DB as if the app crashed
+        final startedTime = 1000000;
+        final crashHeartbeatTime = startedTime + 3600000; // 1 hour into session
+        final simulatedActiveTimer = ActiveTimer(
+          activityId: activityA.id,
+          startedAtEpochMs: startedTime,
+          isPaused: false,
+          accumulatedPauseMs: 0,
+          currentComment: 'Crashed session',
+          initialTagIds: [tagDeepWork.id],
+          lastHeartbeatEpochMs: crashHeartbeatTime,
+          revision: 1,
+        );
+        await db.setActiveTimer(simulatedActiveTimer);
 
-      // Boot up 7 hours after heartbeat (gap = 25,200,000 ms > 21,600,000 ms)
-      mockTime = crashHeartbeatTime + 25200000;
+        // Boot up 7 hours after heartbeat (gap = 25,200,000 ms > 21,600,000 ms)
+        mockTime = crashHeartbeatTime + 25200000;
 
-      final session = await sm.checkCrashRecovery();
-      expect(session, isNotNull);
-      expect(session!.activeTimer.activityId, activityA.id);
-      expect(session.gapMs, 25200000);
-      expect(session.durationMsIfTruncated, 3600000); // 1 hr
-      expect(session.elapsedMsIfKept, 28800000); // 8 hrs total
-    });
+        final session = await sm.checkCrashRecovery();
+        expect(session, isNotNull);
+        expect(session!.activeTimer.activityId, activityA.id);
+        expect(session.gapMs, 25200000);
+        expect(session.durationMsIfTruncated, 3600000); // 1 hr
+        expect(session.elapsedMsIfKept, 28800000); // 8 hrs total
+      },
+    );
 
-    test('Option 1: keepTracking() updates heartbeat and resumes smoothly', () async {
-      final sm = createStateMachine();
-      addTearDown(sm.dispose);
+    test(
+      'Option 1: keepTracking() updates heartbeat and resumes smoothly',
+      () async {
+        final sm = createStateMachine();
+        addTearDown(sm.dispose);
 
-      final startedTime = 1000000;
-      final crashHeartbeatTime = 2000000;
-      await db.setActiveTimer(ActiveTimer(
-        activityId: activityA.id,
-        startedAtEpochMs: startedTime,
-        lastHeartbeatEpochMs: crashHeartbeatTime,
-        currentComment: 'All-nighter session',
-      ));
+        final startedTime = 1000000;
+        final crashHeartbeatTime = 2000000;
+        await db.setActiveTimer(
+          ActiveTimer(
+            activityId: activityA.id,
+            startedAtEpochMs: startedTime,
+            lastHeartbeatEpochMs: crashHeartbeatTime,
+            currentComment: 'All-nighter session',
+          ),
+        );
 
-      // Boot 8 hours later
-      mockTime = crashHeartbeatTime + 28800000;
-      final session = await sm.checkCrashRecovery();
-      expect(session, isNotNull);
+        // Boot 8 hours later
+        mockTime = crashHeartbeatTime + 28800000;
+        final session = await sm.checkCrashRecovery();
+        expect(session, isNotNull);
 
-      // User elects to keep tracking
-      await session!.keepTracking();
+        // User elects to keep tracking
+        await session!.keepTracking();
 
-      expect(sm.isTracking, isTrue);
-      expect(sm.activeTimer!.lastHeartbeatEpochMs, mockTime);
-      expect(sm.activeTimer!.revision, 2);
+        expect(sm.isTracking, isTrue);
+        expect(sm.activeTimer!.lastHeartbeatEpochMs, mockTime);
+        expect(sm.activeTimer!.revision, 2);
 
-      final inDb = await db.getActiveTimer();
-      expect(inDb!.lastHeartbeatEpochMs, mockTime);
-    });
+        final inDb = await db.getActiveTimer();
+        expect(inDb!.lastHeartbeatEpochMs, mockTime);
+      },
+    );
 
-    test('Option 2: truncateToHeartbeat() saves record at last heartbeat time', () async {
-      final sm = createStateMachine();
-      addTearDown(sm.dispose);
+    test(
+      'Option 2: truncateToHeartbeat() saves record at last heartbeat time',
+      () async {
+        final sm = createStateMachine();
+        addTearDown(sm.dispose);
 
-      final startedTime = 1000000;
-      final crashHeartbeatTime = startedTime + 7200000; // 2 hours in
-      await db.setActiveTimer(ActiveTimer(
-        activityId: activityA.id,
-        startedAtEpochMs: startedTime,
-        lastHeartbeatEpochMs: crashHeartbeatTime,
-        currentComment: 'Device died on flight',
-        initialTagIds: [tagClient.id],
-      ));
+        final startedTime = 1000000;
+        final crashHeartbeatTime = startedTime + 7200000; // 2 hours in
+        await db.setActiveTimer(
+          ActiveTimer(
+            activityId: activityA.id,
+            startedAtEpochMs: startedTime,
+            lastHeartbeatEpochMs: crashHeartbeatTime,
+            currentComment: 'Device died on flight',
+            initialTagIds: [tagClient.id],
+          ),
+        );
 
-      // Boot 10 hours later
-      mockTime = crashHeartbeatTime + 36000000;
-      final session = await sm.checkCrashRecovery();
-      expect(session, isNotNull);
+        // Boot 10 hours later
+        mockTime = crashHeartbeatTime + 36000000;
+        final session = await sm.checkCrashRecovery();
+        expect(session, isNotNull);
 
-      // User elects to truncate to heartbeat
-      final savedRecord =
-          await session!.truncateToHeartbeat(finalComment: 'Truncated after flight');
+        // User elects to truncate to heartbeat
+        final savedRecord = await session!.truncateToHeartbeat(
+          finalComment: 'Truncated after flight',
+        );
 
-      expect(savedRecord.startedAtEpochMs, startedTime);
-      expect(savedRecord.endedAtEpochMs, crashHeartbeatTime);
-      expect(savedRecord.durationMs, 7200000); // Exactly 2 hours!
-      expect(savedRecord.comment, 'Truncated after flight');
-      expect(savedRecord.tagIds, equals([tagClient.id]));
+        expect(savedRecord.startedAtEpochMs, startedTime);
+        expect(savedRecord.endedAtEpochMs, crashHeartbeatTime);
+        expect(savedRecord.durationMs, 7200000); // Exactly 2 hours!
+        expect(savedRecord.comment, 'Truncated after flight');
+        expect(savedRecord.tagIds, equals([tagClient.id]));
 
-      expect(sm.isIdle, isTrue);
-      expect(await db.getActiveTimer(), isNull);
-      expect(await db.getRecordById(savedRecord.id), isNotNull);
-    });
+        expect(sm.isIdle, isTrue);
+        expect(await db.getActiveTimer(), isNull);
+        expect(await db.getRecordById(savedRecord.id), isNotNull);
+      },
+    );
 
-    test('Option 3: discard() deletes active timer without saving a record', () async {
-      final sm = createStateMachine();
-      addTearDown(sm.dispose);
+    test(
+      'Option 3: discard() deletes active timer without saving a record',
+      () async {
+        final sm = createStateMachine();
+        addTearDown(sm.dispose);
 
-      final startedTime = 1000000;
-      final crashHeartbeatTime = startedTime + 60000;
-      await db.setActiveTimer(ActiveTimer(
-        activityId: activityA.id,
-        startedAtEpochMs: startedTime,
-        lastHeartbeatEpochMs: crashHeartbeatTime,
-      ));
+        final startedTime = 1000000;
+        final crashHeartbeatTime = startedTime + 60000;
+        await db.setActiveTimer(
+          ActiveTimer(
+            activityId: activityA.id,
+            startedAtEpochMs: startedTime,
+            lastHeartbeatEpochMs: crashHeartbeatTime,
+          ),
+        );
 
-      mockTime = crashHeartbeatTime + 30000000; // 8+ hours
-      final session = await sm.checkCrashRecovery();
-      expect(session, isNotNull);
+        mockTime = crashHeartbeatTime + 30000000; // 8+ hours
+        final session = await sm.checkCrashRecovery();
+        expect(session, isNotNull);
 
-      await session!.discard();
+        await session!.discard();
 
-      expect(sm.isIdle, isTrue);
-      expect(await db.getActiveTimer(), isNull);
-      expect(await db.getRecords(), isEmpty);
-    });
+        expect(sm.isIdle, isTrue);
+        expect(await db.getActiveTimer(), isNull);
+        expect(await db.getRecords(), isEmpty);
+      },
+    );
 
     test('gap <= 6 hours returns null and continues normal tracking', () async {
       final sm = createStateMachine();
@@ -543,11 +577,13 @@ void main() {
 
       final startedTime = 1000000;
       final crashHeartbeatTime = startedTime + 3600000;
-      await db.setActiveTimer(ActiveTimer(
-        activityId: activityA.id,
-        startedAtEpochMs: startedTime,
-        lastHeartbeatEpochMs: crashHeartbeatTime,
-      ));
+      await db.setActiveTimer(
+        ActiveTimer(
+          activityId: activityA.id,
+          startedAtEpochMs: startedTime,
+          lastHeartbeatEpochMs: crashHeartbeatTime,
+        ),
+      );
 
       // Boot only 30 minutes later (gap = 1,800,000 ms <= 21,600,000 ms)
       mockTime = crashHeartbeatTime + 1800000;
@@ -565,13 +601,15 @@ void main() {
       final startedTime = 1000000;
       final pauseTime = 1030000;
       final crashHeartbeatTime = 1030000;
-      await db.setActiveTimer(ActiveTimer(
-        activityId: activityA.id,
-        startedAtEpochMs: startedTime,
-        isPaused: true,
-        pausedAtEpochMs: pauseTime,
-        lastHeartbeatEpochMs: crashHeartbeatTime,
-      ));
+      await db.setActiveTimer(
+        ActiveTimer(
+          activityId: activityA.id,
+          startedAtEpochMs: startedTime,
+          isPaused: true,
+          pausedAtEpochMs: pauseTime,
+          lastHeartbeatEpochMs: crashHeartbeatTime,
+        ),
+      );
 
       mockTime = crashHeartbeatTime + 30000000; // 8+ hours
       final session = await sm.checkCrashRecovery();
@@ -585,14 +623,17 @@ void main() {
       expect(await db.getActiveTimer(), isNull);
     });
 
-    test('checkCrashRecovery when DB has no active timer returns null', () async {
-      final sm = createStateMachine();
-      addTearDown(sm.dispose);
+    test(
+      'checkCrashRecovery when DB has no active timer returns null',
+      () async {
+        final sm = createStateMachine();
+        addTearDown(sm.dispose);
 
-      final session = await sm.checkCrashRecovery();
-      expect(session, isNull);
-      expect(sm.isIdle, isTrue);
-    });
+        final session = await sm.checkCrashRecovery();
+        expect(session, isNull);
+        expect(sm.isIdle, isTrue);
+      },
+    );
   });
 
   group('UTC Epoch Invariance Across Time Zone and DST Shifts', () {
@@ -684,10 +725,7 @@ void main() {
       final sm = createStateMachine();
       addTearDown(sm.dispose);
 
-      expect(
-        () => sm.start('invalid-id'),
-        throwsA(isA<ArgumentError>()),
-      );
+      expect(() => sm.start('invalid-id'), throwsA(isA<ArgumentError>()));
     });
 
     test('truncateToHeartbeat, keepTracking, and discard throw StateError when idle', () async {
@@ -717,7 +755,9 @@ void main() {
       }
 
       sm.activeTimerNotifier.addListener(notifierListener);
-      addTearDown(() => sm.activeTimerNotifier.removeListener(notifierListener));
+      addTearDown(
+        () => sm.activeTimerNotifier.removeListener(notifierListener),
+      );
 
       // 1. Start A
       mockTime = 1000000;

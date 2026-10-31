@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../core/export/csv_export_engine.dart';
 import '../../core/state/timer_state_machine.dart';
 import '../../core/sync/google_drive_sync_service.dart';
@@ -89,13 +90,11 @@ class _TempoAppState extends State<TempoApp> {
     ];
 
     return Scaffold(
-      body: IndexedStack(
-        index: _currentTabIndex,
-        children: screens,
-      ),
+      body: IndexedStack(index: _currentTabIndex, children: screens),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentTabIndex,
-        onDestinationSelected: (index) => setState(() => _currentTabIndex = index),
+        onDestinationSelected: (index) =>
+            setState(() => _currentTabIndex = index),
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.timer_outlined),

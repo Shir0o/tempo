@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
 import '../../data/database/tempo_database.dart';
 import '../export/csv_export_engine.dart';
 
@@ -51,7 +53,9 @@ class GoogleDriveSyncService {
   drive.DriveApi _getDriveApi() {
     final api = driveApi;
     if (api == null) {
-      throw StateError('Google Drive API is not initialized. Please sign in first.');
+      throw StateError(
+        'Google Drive API is not initialized. Please sign in first.',
+      );
     }
     return api;
   }
@@ -66,7 +70,9 @@ class GoogleDriveSyncService {
     try {
       final gSignIn = googleSignIn ?? GoogleSignIn.instance;
       final account = await gSignIn.authenticate(scopeHint: driveScopes);
-      final authz = await account.authorizationClient.authorizeScopes(driveScopes);
+      final authz = await account.authorizationClient.authorizeScopes(
+        driveScopes,
+      );
       final client = authz.authClient(scopes: driveScopes);
       driveApi = drive.DriveApi(client);
       _lastError = null;
@@ -115,10 +121,7 @@ class GoogleDriveSyncService {
       ..mimeType = 'application/vnd.google-apps.folder'
       ..parents = ['root'];
 
-    final created = await api.files.create(
-      folderMetadata,
-      $fields: 'id, name',
-    );
+    final created = await api.files.create(folderMetadata, $fields: 'id, name');
 
     _cachedTimeTrackFolderId = created.id!;
     return _cachedTimeTrackFolderId!;

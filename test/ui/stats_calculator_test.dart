@@ -127,7 +127,13 @@ void main() {
         Record(
           id: 'r2',
           activityId: 'act-reading',
-          startedAtEpochMs: DateTime(2026, 10, 31, 13, 0).millisecondsSinceEpoch,
+          startedAtEpochMs: DateTime(
+            2026,
+            10,
+            31,
+            13,
+            0,
+          ).millisecondsSinceEpoch,
           endedAtEpochMs: DateTime(2026, 10, 31, 14, 0).millisecondsSinceEpoch,
           durationMs: 3600000,
           comment: '',
@@ -138,7 +144,13 @@ void main() {
         Record(
           id: 'r3',
           activityId: 'act-workout',
-          startedAtEpochMs: DateTime(2026, 10, 31, 15, 0).millisecondsSinceEpoch,
+          startedAtEpochMs: DateTime(
+            2026,
+            10,
+            31,
+            15,
+            0,
+          ).millisecondsSinceEpoch,
           endedAtEpochMs: DateTime(2026, 10, 31, 15, 15).millisecondsSinceEpoch,
           durationMs: 900000,
           comment: '',
@@ -149,7 +161,13 @@ void main() {
         Record(
           id: 'r4',
           activityId: 'act-workout',
-          startedAtEpochMs: DateTime(2026, 10, 31, 15, 30).millisecondsSinceEpoch,
+          startedAtEpochMs: DateTime(
+            2026,
+            10,
+            31,
+            15,
+            30,
+          ).millisecondsSinceEpoch,
           endedAtEpochMs: DateTime(2026, 10, 31, 15, 45).millisecondsSinceEpoch,
           durationMs: 900000,
           comment: '',
@@ -175,20 +193,32 @@ void main() {
       // Sorted descending by duration
       expect(report.activityBreakdowns[0].name, 'Coding');
       expect(report.activityBreakdowns[0].durationMs, 10800000);
-      expect(report.activityBreakdowns[0].percentage, closeTo((10800000 / 16200000) * 100, 0.01));
+      expect(
+        report.activityBreakdowns[0].percentage,
+        closeTo((10800000 / 16200000) * 100, 0.01),
+      );
       expect(report.activityBreakdowns[0].sessionCount, 1);
 
       expect(report.activityBreakdowns[1].name, 'Reading');
       expect(report.activityBreakdowns[1].durationMs, 3600000);
-      expect(report.activityBreakdowns[1].percentage, closeTo((3600000 / 16200000) * 100, 0.01));
+      expect(
+        report.activityBreakdowns[1].percentage,
+        closeTo((3600000 / 16200000) * 100, 0.01),
+      );
 
       expect(report.activityBreakdowns[2].name, 'Workout');
       expect(report.activityBreakdowns[2].durationMs, 1800000);
-      expect(report.activityBreakdowns[2].percentage, closeTo((1800000 / 16200000) * 100, 0.01));
+      expect(
+        report.activityBreakdowns[2].percentage,
+        closeTo((1800000 / 16200000) * 100, 0.01),
+      );
       expect(report.activityBreakdowns[2].sessionCount, 2);
 
       // Percentages sum to 100%
-      final sumPct = report.activityBreakdowns.fold<double>(0.0, (sum, a) => sum + a.percentage);
+      final sumPct = report.activityBreakdowns.fold<double>(
+        0.0,
+        (sum, a) => sum + a.percentage,
+      );
       expect(sumPct, closeTo(100.0, 0.01));
 
       // Most active habit is Coding

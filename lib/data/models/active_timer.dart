@@ -36,17 +36,17 @@ class ActiveTimer {
   });
 
   Map<String, dynamic> toMap() => {
-        'id': id,
-        'activity_id': activityId,
-        'started_at_epoch_ms': startedAtEpochMs,
-        'is_paused': isPaused ? 1 : 0,
-        'paused_at_epoch_ms': pausedAtEpochMs,
-        'accumulated_pause_ms': accumulatedPauseMs,
-        'current_comment': currentComment,
-        'initial_tags_json': jsonEncode(initialTagIds),
-        'last_heartbeat_epoch_ms': lastHeartbeatEpochMs,
-        'revision': revision,
-      };
+    'id': id,
+    'activity_id': activityId,
+    'started_at_epoch_ms': startedAtEpochMs,
+    'is_paused': isPaused ? 1 : 0,
+    'paused_at_epoch_ms': pausedAtEpochMs,
+    'accumulated_pause_ms': accumulatedPauseMs,
+    'current_comment': currentComment,
+    'initial_tags_json': jsonEncode(initialTagIds),
+    'last_heartbeat_epoch_ms': lastHeartbeatEpochMs,
+    'revision': revision,
+  };
 
   factory ActiveTimer.fromMap(Map<String, dynamic> map) {
     List<String> tags = const [];
@@ -78,8 +78,9 @@ class ActiveTimer {
   /// Matches specification section 3.1:
   /// elapsedMs = (is_paused ? paused_at : nowUtc) - started_at - accumulated_pause
   int calculateDurationMs(int nowUtcEpochMs) {
-    final referenceTime =
-        isPaused && pausedAtEpochMs != null ? pausedAtEpochMs! : nowUtcEpochMs;
+    final referenceTime = isPaused && pausedAtEpochMs != null
+        ? pausedAtEpochMs!
+        : nowUtcEpochMs;
     final duration = referenceTime - startedAtEpochMs - accumulatedPauseMs;
     return duration < 0 ? 0 : duration;
   }
@@ -96,20 +97,20 @@ class ActiveTimer {
     List<String>? initialTagIds,
     int? lastHeartbeatEpochMs,
     int? revision,
-  }) =>
-      ActiveTimer(
-        id: id ?? this.id,
-        activityId: activityId ?? this.activityId,
-        startedAtEpochMs: startedAtEpochMs ?? this.startedAtEpochMs,
-        isPaused: isPaused ?? this.isPaused,
-        pausedAtEpochMs:
-            clearPausedAt ? null : (pausedAtEpochMs ?? this.pausedAtEpochMs),
-        accumulatedPauseMs: accumulatedPauseMs ?? this.accumulatedPauseMs,
-        currentComment: currentComment ?? this.currentComment,
-        initialTagIds: initialTagIds ?? this.initialTagIds,
-        lastHeartbeatEpochMs: lastHeartbeatEpochMs ?? this.lastHeartbeatEpochMs,
-        revision: revision ?? this.revision,
-      );
+  }) => ActiveTimer(
+    id: id ?? this.id,
+    activityId: activityId ?? this.activityId,
+    startedAtEpochMs: startedAtEpochMs ?? this.startedAtEpochMs,
+    isPaused: isPaused ?? this.isPaused,
+    pausedAtEpochMs: clearPausedAt
+        ? null
+        : (pausedAtEpochMs ?? this.pausedAtEpochMs),
+    accumulatedPauseMs: accumulatedPauseMs ?? this.accumulatedPauseMs,
+    currentComment: currentComment ?? this.currentComment,
+    initialTagIds: initialTagIds ?? this.initialTagIds,
+    lastHeartbeatEpochMs: lastHeartbeatEpochMs ?? this.lastHeartbeatEpochMs,
+    revision: revision ?? this.revision,
+  );
 
   @override
   bool operator ==(Object other) =>

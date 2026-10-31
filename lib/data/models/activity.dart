@@ -22,28 +22,28 @@ class Activity {
   });
 
   Map<String, dynamic> toMap() => {
-        'id': id,
-        'name': name,
-        'color_hex': colorHex,
-        'icon_name': iconName,
-        'is_pinned': isPinned ? 1 : 0,
-        'sort_order': sortOrder,
-        'is_archived': isArchived ? 1 : 0,
-        'created_at_epoch_ms': createdAtEpochMs,
-        'updated_at_epoch_ms': updatedAtEpochMs,
-      };
+    'id': id,
+    'name': name,
+    'color_hex': colorHex,
+    'icon_name': iconName,
+    'is_pinned': isPinned ? 1 : 0,
+    'sort_order': sortOrder,
+    'is_archived': isArchived ? 1 : 0,
+    'created_at_epoch_ms': createdAtEpochMs,
+    'updated_at_epoch_ms': updatedAtEpochMs,
+  };
 
   factory Activity.fromMap(Map<String, dynamic> map) => Activity(
-        id: map['id'] as String,
-        name: map['name'] as String,
-        colorHex: map['color_hex'] as String? ?? '#4CAF50',
-        iconName: map['icon_name'] as String? ?? 'schedule',
-        isPinned: (map['is_pinned'] as int? ?? 0) == 1,
-        sortOrder: map['sort_order'] as int? ?? 0,
-        isArchived: (map['is_archived'] as int? ?? 0) == 1,
-        createdAtEpochMs: map['created_at_epoch_ms'] as int,
-        updatedAtEpochMs: map['updated_at_epoch_ms'] as int,
-      );
+    id: map['id'] as String,
+    name: map['name'] as String,
+    colorHex: map['color_hex'] as String? ?? '#4CAF50',
+    iconName: map['icon_name'] as String? ?? 'schedule',
+    isPinned: (map['is_pinned'] as int? ?? 0) == 1,
+    sortOrder: map['sort_order'] as int? ?? 0,
+    isArchived: (map['is_archived'] as int? ?? 0) == 1,
+    createdAtEpochMs: map['created_at_epoch_ms'] as int,
+    updatedAtEpochMs: map['updated_at_epoch_ms'] as int,
+  );
 
   Activity copyWith({
     String? id,
@@ -55,18 +55,17 @@ class Activity {
     bool? isArchived,
     int? createdAtEpochMs,
     int? updatedAtEpochMs,
-  }) =>
-      Activity(
-        id: id ?? this.id,
-        name: name ?? this.name,
-        colorHex: colorHex ?? this.colorHex,
-        iconName: iconName ?? this.iconName,
-        isPinned: isPinned ?? this.isPinned,
-        sortOrder: sortOrder ?? this.sortOrder,
-        isArchived: isArchived ?? this.isArchived,
-        createdAtEpochMs: createdAtEpochMs ?? this.createdAtEpochMs,
-        updatedAtEpochMs: updatedAtEpochMs ?? this.updatedAtEpochMs,
-      );
+  }) => Activity(
+    id: id ?? this.id,
+    name: name ?? this.name,
+    colorHex: colorHex ?? this.colorHex,
+    iconName: iconName ?? this.iconName,
+    isPinned: isPinned ?? this.isPinned,
+    sortOrder: sortOrder ?? this.sortOrder,
+    isArchived: isArchived ?? this.isArchived,
+    createdAtEpochMs: createdAtEpochMs ?? this.createdAtEpochMs,
+    updatedAtEpochMs: updatedAtEpochMs ?? this.updatedAtEpochMs,
+  );
 
   @override
   bool operator ==(Object other) =>

@@ -10,27 +10,26 @@ class Tombstone {
   });
 
   Map<String, dynamic> toMap() => {
-        'entity_id': entityId,
-        'entity_type': entityType,
-        'deleted_at_epoch_ms': deletedAtEpochMs,
-      };
+    'entity_id': entityId,
+    'entity_type': entityType,
+    'deleted_at_epoch_ms': deletedAtEpochMs,
+  };
 
   factory Tombstone.fromMap(Map<String, dynamic> map) => Tombstone(
-        entityId: map['entity_id'] as String,
-        entityType: map['entity_type'] as String,
-        deletedAtEpochMs: map['deleted_at_epoch_ms'] as int,
-      );
+    entityId: map['entity_id'] as String,
+    entityType: map['entity_type'] as String,
+    deletedAtEpochMs: map['deleted_at_epoch_ms'] as int,
+  );
 
   Tombstone copyWith({
     String? entityId,
     String? entityType,
     int? deletedAtEpochMs,
-  }) =>
-      Tombstone(
-        entityId: entityId ?? this.entityId,
-        entityType: entityType ?? this.entityType,
-        deletedAtEpochMs: deletedAtEpochMs ?? this.deletedAtEpochMs,
-      );
+  }) => Tombstone(
+    entityId: entityId ?? this.entityId,
+    entityType: entityType ?? this.entityType,
+    deletedAtEpochMs: deletedAtEpochMs ?? this.deletedAtEpochMs,
+  );
 
   @override
   bool operator ==(Object other) =>

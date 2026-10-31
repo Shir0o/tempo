@@ -34,33 +34,32 @@ class Record {
   });
 
   Map<String, dynamic> toMap() => {
-        'id': id,
-        'activity_id': activityId,
-        'started_at_epoch_ms': startedAtEpochMs,
-        'ended_at_epoch_ms': endedAtEpochMs,
-        'duration_ms': durationMs,
-        'comment': comment,
-        'timezone_id': timezoneId,
-        'created_at_epoch_ms': createdAtEpochMs,
-        'updated_at_epoch_ms': updatedAtEpochMs,
-      };
+    'id': id,
+    'activity_id': activityId,
+    'started_at_epoch_ms': startedAtEpochMs,
+    'ended_at_epoch_ms': endedAtEpochMs,
+    'duration_ms': durationMs,
+    'comment': comment,
+    'timezone_id': timezoneId,
+    'created_at_epoch_ms': createdAtEpochMs,
+    'updated_at_epoch_ms': updatedAtEpochMs,
+  };
 
   factory Record.fromMap(
     Map<String, dynamic> map, {
     List<String> tagIds = const [],
-  }) =>
-      Record(
-        id: map['id'] as String,
-        activityId: map['activity_id'] as String,
-        startedAtEpochMs: map['started_at_epoch_ms'] as int,
-        endedAtEpochMs: map['ended_at_epoch_ms'] as int,
-        durationMs: map['duration_ms'] as int,
-        comment: map['comment'] as String? ?? '',
-        timezoneId: map['timezone_id'] as String,
-        createdAtEpochMs: map['created_at_epoch_ms'] as int,
-        updatedAtEpochMs: map['updated_at_epoch_ms'] as int,
-        tagIds: tagIds,
-      );
+  }) => Record(
+    id: map['id'] as String,
+    activityId: map['activity_id'] as String,
+    startedAtEpochMs: map['started_at_epoch_ms'] as int,
+    endedAtEpochMs: map['ended_at_epoch_ms'] as int,
+    durationMs: map['duration_ms'] as int,
+    comment: map['comment'] as String? ?? '',
+    timezoneId: map['timezone_id'] as String,
+    createdAtEpochMs: map['created_at_epoch_ms'] as int,
+    updatedAtEpochMs: map['updated_at_epoch_ms'] as int,
+    tagIds: tagIds,
+  );
 
   Record copyWith({
     String? id,
@@ -73,19 +72,18 @@ class Record {
     int? createdAtEpochMs,
     int? updatedAtEpochMs,
     List<String>? tagIds,
-  }) =>
-      Record(
-        id: id ?? this.id,
-        activityId: activityId ?? this.activityId,
-        startedAtEpochMs: startedAtEpochMs ?? this.startedAtEpochMs,
-        endedAtEpochMs: endedAtEpochMs ?? this.endedAtEpochMs,
-        durationMs: durationMs ?? this.durationMs,
-        comment: comment ?? this.comment,
-        timezoneId: timezoneId ?? this.timezoneId,
-        createdAtEpochMs: createdAtEpochMs ?? this.createdAtEpochMs,
-        updatedAtEpochMs: updatedAtEpochMs ?? this.updatedAtEpochMs,
-        tagIds: tagIds ?? this.tagIds,
-      );
+  }) => Record(
+    id: id ?? this.id,
+    activityId: activityId ?? this.activityId,
+    startedAtEpochMs: startedAtEpochMs ?? this.startedAtEpochMs,
+    endedAtEpochMs: endedAtEpochMs ?? this.endedAtEpochMs,
+    durationMs: durationMs ?? this.durationMs,
+    comment: comment ?? this.comment,
+    timezoneId: timezoneId ?? this.timezoneId,
+    createdAtEpochMs: createdAtEpochMs ?? this.createdAtEpochMs,
+    updatedAtEpochMs: updatedAtEpochMs ?? this.updatedAtEpochMs,
+    tagIds: tagIds ?? this.tagIds,
+  );
 
   @override
   bool operator ==(Object other) =>

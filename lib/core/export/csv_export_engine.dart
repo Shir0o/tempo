@@ -43,15 +43,16 @@ class CsvExportEngine {
     String Function()? generateUuid,
     DateTime Function(int epochMs)? epochToDateTime,
     this.onExportCompleted,
-  })  : targetFile = _resolveTargetFile(
-          targetFile: targetFile,
-          targetFilePath: targetFilePath,
-          exportDirectory: exportDirectory,
-          fileName: fileName,
-        ),
-        _generateUuid = generateUuid ?? (() => const Uuid().v4()),
-        _epochToDateTime = epochToDateTime ??
-            ((ms) => DateTime.fromMillisecondsSinceEpoch(ms, isUtc: false));
+  }) : targetFile = _resolveTargetFile(
+         targetFile: targetFile,
+         targetFilePath: targetFilePath,
+         exportDirectory: exportDirectory,
+         fileName: fileName,
+       ),
+       _generateUuid = generateUuid ?? (() => const Uuid().v4()),
+       _epochToDateTime =
+           epochToDateTime ??
+           ((ms) => DateTime.fromMillisecondsSinceEpoch(ms, isUtc: false));
 
   /// Factory creating an engine targeting [directory] with [fileName].
   factory CsvExportEngine.toDirectory({
@@ -61,15 +62,14 @@ class CsvExportEngine {
     Duration debounceDuration = defaultDebounceDuration,
     String Function()? generateUuid,
     DateTime Function(int epochMs)? epochToDateTime,
-  }) =>
-      CsvExportEngine(
-        database: database,
-        exportDirectory: directory,
-        fileName: fileName,
-        debounceDuration: debounceDuration,
-        generateUuid: generateUuid,
-        epochToDateTime: epochToDateTime,
-      );
+  }) => CsvExportEngine(
+    database: database,
+    exportDirectory: directory,
+    fileName: fileName,
+    debounceDuration: debounceDuration,
+    generateUuid: generateUuid,
+    epochToDateTime: epochToDateTime,
+  );
 
   static File _resolveTargetFile({
     File? targetFile,
@@ -175,8 +175,9 @@ class CsvExportEngine {
     final allTags = await database.getAllTags();
     final tagMap = {for (final t in allTags) t.id: t.name};
 
-    final records =
-        await database.getRecords(orderBy: 'started_at_epoch_ms ASC');
+    final records = await database.getRecords(
+      orderBy: 'started_at_epoch_ms ASC',
+    );
     records.sort((a, b) => a.startedAtEpochMs.compareTo(b.startedAtEpochMs));
 
     final buffer = StringBuffer();
@@ -268,44 +269,44 @@ class CsvExportEngine {
   /// 2. Flush to ensure physical byte persistence via [RandomAccessFile.flush].
   /// 3. Atomically rename/move sibling file to [targetFile].
   Future<File> _performExport() => _synchronized(() async {
-        final csvContent = await generateCsvString();
+    final csvContent = await generateCsvString();
 
-        final parentDir = targetFile.parent;
-        if (!await parentDir.exists()) {
-          await parentDir.create(recursive: true);
-        }
+    final parentDir = targetFile.parent;
+    if (!await parentDir.exists()) {
+      await parentDir.create(recursive: true);
+    }
 
-        final targetName = p.basename(targetFile.path);
-        final uuid = _generateUuid();
-        final tempFilePath = p.join(parentDir.path, '.$targetName.tmp.$uuid');
-        final tempFile = File(tempFilePath);
+    final targetName = p.basename(targetFile.path);
+    final uuid = _generateUuid();
+    final tempFilePath = p.join(parentDir.path, '.$targetName.tmp.$uuid');
+    final tempFile = File(tempFilePath);
 
-        RandomAccessFile? raf;
+    RandomAccessFile? raf;
+    try {
+      raf = await tempFile.open(mode: FileMode.write);
+      await raf.writeString(csvContent);
+      await raf.flush();
+      await raf.close();
+      raf = null;
+
+      // Atomic rename: POSIX rename replaces destination file atomically.
+      final renamedFile = await tempFile.rename(targetFile.path);
+      await onExportCompleted?.call(renamedFile);
+      return renamedFile;
+    } catch (e) {
+      if (raf != null) {
         try {
-          raf = await tempFile.open(mode: FileMode.write);
-          await raf.writeString(csvContent);
-          await raf.flush();
           await raf.close();
-          raf = null;
-
-          // Atomic rename: POSIX rename replaces destination file atomically.
-          final renamedFile = await tempFile.rename(targetFile.path);
-          await onExportCompleted?.call(renamedFile);
-          return renamedFile;
-        } catch (e) {
-          if (raf != null) {
-            try {
-              await raf.close();
-            } catch (_) {}
-          }
-          if (await tempFile.exists()) {
-            try {
-              await tempFile.delete();
-            } catch (_) {}
-          }
-          rethrow;
-        }
-      });
+        } catch (_) {}
+      }
+      if (await tempFile.exists()) {
+        try {
+          await tempFile.delete();
+        } catch (_) {}
+      }
+      rethrow;
+    }
+  });
 
   /// Single-writer mutex ensuring only one disk write executes at any time.
   Future<T> _synchronized<T>(Future<T> Function() action) async {

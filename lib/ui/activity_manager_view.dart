@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
+
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
 import 'helpers/ui_helpers.dart';
@@ -8,10 +9,7 @@ import 'helpers/ui_helpers.dart';
 class ActivityManagerView extends StatefulWidget {
   final TempoDatabase database;
 
-  const ActivityManagerView({
-    super.key,
-    required this.database,
-  });
+  const ActivityManagerView({super.key, required this.database});
 
   @override
   State<ActivityManagerView> createState() => _ActivityManagerViewState();
@@ -68,7 +66,9 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
       setState(() => _isLoading = true);
     }
     try {
-      final list = await widget.database.getAllActivities(includeArchived: true);
+      final list = await widget.database.getAllActivities(
+        includeArchived: true,
+      );
       if (mounted) {
         setState(() {
           _activities = list;
@@ -109,7 +109,9 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
-                      existing == null ? 'New Habit / Activity' : 'Edit Activity',
+                      existing == null
+                          ? 'New Habit / Activity'
+                          : 'Edit Activity',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 18,
@@ -141,8 +143,14 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                     // Pinned Switch
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
-                      title: const Text('Pin to 1-Tap Dashboard', style: TextStyle(color: Colors.white, fontSize: 14)),
-                      subtitle: const Text('Pinned habits appear in the quick capture grid', style: TextStyle(color: Colors.white38, fontSize: 11)),
+                      title: const Text(
+                        'Pin to 1-Tap Dashboard',
+                        style: TextStyle(color: Colors.white, fontSize: 14),
+                      ),
+                      subtitle: const Text(
+                        'Pinned habits appear in the quick capture grid',
+                        style: TextStyle(color: Colors.white38, fontSize: 11),
+                      ),
                       value: isPinned,
                       activeTrackColor: const Color(0xFF4CAF50),
                       onChanged: (val) => setModalState(() => isPinned = val),
@@ -150,14 +158,22 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                     const SizedBox(height: 12),
 
                     // Color palette
-                    const Text('COLOR', style: TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.bold)),
+                    const Text(
+                      'COLOR',
+                      style: TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
                       children: _colorPalette.map((hex) {
                         final color = UiHelpers.parseHexColor(hex);
-                        final isSelected = hex.toLowerCase() == selectedColor.toLowerCase();
+                        final isSelected =
+                            hex.toLowerCase() == selectedColor.toLowerCase();
                         return GestureDetector(
                           onTap: () => setModalState(() => selectedColor = hex),
                           child: Container(
@@ -167,12 +183,18 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                               color: color,
                               shape: BoxShape.circle,
                               border: Border.all(
-                                color: isSelected ? Colors.white : Colors.transparent,
+                                color: isSelected
+                                    ? Colors.white
+                                    : Colors.transparent,
                                 width: 2.5,
                               ),
                             ),
                             child: isSelected
-                                ? const Icon(Icons.check, color: Colors.white, size: 18)
+                                ? const Icon(
+                                    Icons.check,
+                                    color: Colors.white,
+                                    size: 18,
+                                  )
                                 : null,
                           ),
                         );
@@ -181,7 +203,14 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                     const SizedBox(height: 16),
 
                     // Icon options
-                    const Text('ICON', style: TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.bold)),
+                    const Text(
+                      'ICON',
+                      style: TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
@@ -190,13 +219,15 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                         final icon = UiHelpers.getIconData(iconKey);
                         final isSelected = iconKey == selectedIcon;
                         return GestureDetector(
-                          onTap: () => setModalState(() => selectedIcon = iconKey),
+                          onTap: () =>
+                              setModalState(() => selectedIcon = iconKey),
                           child: Container(
                             width: 38,
                             height: 38,
                             decoration: BoxDecoration(
                               color: isSelected
-                                  ? UiHelpers.parseHexColor(selectedColor).withValues(alpha: 0.3)
+                                  ? UiHelpers.parseHexColor(selectedColor)
+                                        .withValues(alpha: 0.3)
                                   : Colors.white.withValues(alpha: 0.05),
                               borderRadius: BorderRadius.circular(8),
                               border: Border.all(
@@ -222,7 +253,9 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                         final name = nameController.text.trim();
                         if (name.isEmpty) return;
 
-                        final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+                        final now = DateTime.now()
+                            .toUtc()
+                            .millisecondsSinceEpoch;
                         if (existing != null) {
                           final updated = existing.copyWith(
                             name: name,
@@ -254,7 +287,9 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                         backgroundColor: const Color(0xFF4CAF50),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
                       ),
                       child: Text(
                         existing != null ? 'Save Changes' : 'Create Activity',
@@ -288,7 +323,11 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
       appBar: AppBar(
         title: const Text(
           'Habits & Activities',
-          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
         ),
         backgroundColor: const Color(0xFF121216),
         elevation: 0,
@@ -299,7 +338,9 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
         child: const Icon(Icons.add, color: Colors.white),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: Color(0xFF4CAF50)))
+          ? const Center(
+              child: CircularProgressIndicator(color: Color(0xFF4CAF50)),
+            )
           : ListView.builder(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               itemCount: _activities.length,
@@ -315,66 +356,89 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                     clipBehavior: Clip.antiAlias,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
-                      side: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
+                      side: BorderSide(
+                        color: Colors.white.withValues(alpha: 0.05),
+                      ),
                     ),
                     child: ListTile(
-                    onTap: () => _openActivityEditor(activity),
-                    leading: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: color.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(8),
+                      onTap: () => _openActivityEditor(activity),
+                      leading: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(icon, color: color, size: 20),
                       ),
-                      child: Icon(icon, color: color, size: 20),
-                    ),
-                    title: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            activity.name,
-                            style: TextStyle(
-                              color: activity.isArchived ? Colors.white38 : Colors.white,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                              decoration: activity.isArchived ? TextDecoration.lineThrough : null,
+                      title: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              activity.name,
+                              style: TextStyle(
+                                color: activity.isArchived
+                                    ? Colors.white38
+                                    : Colors.white,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                decoration: activity.isArchived
+                                    ? TextDecoration.lineThrough
+                                    : null,
+                              ),
                             ),
                           ),
+                          if (activity.isPinned)
+                            const Icon(
+                              Icons.push_pin,
+                              color: Color(0xFF4CAF50),
+                              size: 16,
+                            ),
+                        ],
+                      ),
+                      subtitle: Text(
+                        activity.isArchived
+                            ? 'Archived'
+                            : (activity.isPinned
+                                  ? 'Pinned to dashboard'
+                                  : 'Standard habit'),
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 11,
                         ),
-                        if (activity.isPinned)
-                          const Icon(Icons.push_pin, color: Color(0xFF4CAF50), size: 16),
-                      ],
-                    ),
-                    subtitle: Text(
-                      activity.isArchived ? 'Archived' : (activity.isPinned ? 'Pinned to dashboard' : 'Standard habit'),
-                      style: const TextStyle(color: Colors.white38, fontSize: 11),
-                    ),
-                    trailing: PopupMenuButton<String>(
-                      icon: const Icon(Icons.more_vert, color: Colors.white54),
-                      color: const Color(0xFF22222C),
-                      onSelected: (val) {
-                        if (val == 'edit') {
-                          _openActivityEditor(activity);
-                        } else if (val == 'archive') {
-                          _toggleArchive(activity);
-                        }
-                      },
-                      itemBuilder: (_) => [
-                        const PopupMenuItem(
-                          value: 'edit',
-                          child: Text('Edit', style: TextStyle(color: Colors.white)),
+                      ),
+                      trailing: PopupMenuButton<String>(
+                        icon: const Icon(
+                          Icons.more_vert,
+                          color: Colors.white54,
                         ),
-                        PopupMenuItem(
-                          value: 'archive',
-                          child: Text(
-                            activity.isArchived ? 'Unarchive' : 'Archive',
-                            style: const TextStyle(color: Colors.white70),
+                        color: const Color(0xFF22222C),
+                        onSelected: (val) {
+                          if (val == 'edit') {
+                            _openActivityEditor(activity);
+                          } else if (val == 'archive') {
+                            _toggleArchive(activity);
+                          }
+                        },
+                        itemBuilder: (_) => [
+                          const PopupMenuItem(
+                            value: 'edit',
+                            child: Text(
+                              'Edit',
+                              style: TextStyle(color: Colors.white),
+                            ),
                           ),
-                        ),
-                      ],
+                          PopupMenuItem(
+                            value: 'archive',
+                            child: Text(
+                              activity.isArchived ? 'Unarchive' : 'Archive',
+                              style: const TextStyle(color: Colors.white70),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              );
+                );
               },
             ),
     );

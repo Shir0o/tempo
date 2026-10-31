@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
 import 'helpers/ui_helpers.dart';
@@ -9,10 +10,7 @@ import 'stats_calculator.dart';
 class StatsView extends StatefulWidget {
   final TempoDatabase database;
 
-  const StatsView({
-    super.key,
-    required this.database,
-  });
+  const StatsView({super.key, required this.database});
 
   @override
   State<StatsView> createState() => _StatsViewState();
@@ -37,7 +35,9 @@ class _StatsViewState extends State<StatsView> {
       setState(() => _isLoading = true);
     }
     try {
-      final activities = await widget.database.getAllActivities(includeArchived: true);
+      final activities = await widget.database.getAllActivities(
+        includeArchived: true,
+      );
       final records = await widget.database.getRecords(limit: 5000);
 
       final map = {for (final a in activities) a.id: a};
@@ -100,7 +100,10 @@ class _StatsViewState extends State<StatsView> {
                   child: CircularProgressIndicator(color: Color(0xFF4CAF50)),
                 )
               : ListView(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
                   children: [
                     _buildPeriodSelector(),
                     const SizedBox(height: 16),
@@ -132,7 +135,9 @@ class _StatsViewState extends State<StatsView> {
                 duration: const Duration(milliseconds: 150),
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 decoration: BoxDecoration(
-                  color: isSelected ? const Color(0xFF4CAF50) : Colors.transparent,
+                  color: isSelected
+                      ? const Color(0xFF4CAF50)
+                      : Colors.transparent,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 alignment: Alignment.center,
@@ -156,8 +161,12 @@ class _StatsViewState extends State<StatsView> {
     final report = _report;
     if (report == null) return const SizedBox.shrink();
 
-    final totalFormatted = UiHelpers.formatDurationHuman(report.totalDurationMs);
-    final avgFormatted = UiHelpers.formatDurationHuman(report.averageSessionDurationMs);
+    final totalFormatted = UiHelpers.formatDurationHuman(
+      report.totalDurationMs,
+    );
+    final avgFormatted = UiHelpers.formatDurationHuman(
+      report.averageSessionDurationMs,
+    );
     final mostActive = report.mostActiveHabit?.name ?? '—';
     final mostActiveColor = report.mostActiveHabit != null
         ? UiHelpers.parseHexColor(report.mostActiveHabit!.colorHex)
@@ -255,7 +264,11 @@ class _StatsViewState extends State<StatsView> {
         alignment: Alignment.center,
         child: Column(
           children: [
-            Icon(Icons.pie_chart_outline, size: 48, color: Colors.white.withValues(alpha: 0.15)),
+            Icon(
+              Icons.pie_chart_outline,
+              size: 48,
+              color: Colors.white.withValues(alpha: 0.15),
+            ),
             const SizedBox(height: 12),
             const Text(
               'No time logged for this period.',

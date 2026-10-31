@@ -1,6 +1,8 @@
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+
 import '../core/state/timer_state_machine.dart';
 import '../data/database/tempo_database.dart';
 
@@ -58,10 +60,10 @@ class MenuBarService {
     this.includeBrackets = true,
     this.onToggleQuickMenu,
     this.onOpenFullWindow,
-  })  : _channel = channel ?? const MethodChannel(channelName),
-        _nowUtcMs =
-            nowUtcMs ?? (() => DateTime.now().toUtc().millisecondsSinceEpoch),
-        _displayMode = initialMode {
+  }) : _channel = channel ?? const MethodChannel(channelName),
+       _nowUtcMs =
+           nowUtcMs ?? (() => DateTime.now().toUtc().millisecondsSinceEpoch),
+       _displayMode = initialMode {
     _initChannelHandler();
     timerStateMachine.activeTimerNotifier.addListener(_onActiveTimerChanged);
     _onActiveTimerChanged();
@@ -299,8 +301,7 @@ class MenuBarService {
   /// Closes ticker and cleans up notifiers.
   void dispose() {
     _stopTicker();
-    timerStateMachine.activeTimerNotifier
-        .removeListener(_onActiveTimerChanged);
+    timerStateMachine.activeTimerNotifier.removeListener(_onActiveTimerChanged);
     _titleNotifier.dispose();
   }
 }

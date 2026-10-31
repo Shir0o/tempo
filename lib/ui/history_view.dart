@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
 import 'helpers/ui_helpers.dart';
@@ -9,10 +10,7 @@ import 'helpers/ui_helpers.dart';
 class HistoryView extends StatefulWidget {
   final TempoDatabase database;
 
-  const HistoryView({
-    super.key,
-    required this.database,
-  });
+  const HistoryView({super.key, required this.database});
 
   @override
   State<HistoryView> createState() => _HistoryViewState();
@@ -39,7 +37,9 @@ class _HistoryViewState extends State<HistoryView> {
         orderBy: 'started_at_epoch_ms DESC',
         limit: 1000,
       );
-      final activities = await widget.database.getAllActivities(includeArchived: true);
+      final activities = await widget.database.getAllActivities(
+        includeArchived: true,
+      );
       final tags = await widget.database.getAllTags();
 
       if (mounted) {
@@ -71,8 +71,12 @@ class _HistoryViewState extends State<HistoryView> {
     final color = UiHelpers.parseHexColor(activity?.colorHex);
     final commentController = TextEditingController(text: record.comment);
 
-    DateTime startDateTime = DateTime.fromMillisecondsSinceEpoch(record.startedAtEpochMs);
-    DateTime endDateTime = DateTime.fromMillisecondsSinceEpoch(record.endedAtEpochMs);
+    DateTime startDateTime = DateTime.fromMillisecondsSinceEpoch(
+      record.startedAtEpochMs,
+    );
+    DateTime endDateTime = DateTime.fromMillisecondsSinceEpoch(
+      record.endedAtEpochMs,
+    );
     List<String> selectedTagIds = List.from(record.tagIds);
 
     final allTags = _tagsMap.values.toList();
@@ -87,7 +91,9 @@ class _HistoryViewState extends State<HistoryView> {
       builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setModalState) {
-            final durationMs = endDateTime.millisecondsSinceEpoch - startDateTime.millisecondsSinceEpoch;
+            final durationMs =
+                endDateTime.millisecondsSinceEpoch -
+                startDateTime.millisecondsSinceEpoch;
             final durationStr = UiHelpers.formatDurationHuman(durationMs);
 
             return Padding(
@@ -143,26 +149,40 @@ class _HistoryViewState extends State<HistoryView> {
                           ),
                         ),
                         IconButton(
-                          icon: const Icon(Icons.delete_outline, color: Color(0xFFE57373)),
+                          icon: const Icon(
+                            Icons.delete_outline,
+                            color: Color(0xFFE57373),
+                          ),
                           tooltip: 'Delete Record',
                           onPressed: () async {
                             final confirm = await showDialog<bool>(
                               context: context,
                               builder: (dCtx) => AlertDialog(
                                 backgroundColor: const Color(0xFF22222C),
-                                title: const Text('Delete Record?', style: TextStyle(color: Colors.white)),
+                                title: const Text(
+                                  'Delete Record?',
+                                  style: TextStyle(color: Colors.white),
+                                ),
                                 content: const Text(
                                   'This record will be permanently deleted and a tombstone recorded.',
                                   style: TextStyle(color: Colors.white70),
                                 ),
                                 actions: [
                                   TextButton(
-                                    onPressed: () => Navigator.of(dCtx).pop(false),
-                                    child: const Text('Cancel', style: TextStyle(color: Colors.white60)),
+                                    onPressed: () =>
+                                        Navigator.of(dCtx).pop(false),
+                                    child: const Text(
+                                      'Cancel',
+                                      style: TextStyle(color: Colors.white60),
+                                    ),
                                   ),
                                   TextButton(
-                                    onPressed: () => Navigator.of(dCtx).pop(true),
-                                    child: const Text('Delete', style: TextStyle(color: Colors.redAccent)),
+                                    onPressed: () =>
+                                        Navigator.of(dCtx).pop(true),
+                                    child: const Text(
+                                      'Delete',
+                                      style: TextStyle(color: Colors.redAccent),
+                                    ),
                                   ),
                                 ],
                               ),
@@ -193,7 +213,9 @@ class _HistoryViewState extends State<HistoryView> {
                             onTap: () async {
                               final time = await showTimePicker(
                                 context: context,
-                                initialTime: TimeOfDay.fromDateTime(startDateTime),
+                                initialTime: TimeOfDay.fromDateTime(
+                                  startDateTime,
+                                ),
                               );
                               if (time != null) {
                                 setModalState(() {
@@ -205,14 +227,22 @@ class _HistoryViewState extends State<HistoryView> {
                                     time.minute,
                                   );
                                   if (endDateTime.isBefore(startDateTime)) {
-                                    endDateTime = startDateTime.add(const Duration(minutes: 30));
+                                    endDateTime = startDateTime.add(
+                                      const Duration(minutes: 30),
+                                    );
                                   }
                                 });
                               }
                             },
                             child: Column(
                               children: [
-                                const Text('START', style: TextStyle(color: Colors.white38, fontSize: 10)),
+                                const Text(
+                                  'START',
+                                  style: TextStyle(
+                                    color: Colors.white38,
+                                    fontSize: 10,
+                                  ),
+                                ),
                                 const SizedBox(height: 4),
                                 Text(
                                   DateFormat('HH:mm').format(startDateTime),
@@ -226,12 +256,18 @@ class _HistoryViewState extends State<HistoryView> {
                               ],
                             ),
                           ),
-                          const Icon(Icons.arrow_forward, color: Colors.white24, size: 16),
+                          const Icon(
+                            Icons.arrow_forward,
+                            color: Colors.white24,
+                            size: 16,
+                          ),
                           InkWell(
                             onTap: () async {
                               final time = await showTimePicker(
                                 context: context,
-                                initialTime: TimeOfDay.fromDateTime(endDateTime),
+                                initialTime: TimeOfDay.fromDateTime(
+                                  endDateTime,
+                                ),
                               );
                               if (time != null) {
                                 setModalState(() {
@@ -243,14 +279,22 @@ class _HistoryViewState extends State<HistoryView> {
                                     time.minute,
                                   );
                                   if (endDateTime.isBefore(startDateTime)) {
-                                    startDateTime = endDateTime.subtract(const Duration(minutes: 30));
+                                    startDateTime = endDateTime.subtract(
+                                      const Duration(minutes: 30),
+                                    );
                                   }
                                 });
                               }
                             },
                             child: Column(
                               children: [
-                                const Text('END', style: TextStyle(color: Colors.white38, fontSize: 10)),
+                                const Text(
+                                  'END',
+                                  style: TextStyle(
+                                    color: Colors.white38,
+                                    fontSize: 10,
+                                  ),
+                                ),
                                 const SizedBox(height: 4),
                                 Text(
                                   DateFormat('HH:mm').format(endDateTime),
@@ -275,9 +319,15 @@ class _HistoryViewState extends State<HistoryView> {
                       style: const TextStyle(color: Colors.white, fontSize: 13),
                       decoration: InputDecoration(
                         labelText: 'Notes / Comment',
-                        labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
+                        labelStyle: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 12,
+                        ),
                         hintText: 'e.g. w/ Bob - Planning discussion',
-                        hintStyle: const TextStyle(color: Colors.white24, fontSize: 12),
+                        hintStyle: const TextStyle(
+                          color: Colors.white24,
+                          fontSize: 12,
+                        ),
                         filled: true,
                         fillColor: Colors.white.withValues(alpha: 0.05),
                         border: OutlineInputBorder(
@@ -308,15 +358,20 @@ class _HistoryViewState extends State<HistoryView> {
                           return FilterChip(
                             label: Text(tag.name),
                             selected: isSelected,
-                            selectedColor: const Color(0xFF4CAF50).withValues(alpha: 0.3),
+                            selectedColor: const Color(0xFF4CAF50)
+                                .withValues(alpha: 0.3),
                             checkmarkColor: Colors.white,
                             labelStyle: TextStyle(
                               color: isSelected ? Colors.white : Colors.white60,
                               fontSize: 11,
                             ),
-                            backgroundColor: Colors.white.withValues(alpha: 0.05),
+                            backgroundColor: Colors.white.withValues(
+                              alpha: 0.05,
+                            ),
                             side: BorderSide(
-                              color: isSelected ? const Color(0xFF4CAF50) : Colors.transparent,
+                              color: isSelected
+                                  ? const Color(0xFF4CAF50)
+                                  : Colors.transparent,
                             ),
                             onSelected: (selected) {
                               setModalState(() {
@@ -338,10 +393,15 @@ class _HistoryViewState extends State<HistoryView> {
                       onPressed: () async {
                         final updated = record.copyWith(
                           comment: commentController.text.trim(),
-                          startedAtEpochMs: startDateTime.millisecondsSinceEpoch,
+                          startedAtEpochMs:
+                              startDateTime.millisecondsSinceEpoch,
                           endedAtEpochMs: endDateTime.millisecondsSinceEpoch,
-                          durationMs: endDateTime.millisecondsSinceEpoch - startDateTime.millisecondsSinceEpoch,
-                          updatedAtEpochMs: DateTime.now().toUtc().millisecondsSinceEpoch,
+                          durationMs:
+                              endDateTime.millisecondsSinceEpoch -
+                              startDateTime.millisecondsSinceEpoch,
+                          updatedAtEpochMs: DateTime.now()
+                              .toUtc()
+                              .millisecondsSinceEpoch,
                           tagIds: selectedTagIds,
                         );
 
@@ -357,7 +417,10 @@ class _HistoryViewState extends State<HistoryView> {
                           borderRadius: BorderRadius.circular(10),
                         ),
                       ),
-                      child: const Text('Save Changes', style: TextStyle(fontWeight: FontWeight.bold)),
+                      child: const Text(
+                        'Save Changes',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
                     ),
                     const SizedBox(height: 20),
                   ],
@@ -392,22 +455,28 @@ class _HistoryViewState extends State<HistoryView> {
           onRefresh: _loadData,
           color: const Color(0xFF4CAF50),
           child: _isLoading
-              ? const Center(child: CircularProgressIndicator(color: Color(0xFF4CAF50)))
+              ? const Center(
+                  child: CircularProgressIndicator(color: Color(0xFF4CAF50)),
+                )
               : _records.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.history_rounded, size: 56, color: Colors.white.withValues(alpha: 0.15)),
-                          const SizedBox(height: 12),
-                          const Text(
-                            'No recorded sessions yet.',
-                            style: TextStyle(color: Colors.white54, fontSize: 14),
-                          ),
-                        ],
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.history_rounded,
+                        size: 56,
+                        color: Colors.white.withValues(alpha: 0.15),
                       ),
-                    )
-                  : _buildGroupedRecordsList(),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'No recorded sessions yet.',
+                        style: TextStyle(color: Colors.white54, fontSize: 14),
+                      ),
+                    ],
+                  ),
+                )
+              : _buildGroupedRecordsList(),
         ),
       ),
     );
@@ -423,10 +492,15 @@ class _HistoryViewState extends State<HistoryView> {
       itemBuilder: (context, dateIndex) {
         final dateKey = dateKeys[dateIndex];
         final recordsForDate = grouped[dateKey]!;
-        final firstDate = DateTime.fromMillisecondsSinceEpoch(recordsForDate.first.startedAtEpochMs);
+        final firstDate = DateTime.fromMillisecondsSinceEpoch(
+          recordsForDate.first.startedAtEpochMs,
+        );
         final headerTitle = UiHelpers.formatDateHeader(firstDate);
 
-        final totalDayMs = recordsForDate.fold<int>(0, (sum, r) => sum + r.durationMs);
+        final totalDayMs = recordsForDate.fold<int>(
+          0,
+          (sum, r) => sum + r.durationMs,
+        );
         final totalDayStr = UiHelpers.formatDurationHuman(totalDayMs);
 
         return Column(
@@ -469,7 +543,9 @@ class _HistoryViewState extends State<HistoryView> {
     final activity = _activitiesMap[record.activityId];
     final color = UiHelpers.parseHexColor(activity?.colorHex);
     final icon = UiHelpers.getIconData(activity?.iconName);
-    final startTime = DateTime.fromMillisecondsSinceEpoch(record.startedAtEpochMs);
+    final startTime = DateTime.fromMillisecondsSinceEpoch(
+      record.startedAtEpochMs,
+    );
     final endTime = DateTime.fromMillisecondsSinceEpoch(record.endedAtEpochMs);
     final timeRange = UiHelpers.formatTimeRange(startTime, endTime);
     final durationStr = UiHelpers.formatDurationHuman(record.durationMs);
@@ -552,7 +628,10 @@ class _HistoryViewState extends State<HistoryView> {
                 const SizedBox(width: 8),
                 // Duration Badge
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.05),
                     borderRadius: BorderRadius.circular(6),

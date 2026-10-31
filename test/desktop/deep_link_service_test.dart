@@ -25,28 +25,34 @@ void main() {
       mockTime = 1000000000;
       idCounter = 0;
 
-      await db.insertActivity(const Activity(
-        id: 'act-coding',
-        name: 'Coding',
-        colorHex: '#4CAF50',
-        createdAtEpochMs: 1000000000,
-        updatedAtEpochMs: 1000000000,
-      ));
+      await db.insertActivity(
+        const Activity(
+          id: 'act-coding',
+          name: 'Coding',
+          colorHex: '#4CAF50',
+          createdAtEpochMs: 1000000000,
+          updatedAtEpochMs: 1000000000,
+        ),
+      );
 
-      await db.insertActivity(const Activity(
-        id: 'act-workout',
-        name: 'Workout',
-        colorHex: '#FF5722',
-        createdAtEpochMs: 1000000000,
-        updatedAtEpochMs: 1000000000,
-      ));
+      await db.insertActivity(
+        const Activity(
+          id: 'act-workout',
+          name: 'Workout',
+          colorHex: '#FF5722',
+          createdAtEpochMs: 1000000000,
+          updatedAtEpochMs: 1000000000,
+        ),
+      );
 
-      await db.insertTag(const Tag(
-        id: 'tag-deep',
-        name: 'DeepWork',
-        createdAtEpochMs: 1000000000,
-        updatedAtEpochMs: 1000000000,
-      ));
+      await db.insertTag(
+        const Tag(
+          id: 'tag-deep',
+          name: 'DeepWork',
+          createdAtEpochMs: 1000000000,
+          updatedAtEpochMs: 1000000000,
+        ),
+      );
 
       stateMachine = TimerStateMachine(
         database: db,
@@ -69,38 +75,46 @@ void main() {
     });
 
     group('tempo://start', () {
-      test('starts timer with existing activity and decodes comment and tags',
-          () async {
-        final success = await deepLinkService.handleUrl(
-          'tempo://start?activity=Coding&comment=Review%20PR%20w/%20Alice&tags=DeepWork',
-        );
+      test(
+        'starts timer with existing activity and decodes comment and tags',
+        () async {
+          final success = await deepLinkService.handleUrl(
+            'tempo://start?activity=Coding&comment=Review%20PR%20w/%20Alice&tags=DeepWork',
+          );
 
-        expect(success, isTrue);
-        expect(stateMachine.isTracking, isTrue);
-        expect(stateMachine.activeTimer?.activityId, equals('act-coding'));
-        expect(stateMachine.activeTimer?.currentComment,
-            equals('Review PR w/ Alice'));
-        expect(stateMachine.activeTimer?.initialTagIds, contains('tag-deep'));
-      });
+          expect(success, isTrue);
+          expect(stateMachine.isTracking, isTrue);
+          expect(stateMachine.activeTimer?.activityId, equals('act-coding'));
+          expect(
+            stateMachine.activeTimer?.currentComment,
+            equals('Review PR w/ Alice'),
+          );
+          expect(stateMachine.activeTimer?.initialTagIds, contains('tag-deep'));
+        },
+      );
 
-      test('creates new activity and new tags when they do not exist', () async {
-        final success = await deepLinkService.handleUrl(
-          'tempo://start?activity=Guitar%20Practice&comment=Fingerpicking&tags=Music,Hobby',
-        );
+      test(
+        'creates new activity and new tags when they do not exist',
+        () async {
+          final success = await deepLinkService.handleUrl(
+            'tempo://start?activity=Guitar%20Practice&comment=Fingerpicking&tags=Music,Hobby',
+          );
 
-        expect(success, isTrue);
-        expect(stateMachine.isTracking, isTrue);
+          expect(success, isTrue);
+          expect(stateMachine.isTracking, isTrue);
 
-        final activity =
-            await db.getActivityById(stateMachine.activeTimer!.activityId);
-        expect(activity, isNotNull);
-        expect(activity!.name, equals('Guitar Practice'));
+          final activity = await db.getActivityById(
+            stateMachine.activeTimer!.activityId,
+          );
+          expect(activity, isNotNull);
+          expect(activity!.name, equals('Guitar Practice'));
 
-        final tags = await db.getAllTags();
-        expect(tags.any((t) => t.name == 'Music'), isTrue);
-        expect(tags.any((t) => t.name == 'Hobby'), isTrue);
-        expect(stateMachine.activeTimer?.initialTagIds.length, equals(2));
-      });
+          final tags = await db.getAllTags();
+          expect(tags.any((t) => t.name == 'Music'), isTrue);
+          expect(tags.any((t) => t.name == 'Hobby'), isTrue);
+          expect(stateMachine.activeTimer?.initialTagIds.length, equals(2));
+        },
+      );
 
       test('supports activity UUID lookup directly', () async {
         final success = await deepLinkService.handleUrl(
@@ -112,15 +126,17 @@ void main() {
         expect(stateMachine.activeTimer?.currentComment, equals('Chest Day'));
       });
 
-      test('supports timetracker:// scheme for backwards compatibility',
-          () async {
-        final success = await deepLinkService.handleUrl(
-          'timetracker://start?activity=Coding',
-        );
+      test(
+        'supports timetracker:// scheme for backwards compatibility',
+        () async {
+          final success = await deepLinkService.handleUrl(
+            'timetracker://start?activity=Coding',
+          );
 
-        expect(success, isTrue);
-        expect(stateMachine.activeTimer?.activityId, equals('act-coding'));
-      });
+          expect(success, isTrue);
+          expect(stateMachine.activeTimer?.activityId, equals('act-coding'));
+        },
+      );
 
       test('atomically switches when a timer is already active', () async {
         await deepLinkService.handleUrl(
@@ -146,15 +162,21 @@ void main() {
         expect(records.first.durationMs, equals(60000));
       });
 
-      test('returns false when activity parameter is missing or empty',
-          () async {
-        expect(await deepLinkService.handleUrl('tempo://start'), isFalse);
-        expect(
-            await deepLinkService.handleUrl('tempo://start?activity='), isFalse);
-        expect(await deepLinkService.handleUrl('tempo://start?activity=%20'),
-            isFalse);
-        expect(stateMachine.isIdle, isTrue);
-      });
+      test(
+        'returns false when activity parameter is missing or empty',
+        () async {
+          expect(await deepLinkService.handleUrl('tempo://start'), isFalse);
+          expect(
+            await deepLinkService.handleUrl('tempo://start?activity='),
+            isFalse,
+          );
+          expect(
+            await deepLinkService.handleUrl('tempo://start?activity=%20'),
+            isFalse,
+          );
+          expect(stateMachine.isIdle, isTrue);
+        },
+      );
     });
 
     group('tempo://stop', () {
@@ -175,18 +197,20 @@ void main() {
         expect(records.first.durationMs, equals(120000));
       });
 
-      test('stops running timer preserving current comment if none provided',
-          () async {
-        await stateMachine.start('act-coding', comment: 'Existing Note');
-        mockTime += 30000;
+      test(
+        'stops running timer preserving current comment if none provided',
+        () async {
+          await stateMachine.start('act-coding', comment: 'Existing Note');
+          mockTime += 30000;
 
-        final success = await deepLinkService.handleUrl('tempo://stop');
-        expect(success, isTrue);
-        expect(stateMachine.isIdle, isTrue);
+          final success = await deepLinkService.handleUrl('tempo://stop');
+          expect(success, isTrue);
+          expect(stateMachine.isIdle, isTrue);
 
-        final records = await db.getRecords();
-        expect(records.first.comment, equals('Existing Note'));
-      });
+          final records = await db.getRecords();
+          expect(records.first.comment, equals('Existing Note'));
+        },
+      );
 
       test('handles stop gracefully when idle without error', () async {
         final success = await deepLinkService.handleUrl('tempo://stop');
@@ -268,22 +292,29 @@ void main() {
         expect(stateMachine.activeTimer?.activityId, equals('act-workout'));
       });
 
-      test('stops active timer when no activity parameter is provided',
-          () async {
-        await stateMachine.start('act-coding');
+      test(
+        'stops active timer when no activity parameter is provided',
+        () async {
+          await stateMachine.start('act-coding');
 
-        final success = await deepLinkService.handleUrl('tempo://toggle');
-        expect(success, isTrue);
-        expect(stateMachine.isIdle, isTrue);
-      });
+          final success = await deepLinkService.handleUrl('tempo://toggle');
+          expect(success, isTrue);
+          expect(stateMachine.isIdle, isTrue);
+        },
+      );
     });
 
     group('Edge cases and URI variations', () {
       test('rejects unsupported URL schemes', () async {
-        expect(await deepLinkService.handleUrl('http://start?activity=Coding'),
-            isFalse);
+        expect(
+          await deepLinkService.handleUrl('http://start?activity=Coding'),
+          isFalse,
+        );
         expect(await deepLinkService.handleUrl('https://stop'), isFalse);
-        expect(await deepLinkService.handleUrl('file:///path/to/tempo'), isFalse);
+        expect(
+          await deepLinkService.handleUrl('file:///path/to/tempo'),
+          isFalse,
+        );
       });
 
       test('rejects empty or malformed strings gracefully', () async {
@@ -292,14 +323,16 @@ void main() {
         expect(await deepLinkService.handleUrl(':::malformed:::'), isFalse);
       });
 
-      test('handles path-based action syntax tempo:///start?activity=Coding',
-          () async {
-        final success = await deepLinkService.handleUrl(
-          'tempo:///start?activity=Coding',
-        );
-        expect(success, isTrue);
-        expect(stateMachine.isTracking, isTrue);
-      });
+      test(
+        'handles path-based action syntax tempo:///start?activity=Coding',
+        () async {
+          final success = await deepLinkService.handleUrl(
+            'tempo:///start?activity=Coding',
+          );
+          expect(success, isTrue);
+          expect(stateMachine.isTracking, isTrue);
+        },
+      );
 
       test('decodes Unicode and emoji in parameters', () async {
         final success = await deepLinkService.handleUrl(
@@ -307,8 +340,9 @@ void main() {
         );
 
         expect(success, isTrue);
-        final act =
-            await db.getActivityById(stateMachine.activeTimer!.activityId);
+        final act = await db.getActivityById(
+          stateMachine.activeTimer!.activityId,
+        );
         expect(act?.name, equals('Research 🚀'));
         expect(stateMachine.activeTimer?.currentComment, equals('✨ Testing'));
       });
