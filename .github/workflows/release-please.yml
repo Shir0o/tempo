@@ -1,0 +1,44 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: Open / update release PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # release-please reads PR titles (squashed merge commits onto main
+      # carry the PR title) as the conventional-commits signal. It then
+      # opens or updates a release PR that bumps pubspec.yaml, appends to
+      # RELEASE.md, and tags a GitHub Release on merge.
+      - name: Verify RELEASE_PLEASE_TOKEN is set
+        env:
+          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_PLEASE_TOKEN" ]; then
+            echo "::error::Missing RELEASE_PLEASE_TOKEN secret. Tags created by GITHUB_TOKEN will not trigger downstream release workflows (on: push: tags). See RELEASING.md."
+            exit 1
+          fi
+
+      - name: Run release-please
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
+        with:
+          # RELEASE_PLEASE_TOKEN is a fine-grained PAT scoped to this repository
+          # with only contents:write and pull-requests:write. It is required
+          # because tags created with the default GITHUB_TOKEN do not trigger
+          # downstream workflows (e.g. release.yml).
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          # Fork PRs won't get releases; only direct pushes to main.
+          fork: false

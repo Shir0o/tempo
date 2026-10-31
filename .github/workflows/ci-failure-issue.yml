@@ -1,0 +1,78 @@
+name: CI Failure Issue
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  issues: write
+
+jobs:
+  report-failure:
+    name: Report CI Failure
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Create or update failure issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
+          COMMIT_MESSAGE: ${{ github.event.workflow_run.head_commit.message }}
+          COMMIT_AUTHOR: ${{ github.event.workflow_run.head_commit.author.name }}
+        run: |
+          ISSUE_TITLE="🚨 CI failure on main branch"
+
+          EXISTING_ISSUE=$(gh issue list \
+            --repo "$GH_REPO" \
+            --state open \
+            --search "$ISSUE_TITLE in:title" \
+            --json number \
+            --jq '.[0].number')
+
+          if [ -n "$EXISTING_ISSUE" ]; then
+            echo "Found existing open issue #$EXISTING_ISSUE. Posting comment..."
+            COMMENT_BODY=$(cat <<EOM
+          ### Additional CI failure on \`main\`
+          - **Run**: [#${RUN_NUMBER} (Attempt ${RUN_ATTEMPT})](${RUN_URL})
+          - **Commit**: \`${COMMIT_SHA}\`
+          - **Author**: ${COMMIT_AUTHOR}
+          - **Message**:
+          > ${COMMIT_MESSAGE}
+          EOM
+          )
+            gh issue comment "$EXISTING_ISSUE" --repo "$GH_REPO" --body "$COMMENT_BODY"
+          else
+            echo "No existing open issue found. Creating a new one..."
+            ISSUE_BODY=$(cat <<EOM
+          ## 🚨 Continuous Integration failed on \`main\`
+
+          A commit pushed to the \`main\` branch failed the CI workflow.
+
+          ### Details
+          - **Workflow Run**: [#${RUN_NUMBER}](${RUN_URL})
+          - **Commit**: [\`${COMMIT_SHA:0:7}\`](https://github.com/${GH_REPO}/commit/${COMMIT_SHA})
+          - **Author**: ${COMMIT_AUTHOR}
+          - **Commit Message**:
+          > ${COMMIT_MESSAGE}
+
+          ### Next Steps
+          1. Inspect the [failed run logs](${RUN_URL}) to identify the failing job and step.
+          2. Open a fix branch or revert the breaking commit.
+          3. Close this issue once CI passes on \`main\`.
+          EOM
+          )
+            gh issue create \
+              --repo "$GH_REPO" \
+              --title "$ISSUE_TITLE" \
+              --body "$ISSUE_BODY" \
+              --label "needs-triage,bug,github_actions"
+          fi

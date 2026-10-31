@@ -1,0 +1,81 @@
+default_platform(:android)
+
+# Mirrors the applicationId in android/app/build.gradle.kts and the
+# Play Console app listing. Update both here and in Play Console if the
+# application id ever changes.
+APP_PACKAGE_NAME = "com.shir0o.tempo"
+
+# AAB path is supplied by the release workflow via FASTLANE_AAB_PATH
+# so the Fastfile stays build-artefact-agnostic.
+DEFAULT_AAB_PATH = File.expand_path("../build/app/outputs/bundle/release/app-release.aab", __dir__)
+
+# Lane: play_upload
+#
+# Uploads the AAB to the Play Console internal testing track.
+# The release workflow is responsible for mounting
+# `fastlane/play-supply-credentials.json` from the PLAY_SUPPLY_JSON_KEY
+# secret before invoking this lane.
+lane :play_upload do |options|
+  aab_path = options[:aab_path] || ENV["FASTLANE_AAB_PATH"] || DEFAULT_AAB_PATH
+
+  unless File.exist?(aab_path)
+    UI.user_error!("AAB not found at #{aab_path}. Confirm the build step ran successfully.")
+  end
+
+  # Monkey-patch: fastlane supply (via Supply::Client#commit_current_edit!) passes
+  # `changes_not_sent_for_review: ...` to commit_edit, but google-api-client 0.53.0's
+  # generated AndroidPublisherService#commit_edit does not recognize this keyword argument,
+  # raising `ArgumentError: unknown keyword: :changes_not_sent_for_review`.
+  # We require the service class and wrap commit_edit to filter unsupported keyword args.
+  begin
+    require "google/apis/androidpublisher_v3"
+    service_class = Google::Apis::AndroidpublisherV3::AndroidPublisherService
+    if service_class.instance_methods.include?(:commit_edit)
+      service_class.class_eval do
+        unless method_defined?(:_orig_commit_edit)
+          alias_method :_orig_commit_edit, :commit_edit
+          def commit_edit(package_name, edit_id, **kwargs, &block)
+            method_params = method(:_orig_commit_edit).parameters
+            has_keyrest = method_params.any? { |type, _| type == :keyrest }
+            accepted_keys = method_params.select { |type, _| [:key, :keyreq].include?(type) }.map(&:last)
+
+            filtered_kwargs = if has_keyrest
+              kwargs
+            else
+              kwargs.select { |k, _| accepted_keys.include?(k) }
+            end
+
+            if kwargs.key?(:changes_not_sent_for_review) && !filtered_kwargs.key?(:changes_not_sent_for_review)
+              FastlaneCore::UI.important(
+                "Stripped unsupported kwarg :changes_not_sent_for_review from commit_edit " \
+                "for compatibility with google-api-client."
+              )
+            end
+
+            _orig_commit_edit(package_name, edit_id, **filtered_kwargs, &block)
+          end
+        end
+      end
+    end
+  rescue LoadError => e
+    UI.message("Notice: google/apis/androidpublisher_v3 could not be pre-loaded (#{e.message}); skipping commit_edit patch.")
+  end
+
+  upload_to_play_store(
+    package_name: APP_PACKAGE_NAME,
+    track: "internal",
+    aab: aab_path,
+    json_key: "fastlane/play-supply-credentials.json",
+    # Default to draft so a bad AAB does NOT auto-notify internal-track
+    # testers; the maintainer reviews and promotes in the Play Console UI.
+    release_status: "draft",
+    metadata_path: "fastlane/metadata/android",
+    skip_upload_metadata: false,
+    skip_upload_changelogs: false,
+    skip_upload_images: true,
+    skip_upload_screenshots: true,
+    validate_only: false,
+  )
+
+  UI.success("Uploaded #{aab_path} to Play Console internal track for #{APP_PACKAGE_NAME}.")
+end

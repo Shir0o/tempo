@@ -1,0 +1,342 @@
+name: Release
+
+# Triggered when release-please pushes a version tag (e.g. v1.0.0).
+# Builds Android APK + AAB (uploaded to Play Console internal track and attached
+# to the GitHub Release) and macOS DMG + ZIP (attached to the GitHub Release).
+# Production promotion stays a manual Play Console click.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    name: Build, attach, and upload release
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Checkout repository at tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Verify all release secrets are present
+        id: check-secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          PLAY_SUPPLY_JSON_KEY: ${{ secrets.PLAY_SUPPLY_JSON_KEY }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for var in ANDROID_KEYSTORE_BASE64 KEY_ALIAS KEY_PASSWORD STORE_PASSWORD PLAY_SUPPLY_JSON_KEY; do
+            if [ -z "${!var:-}" ]; then
+              missing+=("$var")
+            fi
+          done
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::Missing required GitHub secrets: ${missing[*]}"
+            echo "::error::See RELEASING.md for setup instructions."
+            exit 1
+          fi
+          echo "All release secrets present."
+
+      - name: Setup Java
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Setup Ruby + Bundler for fastlane
+        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: false
+
+      - name: Install Ruby dependencies
+        run: bundle install
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Assemble CI keystore and key.properties
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.keystores
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > ~/.keystores/upload-key.keystore
+          chmod 600 ~/.keystores/upload-key.keystore
+          cat > android/key.properties <<KEYEOF
+          storePassword=$STORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=$HOME/.keystores/upload-key.keystore
+          KEYEOF
+          chmod 600 android/key.properties
+
+      - name: Derive Android versionCode from tag
+        run: |
+          set -euo pipefail
+          code=$(dart run tool/derive_version_code.dart "$TAG")
+          echo "VERSION_CODE=$code" >> "$GITHUB_ENV"
+          echo "Derived versionCode=$code from tag $TAG"
+
+      - name: Build signed release AAB
+        run: flutter build appbundle --release --no-tree-shake-icons --build-number="$VERSION_CODE"
+
+      - name: Build signed release APK
+        run: flutter build apk --release --no-tree-shake-icons --build-number="$VERSION_CODE"
+
+      - name: Locate built artifacts
+        id: locate
+        run: |
+          set -euo pipefail
+          AAB=$(find build/app/outputs/bundle/release -name '*.aab' | head -n1)
+          APK=$(find build/app/outputs/flutter-apk -name 'app-release.apk' | head -n1)
+          if [ -z "$AAB" ] || [ -z "$APK" ]; then
+            echo "::error::Built artifacts not found."
+            exit 1
+          fi
+          echo "aab=$AAB" >> "$GITHUB_OUTPUT"
+          echo "apk=$APK" >> "$GITHUB_OUTPUT"
+
+      - name: Check if release artifacts are already attached (idempotency)
+        id: check-existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          existing_aab=$(gh release view "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json assets \
+            --jq '.assets[] | select(.name | endswith(".aab")) | .name' \
+            2>/dev/null || echo "")
+          existing_apk=$(gh release view "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json assets \
+            --jq '.assets[] | select(.name | endswith(".apk")) | .name' \
+            2>/dev/null || echo "")
+          if [ -n "$existing_aab" ] && [ -n "$existing_apk" ]; then
+            echo "skip_attach=true" >> "$GITHUB_OUTPUT"
+            echo "Release artifacts already attached; skipping re-upload."
+          else
+            echo "skip_attach=false" >> "$GITHUB_OUTPUT"
+            echo "Release artifacts not yet attached; will upload."
+          fi
+
+      - name: Attach AAB and APK to GitHub Release
+        if: steps.check-existing.outputs.skip_attach != 'true'
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+          files: |
+            ${{ steps.locate.outputs.aab }}
+            ${{ steps.locate.outputs.apk }}
+
+      - name: Determine if this is a pre-release tag
+        id: prerelease
+        run: |
+          set -euo pipefail
+          tag="$TAG"
+          if [[ "$tag" == *-rc* || "$tag" == *-beta* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $tag is a pre-release; Play Store upload will be skipped."
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "Tag $tag is a stable release; Play Store upload will proceed."
+          fi
+
+      - name: Extract Play Store release notes from RELEASE.md
+        if: steps.prerelease.outputs.is_prerelease != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p fastlane/metadata/android/en-US/changelogs
+          CHANGELOG_DEST="fastlane/metadata/android/en-US/changelogs/${VERSION_CODE}.txt"
+
+          ruby -e '# encoding: utf-8
+            changelog = File.exist?("RELEASE.md") ? File.read("RELEASE.md", encoding: "utf-8") : ""
+            tag = ENV["GITHUB_REF_NAME"] || ""
+            ver = tag.sub(/^v/, "").split("-").first || ""
+
+            pattern = if !ver.empty?
+              /^##\s+\[?v?#{Regexp.escape(ver)}\]?[^\n]*\n(.*?)(?=^##\s+\[?v?[0-9]|\Z)/m
+            else
+              /^##\s+\[?v?[0-9]+\.[0-9]+\.[0-9]+[^\]\n]*\]?[^\n]*\n(.*?)(?=^##\s+\[?v?[0-9]|\Z)/m
+            end
+
+            match = changelog.match(pattern)
+            body = match ? match[1].strip : ""
+
+            # Strip Markdown commit links and issue links: e.g. ([#123](...)) or ([abc](...))
+            cleaned = body.gsub(/\s*\(\[[^\]]+\]\([^)]+\)\)/, "")
+            cleaned = cleaned.gsub(/\[([^\]]+)\]\([^)]+\)/, "\\1")
+
+            # Convert markdown headings (### Features) to plain titles with colon
+            cleaned = cleaned.gsub(/^###?\s+(.+)$/, "\\1:")
+
+            # Process line-by-line: standardize bullets, strip bold/italics
+            lines = cleaned.lines.map do |line|
+              l = line.strip
+              if l =~ /^[\*\-]\s+(.*)$/
+                item = $1.gsub(/\*\*([^*]+)\*\*/, "\\1").gsub(/\*([^*]+)\*/, "\\1").strip
+                "\u2022 #{item}"
+              else
+                l.gsub(/\*\*([^*]+)\*\*/, "\\1").gsub(/\*([^*]+)\*/, "\\1")
+              end
+            end
+
+            # Remove blank lines immediately following headings (e.g. "Features:\n")
+            # and collapse multiple consecutive blank lines into at most one.
+            formatted = []
+            lines.each do |l|
+              if l.empty?
+                formatted << "" unless formatted.empty? || formatted.last == "" || formatted.last.end_with?(":")
+              else
+                formatted << l
+              end
+            end
+
+            cleaned = formatted.join("\n").strip
+
+            # Enforce 500-char Play Store limit
+            if cleaned.length > 500
+              cleaned = cleaned[0...497] + "..."
+            end
+
+            if cleaned.empty?
+              cleaned = "Bug fixes and improvements."
+            end
+
+            File.write(ARGV[0], cleaned)
+            puts "Generated release notes for #{ARGV[0]} (#{cleaned.length} chars):"
+            puts cleaned
+          ' "$CHANGELOG_DEST"
+
+      - name: Upload AAB to Play Console internal track
+        if: steps.prerelease.outputs.is_prerelease != 'true'
+        env:
+          PLAY_SUPPLY_JSON_KEY: ${{ secrets.PLAY_SUPPLY_JSON_KEY }}
+        run: |
+          set -euo pipefail
+          echo "$PLAY_SUPPLY_JSON_KEY" > fastlane/play-supply-credentials.json
+          chmod 600 fastlane/play-supply-credentials.json
+          bundle exec fastlane play_upload
+          rm -f fastlane/play-supply-credentials.json
+          echo "Uploaded to Play Console internal track."
+
+      - name: Skip Play Console upload for pre-release tag
+        if: steps.prerelease.outputs.is_prerelease == 'true'
+        run: |
+          tag="$TAG"
+          echo "Tag $tag matches a pre-release pattern (rc/beta); skipping Play Console upload."
+
+      - name: Remove mounted credentials
+        if: always()
+        continue-on-error: true
+        run: |
+          rm -f fastlane/play-supply-credentials.json
+          rm -f android/key.properties
+          rm -rf "$HOME/.keystores"
+
+  build-and-publish-macos:
+    name: Build and attach macOS release
+    runs-on: macos-latest
+    timeout-minutes: 60
+    environment: production
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Checkout repository at tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Derive versionCode from tag
+        run: |
+          set -euo pipefail
+          code=$(dart run tool/derive_version_code.dart "$TAG")
+          echo "VERSION_CODE=$code" >> "$GITHUB_ENV"
+          echo "Derived versionCode=$code from tag $TAG"
+
+      - name: Build release macOS app
+        run: flutter build macos --release --no-tree-shake-icons --build-number="$VERSION_CODE"
+
+      - name: Package macOS artifacts (DMG and ZIP)
+        run: |
+          set -euo pipefail
+          app_path="build/macos/Build/Products/Release/tempo.app"
+          if [ ! -d "$app_path" ]; then
+            echo "::error::macOS app bundle not found at $app_path"
+            exit 1
+          fi
+          mkdir -p dmg_staging
+          cp -R "$app_path" dmg_staging/
+          ln -s /Applications dmg_staging/Applications
+          hdiutil create -volname "Tempo" -srcfolder dmg_staging -ov -format UDZO "tempo-macos.dmg"
+          rm -rf dmg_staging
+          ditto -c -k --sequesterRsrc --keepParent "$app_path" "tempo-macos.zip"
+          echo "Packaged tempo-macos.dmg and tempo-macos.zip."
+
+      - name: Check if macOS release artifacts are already attached (idempotency)
+        id: check-existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          existing_dmg=$(gh release view "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json assets \
+            --jq '.assets[] | select(.name == "tempo-macos.dmg") | .name' \
+            2>/dev/null || echo "")
+          existing_zip=$(gh release view "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json assets \
+            --jq '.assets[] | select(.name == "tempo-macos.zip") | .name' \
+            2>/dev/null || echo "")
+          if [ -n "$existing_dmg" ] && [ -n "$existing_zip" ]; then
+            echo "skip_attach=true" >> "$GITHUB_OUTPUT"
+            echo "macOS release artifacts already attached; skipping re-upload."
+          else
+            echo "skip_attach=false" >> "$GITHUB_OUTPUT"
+            echo "macOS release artifacts not yet attached; will upload."
+          fi
+
+      - name: Attach macOS artifacts to GitHub Release
+        if: steps.check-existing.outputs.skip_attach != 'true'
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+          files: |
+            tempo-macos.dmg
+            tempo-macos.zip
