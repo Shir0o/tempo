@@ -4,6 +4,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:uuid/uuid.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
+import '../export/csv_export_engine.dart';
 
 /// Represents an abnormal shutdown or crash recovery state detected on boot.
 class CrashRecoverySession {
@@ -57,6 +58,7 @@ class TimerStateMachine {
   final Duration _heartbeatInterval;
   final int _crashThresholdMs;
   final Future<void> Function(Record record)? onRecordCommitted;
+  CsvExportEngine? csvExportEngine;
 
   /// Default crash threshold: 6 hours = 21,600,000 milliseconds.
   static const int defaultCrashThresholdMs = 21600000;
@@ -82,6 +84,7 @@ class TimerStateMachine {
     Duration? heartbeatInterval,
     int? crashThresholdMs,
     this.onRecordCommitted,
+    this.csvExportEngine,
   })  : _db = database,
         _nowUtcMs =
             nowUtcMs ?? (() => DateTime.now().toUtc().millisecondsSinceEpoch),
@@ -93,6 +96,11 @@ class TimerStateMachine {
   // ==========================================
   // Public State Getters & Notifiers
   // ==========================================
+
+  /// Attaches or updates the CSV export engine.
+  void attachExportEngine(CsvExportEngine engine) {
+    csvExportEngine = engine;
+  }
 
   /// Current active timer value or null if idle.
   ActiveTimer? get activeTimer => _activeTimerNotifier.value;
@@ -344,9 +352,7 @@ class TimerStateMachine {
         _lastStoppedRecord = record;
         _updateActiveTimer(null);
 
-        if (onRecordCommitted != null) {
-          await onRecordCommitted!(record);
-        }
+        await _notifyRecordCommitted(record);
         return record;
       });
 
@@ -444,8 +450,8 @@ class TimerStateMachine {
     _startHeartbeat();
 
     final committed = stoppedRecord;
-    if (committed != null && onRecordCommitted != null) {
-      await onRecordCommitted!(committed);
+    if (committed != null) {
+      await _notifyRecordCommitted(committed);
     }
     return newTimer;
   }
@@ -529,9 +535,7 @@ class TimerStateMachine {
         _lastStoppedRecord = record;
         _updateActiveTimer(null);
 
-        if (onRecordCommitted != null) {
-          await onRecordCommitted!(record);
-        }
+        await _notifyRecordCommitted(record);
         return record;
       });
 
@@ -594,6 +598,20 @@ class TimerStateMachine {
     if (_activeTimerNotifier.value != timer) {
       _activeTimerNotifier.value = timer;
       _timerStreamController.add(timer);
+    }
+  }
+
+  Future<void> _notifyRecordCommitted(Record record) async {
+    final engine = csvExportEngine;
+    if (engine != null) {
+      if (engine.debounceDuration == Duration.zero) {
+        await engine.scheduleExport();
+      } else {
+        engine.scheduleExport();
+      }
+    }
+    if (onRecordCommitted != null) {
+      await onRecordCommitted!(record);
     }
   }
 

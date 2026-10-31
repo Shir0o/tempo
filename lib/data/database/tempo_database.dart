@@ -388,6 +388,7 @@ CREATE TABLE IF NOT EXISTS tombstones (
     String? activityId,
     int? limit,
     int? offset,
+    String? orderBy,
   }) async {
     final whereClauses = <String>[];
     final whereArgs = <dynamic>[];
@@ -410,7 +411,7 @@ CREATE TABLE IF NOT EXISTS tombstones (
       'records',
       where: where,
       whereArgs: whereArgs.isEmpty ? null : whereArgs,
-      orderBy: 'started_at_epoch_ms DESC',
+      orderBy: orderBy ?? 'started_at_epoch_ms DESC',
       limit: limit,
       offset: offset,
     );
