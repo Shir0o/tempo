@@ -12,7 +12,7 @@ Individual developers, researchers, students, and professionals who manage their
 
 ## Product Purpose
 
-Time Tracker delivers instant, frictionless time tracking and habit awareness across everyday devices. It bridges mobile, watch, and desktop into a cohesive offline-first system that operates without mandatory cloud accounts, provides continuous live interoperability with peer tools (such as BNPB and Workout Planner), and enables local AI analytics via Model Context Protocol (MCP) with strict PII protection.
+Tempo delivers instant, frictionless time tracking and habit awareness across everyday devices. It bridges mobile, watch, and desktop into a cohesive offline-first system that operates without mandatory cloud accounts, provides continuous live interoperability with peer tools (such as BNPB and Workout Planner), and enables local AI analytics via Model Context Protocol (MCP) with strict PII protection.
 
 ## Positioning
 
@@ -20,7 +20,7 @@ Unlike cloud-locked, corporate subscription trackers (Toggl, Clockify, Harvest) 
 - **100% Offline-First & Private**: Data lives in a local SQLite database owned exclusively by the user, with optional private Google Drive or peer-to-peer sync.
 - **True Wear OS Companion**: Built with native Jetpack Compose for Wear OS, featuring sub-second startup, low-power ambient mode, Watch Face complications, and dynamic ProtoLayout tiles that never drain battery or suppress incoming notifications.
 - **Desktop Keyboard Ergonomics**: Runs as an unobtrusive macOS menu bar status item with a global hotkey (`Option + Shift + T`) and number-key capture.
-- **Ecosystem Interoperability**: Continuous live CSV export matching Simple Time Tracker schemas for seamless consumption by BNPB, paired with a universal deep-link bus (`timetracker://start`) and Android broadcast intents.
+- **Ecosystem Interoperability**: Continuous live CSV export matching Simple Time Tracker schemas for seamless consumption by BNPB, paired with a universal deep-link bus (`tempo://start`) and Android broadcast intents.
 - **Local AI Analysis via MCP**: Offline stdio MCP server for Claude Desktop, Gemini, or local models with automated, deterministic PII sanitization that redacts contact names before analysis.
 
 ## Operating Context
@@ -47,8 +47,8 @@ Unlike cloud-locked, corporate subscription trackers (Toggl, Clockify, Harvest) 
   - Strict adherence to BNPB ingestion standards (`"Contact"` tags, `w/` and `with ` name markers, and SHA-256 deduplication fingerprints).
   - ActivityWatch bucket format compatibility for automated screen-time reconciliation.
 - **Automations & Extensibility**:
-  - Universal `timetracker://start?activity=...` URL scheme across macOS and Android.
-  - Android Broadcast Intents (`app.timetracker.action.START_TIMER`) for Tasker, NFC tags, and Bluetooth triggers.
+  - Universal `tempo://start?activity=...` URL scheme across macOS and Android.
+  - Android Broadcast Intents (`app.tempo.action.START_TIMER`) for Tasker, NFC tags, and Bluetooth triggers.
   - Native macOS Shortcuts and Raycast script commands.
 - **Privacy & Security**:
   - Deterministic PII Sanitizer (`--sanitize-pii`) masking contact names after `w/` markers with session pseudonyms (`[Contact-1]`) and redacting emails/phones before payloads reach LLMs.
@@ -56,7 +56,7 @@ Unlike cloud-locked, corporate subscription trackers (Toggl, Clockify, Harvest) 
 
 ## Brand Commitments
 
-- **Name**: Time Tracker (CLI binary: `time-tracker-mcp`, scheme: `timetracker://`).
+- **Name**: Tempo (CLI binary: `tempo-mcp`, scheme: `tempo://`).
 - **Design Language**: Clean, high-contrast utility design system with vibrant activity accent colors, dark mode defaults, legible monospace duration timers, and minimal visual noise.
 - **Tone & Voice**: Focused, calm, unobtrusive, and rigorously private. Zero nag screens, zero subscription prompts, and zero uninvited telemetry.
 

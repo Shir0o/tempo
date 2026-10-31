@@ -1,4 +1,4 @@
-# Time Tracker
+# Tempo
 
 An offline-first, private time tracker for Android, macOS, and Pixel Watch (Wear OS) designed for frictionless 1-tap logging, native system integrations, peer app interoperability, and local AI analytics via MCP.
 
@@ -47,7 +47,7 @@ A lightweight, keyboard-navigable floating status panel spawned from the macOS m
 _Avoid_: Menu window, tray dialog, popup
 
 **DeepLinkBus**:
-The cross-platform `timetracker://` URL scheme and Android Intent bridge enabling peer apps and system automations to start, stop, and query timers.
+The cross-platform `tempo://` URL scheme and Android Intent bridge enabling peer apps and system automations to start, stop, and query timers.
 _Avoid_: Custom scheme, IPC handler, command URL
 
 **PIISanitizer**:
