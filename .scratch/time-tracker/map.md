@@ -15,13 +15,13 @@ A locked product and technical architecture specification (`PRODUCT.md`, `CONTEX
 - [02: STT CSV & BNPB Compatibility](issues/02-research-stt-csv-and-bnpb-compatibility.md): Enforce strict 8-column Simple Time Tracker CSV parity (`activity name,time started,time ended,comment,categories,record tags,duration,duration minutes`), `yyyy-MM-dd HH:mm:ss` timestamps, `", "` multi-tag joins, `"Contact"` tag filtering, ADR-0005 name markers (`w/`, `with `), and continuous atomic Write-Flush-Rename exports to prevent partial read corruption.
 - [03: SQLite Schema and Timer State Machine](issues/03-local-sqlite-schema-and-state-machine.md): Normalized relational schema with monotonic UTC epoch arithmetic, 60-second heartbeat crash recovery, strict single-active-timer semantics via atomic `SWITCH`, and dedicated `tombstones` table for sync hygiene.
 - [04: Wear OS UI, Tile, and Complication Spec](issues/04-wear-os-ui-and-tile-spec.md): Eliminate discovery friction via watch-face complication shortcuts and a 3-slot smart tile; protect against false touches using a 3s Undo window and 600ms hold-to-stop; prevent notification suppression via Action-and-Exit auto-finishing.
+- [05: Desktop macOS Menu Bar & OS Automation](issues/05-desktop-macos-menu-bar-and-automation-spec.md): Low-profile `NSStatusItem` displaying active time; keyboard-navigable Quick Popover with `1`-`9` hotkeys; universal `timetracker://` deep link bus for peer apps (`bnpb`), Raycast, macOS Shortcuts, and Android Tasker intents.
 
 
 ## Not yet specified
 
 - **Calendar timeline overlay**: Ingesting device calendar events alongside tracked records (similar to `auto-vol`).
 - **Direct legacy STT SQLite migration**: Automated import tool for historical SQLite databases from existing Simple Time Tracker installations.
-- **Sensor/Hardware automation triggers**: Bluetooth beacon, Wi-Fi SSID, or NFC tag triggers for automatic timer start/stop.
 
 ## Out of scope
 

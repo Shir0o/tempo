@@ -42,6 +42,14 @@ _Avoid_: Auto-save, ping, keep-alive
 A dedicated record in an auxiliary deletion table capturing the entity ID and deletion timestamp to prevent resurrected items during peer sync.
 _Avoid_: Soft delete, trash, ghost record
 
+**QuickPopover**:
+A lightweight, keyboard-navigable floating status panel spawned from the macOS menu bar or global hotkey for rapid habit switching.
+_Avoid_: Menu window, tray dialog, popup
+
+**DeepLinkBus**:
+The cross-platform `timetracker://` URL scheme and Android Intent bridge enabling peer apps and system automations to start, stop, and query timers.
+_Avoid_: Custom scheme, IPC handler, command URL
+
 ### Integrations & Interoperability
 
 **NameMarker**:
