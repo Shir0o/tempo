@@ -17,6 +17,7 @@ A locked product and technical architecture specification (`PRODUCT.md`, `CONTEX
 - [04: Wear OS UI, Tile, and Complication Spec](issues/04-wear-os-ui-and-tile-spec.md): Eliminate discovery friction via watch-face complication shortcuts and a 3-slot smart tile; protect against false touches using a 3s Undo window and 600ms hold-to-stop; prevent notification suppression via Action-and-Exit auto-finishing.
 - [05: Desktop macOS Menu Bar & OS Automation](issues/05-desktop-macos-menu-bar-and-automation-spec.md): Low-profile `NSStatusItem` displaying active time; keyboard-navigable Quick Popover with `1`-`9` hotkeys; universal `timetracker://` deep link bus for peer apps (`bnpb`), Raycast, macOS Shortcuts, and Android Tasker intents.
 - [06: MCP Server Tools and Privacy Guardrails](issues/06-mcp-server-tools-and-privacy-guardrails-spec.md): Offline stdio MCP CLI on macOS connecting directly to SQLite; deterministic `PIISanitizer` redacting contact names following `w/` and `with ` with anonymous tokens; rich analytical tools with write operations disabled by default.
+- [07: Author Product and Architecture Specification](issues/07-author-product-and-architecture-spec.md): Destination reached; finalized canonical `PRODUCT.md`, locked domain in `CONTEXT.md`, and generated a sequenced 15-ticket implementation backlog across 5 phases.
 
 
 ## Not yet specified
