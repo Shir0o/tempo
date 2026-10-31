@@ -1,6 +1,6 @@
 # 06: Wear OS Watch Face Complications
 
-Status: ready
+Status: completed
 Phase: 2 - Wear OS Companion
 Dependencies: 04
 

@@ -1,6 +1,6 @@
 # 05: Wear OS ProtoLayout Smart Tile
 
-Status: ready
+Status: completed
 Phase: 2 - Wear OS Companion
 Dependencies: 04
 
