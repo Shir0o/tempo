@@ -11,7 +11,9 @@ A locked product and technical architecture specification (`PRODUCT.md`, `CONTEX
 
 ## Decisions so far
 
-<!-- the index: one line per closed ticket, enough to judge relevance, then zoom the link for the detail the ticket holds -->
+- [01: Wearable Data Layer Sync Protocol](issues/01-research-wearable-data-layer-sync.md): Adopt `DataClient` (with `setUrgent()`) as the replicated state store and offline buffer; anchor timestamps (`startedAtEpochMs`) eliminate polling and preserve watch battery life across Compose, ProtoLayout Tiles, and Complications.
+- [02: STT CSV & BNPB Compatibility](issues/02-research-stt-csv-and-bnpb-compatibility.md): Enforce strict 8-column Simple Time Tracker CSV parity (`activity name,time started,time ended,comment,categories,record tags,duration,duration minutes`), `yyyy-MM-dd HH:mm:ss` timestamps, `", "` multi-tag joins, `"Contact"` tag filtering, ADR-0005 name markers (`w/`, `with `), and continuous atomic Write-Flush-Rename exports to prevent partial read corruption.
+
 
 ## Not yet specified
 
