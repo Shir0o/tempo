@@ -1,0 +1,11 @@
+# Runtime-mounted Play Store service-account JSON. The release workflow
+# writes this file from the PLAY_SUPPLY_JSON_KEY secret at workflow
+# runtime and deletes it after `fastlane play_upload` finishes.
+play-supply-credentials.json
+
+# fastlane's own ephemeral build artefacts.
+/report.xml
+/Preview.html
+/test_output
+/.fastlane
+/builds
