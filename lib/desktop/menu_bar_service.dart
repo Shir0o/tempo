@@ -211,10 +211,11 @@ class MenuBarService {
     }
 
     // Cache activity name on change
-    if (timer.activityId != _currentActivityId) {
-      _currentActivityId = timer.activityId;
+    if (timer.activityId != _currentActivityId ||
+        _currentActivityName == null) {
       final act = await database.getActivityById(timer.activityId);
       _currentActivityName = act?.name ?? '';
+      _currentActivityId = timer.activityId;
     }
 
     if (timer.isPaused) {
@@ -270,6 +271,13 @@ class MenuBarService {
       );
       _updateTitle(title, isTracking: false);
       return;
+    }
+
+    if (_currentActivityName == null ||
+        _currentActivityId != timer.activityId) {
+      final act = await database.getActivityById(timer.activityId);
+      _currentActivityName = act?.name ?? '';
+      _currentActivityId = timer.activityId;
     }
 
     final elapsedMs = timer.calculateDurationMs(_nowUtcMs());

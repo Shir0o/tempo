@@ -316,7 +316,7 @@ void main() {
         // Start timer
         await stateMachine.start('act-coding');
         // Give async DB lookup a cycle
-        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
 
         expect(service.currentTitle, equals('[🟢 00:00 Coding]'));
 
@@ -352,7 +352,7 @@ void main() {
 
       await stateMachine.start('act-coding');
       mockTime += const Duration(hours: 1, minutes: 24).inMilliseconds;
-      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
 
       await service.setDisplayMode(StatusDisplayMode.compact);
       expect(service.currentTitle, equals('[🟢 01:24]'));
@@ -377,7 +377,7 @@ void main() {
       );
 
       await stateMachine.start('act-coding');
-      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
 
       final updateCalls = channelCalls
           .where((c) => c.method == 'updateStatusItem')
