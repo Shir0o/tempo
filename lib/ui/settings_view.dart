@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../core/export/csv_export_engine.dart';
 import '../../core/sync/google_drive_sync_service.dart';
 import '../../data/database/tempo_database.dart';
@@ -102,7 +103,10 @@ class _SettingsViewState extends State<SettingsView> {
       context: context,
       builder: (dCtx) => AlertDialog(
         backgroundColor: const Color(0xFF22222C),
-        title: const Text('Restore Database?', style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'Restore Database?',
+          style: TextStyle(color: Colors.white),
+        ),
         content: const Text(
           'Restoring from Google Drive will overwrite current local database with the cloud backup.',
           style: TextStyle(color: Colors.white70),
@@ -110,11 +114,17 @@ class _SettingsViewState extends State<SettingsView> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dCtx).pop(false),
-            child: const Text('Cancel', style: TextStyle(color: Colors.white60)),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: Colors.white60),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.of(dCtx).pop(true),
-            child: const Text('Restore', style: TextStyle(color: Color(0xFF4CAF50))),
+            child: const Text(
+              'Restore',
+              style: TextStyle(color: Color(0xFF4CAF50)),
+            ),
           ),
         ],
       ),
@@ -125,7 +135,9 @@ class _SettingsViewState extends State<SettingsView> {
     setState(() => _isProcessing = true);
     try {
       final file = await service.restoreDatabaseFromDrive();
-      _setStatus('Database restored successfully from Google Drive: ${file.path}');
+      _setStatus(
+        'Database restored successfully from Google Drive: ${file.path}',
+      );
     } catch (e) {
       _setStatus('Restore failed: $e');
     } finally {
@@ -159,7 +171,11 @@ class _SettingsViewState extends State<SettingsView> {
       appBar: AppBar(
         title: const Text(
           'Settings',
-          style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
         ),
         backgroundColor: const Color(0xFF121216),
         elevation: 0,
@@ -190,19 +206,27 @@ class _SettingsViewState extends State<SettingsView> {
                     ),
                     child: Icon(
                       Icons.cloud_sync_outlined,
-                      color: isSignedIn ? const Color(0xFF4CAF50) : Colors.white54,
+                      color: isSignedIn
+                          ? const Color(0xFF4CAF50)
+                          : Colors.white54,
                       size: 22,
                     ),
                   ),
                   title: Text(
-                    isSignedIn ? 'Connected to Google Drive' : 'Google Drive Disconnected',
-                    style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+                    isSignedIn
+                        ? 'Connected to Google Drive'
+                        : 'Google Drive Disconnected',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   subtitle: Text(
                     isSignedIn
                         ? (lastSync != null
-                            ? 'Last synced: ${UiHelpers.formatDateHeader(lastSync)} ${lastSync.hour}:${lastSync.minute.toString().padLeft(2, '0')}'
-                            : 'Ready for auto-sync')
+                              ? 'Last synced: ${UiHelpers.formatDateHeader(lastSync)} ${lastSync.hour}:${lastSync.minute.toString().padLeft(2, '0')}'
+                              : 'Ready for auto-sync')
                         : 'Connect for BNPB sync & cloud backup',
                     style: const TextStyle(color: Colors.white38, fontSize: 11),
                   ),
@@ -211,7 +235,9 @@ class _SettingsViewState extends State<SettingsView> {
                     child: Text(
                       isSignedIn ? 'Disconnect' : 'Connect',
                       style: TextStyle(
-                        color: isSignedIn ? Colors.redAccent : const Color(0xFF4CAF50),
+                        color: isSignedIn
+                            ? Colors.redAccent
+                            : const Color(0xFF4CAF50),
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -220,8 +246,14 @@ class _SettingsViewState extends State<SettingsView> {
                 if (syncService != null) ...[
                   const Divider(color: Colors.white10, height: 1),
                   SwitchListTile(
-                    title: const Text('Automatic CSV Cloud Push', style: TextStyle(color: Colors.white, fontSize: 13)),
-                    subtitle: const Text('Pushes stt_records_automatic.csv to "Time track" on timer stop', style: TextStyle(color: Colors.white38, fontSize: 11)),
+                    title: const Text(
+                      'Automatic CSV Cloud Push',
+                      style: TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                    subtitle: const Text(
+                      'Pushes stt_records_automatic.csv to "Time track" on timer stop',
+                      style: TextStyle(color: Colors.white38, fontSize: 11),
+                    ),
                     value: syncService.autoSyncEnabled,
                     activeTrackColor: const Color(0xFF4CAF50),
                     onChanged: (val) {
@@ -230,23 +262,56 @@ class _SettingsViewState extends State<SettingsView> {
                   ),
                   const Divider(color: Colors.white10, height: 1),
                   ListTile(
-                    leading: const Icon(Icons.upload_file, color: Colors.white70, size: 20),
-                    title: const Text('Sync CSV to Drive Now', style: TextStyle(color: Colors.white, fontSize: 13)),
-                    trailing: const Icon(Icons.chevron_right, color: Colors.white38, size: 18),
+                    leading: const Icon(
+                      Icons.upload_file,
+                      color: Colors.white70,
+                      size: 20,
+                    ),
+                    title: const Text(
+                      'Sync CSV to Drive Now',
+                      style: TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                    trailing: const Icon(
+                      Icons.chevron_right,
+                      color: Colors.white38,
+                      size: 18,
+                    ),
                     onTap: _isProcessing ? null : _handleSyncCsvNow,
                   ),
                   const Divider(color: Colors.white10, height: 1),
                   ListTile(
-                    leading: const Icon(Icons.backup_outlined, color: Colors.white70, size: 20),
-                    title: const Text('Backup Database to Drive', style: TextStyle(color: Colors.white, fontSize: 13)),
-                    trailing: const Icon(Icons.chevron_right, color: Colors.white38, size: 18),
+                    leading: const Icon(
+                      Icons.backup_outlined,
+                      color: Colors.white70,
+                      size: 20,
+                    ),
+                    title: const Text(
+                      'Backup Database to Drive',
+                      style: TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                    trailing: const Icon(
+                      Icons.chevron_right,
+                      color: Colors.white38,
+                      size: 18,
+                    ),
                     onTap: _isProcessing ? null : _handleBackupDatabaseNow,
                   ),
                   const Divider(color: Colors.white10, height: 1),
                   ListTile(
-                    leading: const Icon(Icons.settings_backup_restore, color: Colors.white70, size: 20),
-                    title: const Text('Restore Database from Drive', style: TextStyle(color: Colors.white, fontSize: 13)),
-                    trailing: const Icon(Icons.chevron_right, color: Colors.white38, size: 18),
+                    leading: const Icon(
+                      Icons.settings_backup_restore,
+                      color: Colors.white70,
+                      size: 20,
+                    ),
+                    title: const Text(
+                      'Restore Database from Drive',
+                      style: TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                    trailing: const Icon(
+                      Icons.chevron_right,
+                      color: Colors.white38,
+                      size: 18,
+                    ),
                     onTap: _isProcessing ? null : _handleRestoreDatabaseNow,
                   ),
                 ],
@@ -267,22 +332,44 @@ class _SettingsViewState extends State<SettingsView> {
             child: Column(
               children: [
                 ListTile(
-                  leading: const Icon(Icons.tune_rounded, color: Color(0xFF4CAF50), size: 20),
-                  title: const Text('Manage Habits & Colors', style: TextStyle(color: Colors.white, fontSize: 13)),
-                  subtitle: const Text('Customize activity icons, colors, and pinned status', style: TextStyle(color: Colors.white38, fontSize: 11)),
-                  trailing: const Icon(Icons.chevron_right, color: Colors.white38, size: 18),
+                  leading: const Icon(
+                    Icons.tune_rounded,
+                    color: Color(0xFF4CAF50),
+                    size: 20,
+                  ),
+                  title: const Text(
+                    'Manage Habits & Colors',
+                    style: TextStyle(color: Colors.white, fontSize: 13),
+                  ),
+                  subtitle: const Text(
+                    'Customize activity icons, colors, and pinned status',
+                    style: TextStyle(color: Colors.white38, fontSize: 11),
+                  ),
+                  trailing: const Icon(
+                    Icons.chevron_right,
+                    color: Colors.white38,
+                    size: 18,
+                  ),
                   onTap: () {
                     Navigator.of(context).push(
                       MaterialPageRoute(
-                        builder: (_) => ActivityManagerView(database: widget.database),
+                        builder: (_) =>
+                            ActivityManagerView(database: widget.database),
                       ),
                     );
                   },
                 ),
                 const Divider(color: Colors.white10, height: 1),
                 ListTile(
-                  leading: const Icon(Icons.file_download_outlined, color: Colors.white70, size: 20),
-                  title: const Text('Export CSV Locally', style: TextStyle(color: Colors.white, fontSize: 13)),
+                  leading: const Icon(
+                    Icons.file_download_outlined,
+                    color: Colors.white70,
+                    size: 20,
+                  ),
+                  title: const Text(
+                    'Export CSV Locally',
+                    style: TextStyle(color: Colors.white, fontSize: 13),
+                  ),
                   subtitle: Text(
                     widget.exportEngine != null
                         ? widget.exportEngine!.targetFile.path
@@ -290,7 +377,11 @@ class _SettingsViewState extends State<SettingsView> {
                     style: const TextStyle(color: Colors.white38, fontSize: 11),
                     overflow: TextOverflow.ellipsis,
                   ),
-                  trailing: const Icon(Icons.chevron_right, color: Colors.white38, size: 18),
+                  trailing: const Icon(
+                    Icons.chevron_right,
+                    color: Colors.white38,
+                    size: 18,
+                  ),
                   onTap: _isProcessing ? null : _handleExportCsvNow,
                 ),
               ],
@@ -312,23 +403,39 @@ class _SettingsViewState extends State<SettingsView> {
               children: [
                 const Row(
                   children: [
-                    Icon(Icons.shield_outlined, color: Color(0xFF4CAF50), size: 18),
+                    Icon(
+                      Icons.shield_outlined,
+                      color: Color(0xFF4CAF50),
+                      size: 18,
+                    ),
                     SizedBox(width: 8),
                     Text(
                       '100% Offline-First & Private',
-                      style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 8),
                 const Text(
                   'Tempo stores all tracking data directly on your hardware in SQLite and CSV formats. No accounts or surveillance telemetry. Cloud sync occurs exclusively via your personal Google Drive or local peer sync.',
-                  style: TextStyle(color: Colors.white54, fontSize: 12, height: 1.4),
+                  style: TextStyle(
+                    color: Colors.white54,
+                    fontSize: 12,
+                    height: 1.4,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 const Text(
                   'Tempo v1.0.0 (Build 1)',
-                  style: TextStyle(color: Colors.white24, fontSize: 11, fontFamily: 'monospace'),
+                  style: TextStyle(
+                    color: Colors.white24,
+                    fontSize: 11,
+                    fontFamily: 'monospace',
+                  ),
                 ),
               ],
             ),

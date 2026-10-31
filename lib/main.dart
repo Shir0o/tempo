@@ -1,4 +1,5 @@
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
@@ -31,7 +32,9 @@ Future<void> main() async {
   } catch (_) {
     exportDir = Directory.current;
   }
-  final exportFile = File(p.join(exportDir.path, CsvExportEngine.defaultFileName));
+  final exportFile = File(
+    p.join(exportDir.path, CsvExportEngine.defaultFileName),
+  );
   final exportEngine = CsvExportEngine(
     database: database,
     targetFile: exportFile,
@@ -55,16 +58,11 @@ Future<void> main() async {
   }
 
   // 5. Initialize Google Drive Sync Service
-  final driveSyncService = GoogleDriveSyncService(
-    database: database,
-  );
+  final driveSyncService = GoogleDriveSyncService(database: database);
   driveSyncService.attachToExportEngine(exportEngine);
 
   // 6. Initialize Universal Deep Link Bus (tempo:// & timetracker://)
-  DeepLinkService(
-    timerStateMachine: timerStateMachine,
-    database: database,
-  );
+  DeepLinkService(timerStateMachine: timerStateMachine, database: database);
 
   // 7. Platform-specific integrations
   if (!kIsWeb) {
@@ -79,10 +77,7 @@ Future<void> main() async {
       database.getAllActivities().then(wearableSyncService.syncActivities);
     } else if (Platform.isMacOS) {
       // Connect macOS menu bar status item
-      MenuBarService(
-        timerStateMachine: timerStateMachine,
-        database: database,
-      );
+      MenuBarService(timerStateMachine: timerStateMachine, database: database);
     }
   }
 

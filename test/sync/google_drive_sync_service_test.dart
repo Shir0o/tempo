@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:http/http.dart' as http;
@@ -20,16 +21,22 @@ class MockDriveHttpClient extends http.BaseClient {
     final method = request.method.toUpperCase();
 
     // 1. Files.list: GET /drive/v3/files?q=...
-    if (method == 'GET' && url.contains('/drive/v3/files') && !url.contains('alt=media')) {
+    if (method == 'GET' &&
+        url.contains('/drive/v3/files') &&
+        !url.contains('alt=media')) {
       final qParam = request.url.queryParameters['q'] ?? '';
       List<Map<String, dynamic>> matched = [];
 
       if (qParam.contains("name = 'Time track'")) {
         matched = driveFiles.where((f) => f['name'] == 'Time track').toList();
       } else if (qParam.contains("name = 'stt_records_automatic.csv'")) {
-        matched = driveFiles.where((f) => f['name'] == 'stt_records_automatic.csv').toList();
+        matched = driveFiles
+            .where((f) => f['name'] == 'stt_records_automatic.csv')
+            .toList();
       } else if (qParam.contains("name = 'tempo_backup.db'")) {
-        matched = driveFiles.where((f) => f['name'] == 'tempo_backup.db').toList();
+        matched = driveFiles
+            .where((f) => f['name'] == 'tempo_backup.db')
+            .toList();
       } else {
         matched = List.from(driveFiles);
       }
@@ -57,7 +64,8 @@ class MockDriveHttpClient extends http.BaseClient {
       // Create folder or file
       String name = 'untitled';
       String mimeType = 'text/plain';
-      String id = 'id-${DateTime.now().millisecondsSinceEpoch}-${driveFiles.length}';
+      String id =
+          'id-${DateTime.now().millisecondsSinceEpoch}-${driveFiles.length}';
 
       final bodyBytes = await request.finalize().toBytes();
       final bodyString = utf8.decode(bodyBytes, allowMalformed: true);
@@ -66,7 +74,8 @@ class MockDriveHttpClient extends http.BaseClient {
         name = parsed['name'] as String? ?? name;
         mimeType = parsed['mimeType'] as String? ?? mimeType;
       } catch (_) {
-        if (bodyString.contains('"name":"Time track"') || bodyString.contains('"name": "Time track"')) {
+        if (bodyString.contains('"name":"Time track"') ||
+            bodyString.contains('"name": "Time track"')) {
           name = 'Time track';
           mimeType = 'application/vnd.google-apps.folder';
         } else if (bodyString.contains('stt_records_automatic.csv')) {
@@ -76,11 +85,7 @@ class MockDriveHttpClient extends http.BaseClient {
         }
       }
 
-      final newFile = {
-        'id': id,
-        'name': name,
-        'mimeType': mimeType,
-      };
+      final newFile = {'id': id, 'name': name, 'mimeType': mimeType};
       driveFiles.add(newFile);
 
       final body = jsonEncode(newFile);
@@ -95,7 +100,11 @@ class MockDriveHttpClient extends http.BaseClient {
     if ((method == 'PATCH' || method == 'PUT') && url.contains('/files/')) {
       final segments = request.url.pathSegments;
       final fileId = segments.isNotEmpty ? segments.last : 'updated-id';
-      final body = jsonEncode({'id': fileId, 'name': 'updated', 'modifiedTime': DateTime.now().toIso8601String()});
+      final body = jsonEncode({
+        'id': fileId,
+        'name': 'updated',
+        'modifiedTime': DateTime.now().toIso8601String(),
+      });
       return http.StreamedResponse(
         Stream.value(utf8.encode(body)),
         200,
@@ -123,9 +132,7 @@ void main() {
       tempDir = await Directory.systemTemp.createTemp('tempo_gdrive_test_');
       mockClient = MockDriveHttpClient();
       driveApi = drive.DriveApi(mockClient);
-      syncService = GoogleDriveSyncService(
-        driveApi: driveApi,
-      );
+      syncService = GoogleDriveSyncService(driveApi: driveApi);
     });
 
     tearDown(() async {
@@ -143,20 +150,25 @@ void main() {
       expect(mockClient.driveFiles.first['name'], 'Time track');
     });
 
-    test('ensureTimeTrackFolder returns existing folder id if present', () async {
-      mockClient.driveFiles.add({
-        'id': 'existing-folder-999',
-        'name': 'Time track',
-        'mimeType': 'application/vnd.google-apps.folder',
-      });
+    test(
+      'ensureTimeTrackFolder returns existing folder id if present',
+      () async {
+        mockClient.driveFiles.add({
+          'id': 'existing-folder-999',
+          'name': 'Time track',
+          'mimeType': 'application/vnd.google-apps.folder',
+        });
 
-      final folderId = await syncService.ensureTimeTrackFolder();
-      expect(folderId, 'existing-folder-999');
-    });
+        final folderId = await syncService.ensureTimeTrackFolder();
+        expect(folderId, 'existing-folder-999');
+      },
+    );
 
     test('syncCsvToDrive uploads CSV file into Time track folder', () async {
       final csvFile = File('${tempDir.path}/stt_records_automatic.csv');
-      await csvFile.writeAsString('activity name,time started,time ended,duration\nCoding,10:00,11:00,60');
+      await csvFile.writeAsString(
+        'activity name,time started,time ended,duration\nCoding,10:00,11:00,60',
+      );
 
       final fileId = await syncService.syncCsvToDrive(csvFile);
       expect(fileId, isNotEmpty);
@@ -164,46 +176,53 @@ void main() {
       expect(syncService.lastError, isNull);
     });
 
-    test('backupDatabaseToDrive and restoreDatabaseFromDrive round-trip', () async {
-      final dummyDb = File('${tempDir.path}/tempo.db');
-      await dummyDb.writeAsString('SQLITE_MOCK_DATABASE_CONTENT');
+    test(
+      'backupDatabaseToDrive and restoreDatabaseFromDrive round-trip',
+      () async {
+        final dummyDb = File('${tempDir.path}/tempo.db');
+        await dummyDb.writeAsString('SQLITE_MOCK_DATABASE_CONTENT');
 
-      // Backup
-      final backupId = await syncService.backupDatabaseToDrive(dbFile: dummyDb);
-      expect(backupId, isNotEmpty);
-      expect(syncService.lastError, isNull);
+        // Backup
+        final backupId = await syncService.backupDatabaseToDrive(
+          dbFile: dummyDb,
+        );
+        expect(backupId, isNotEmpty);
+        expect(syncService.lastError, isNull);
 
-      // Setup mock restore content
-      mockClient.downloadMediaContent = 'RESTORED_SQLITE_CONTENT';
-      mockClient.driveFiles.add({
-        'id': backupId,
-        'name': 'tempo_backup.db',
-      });
+        // Setup mock restore content
+        mockClient.downloadMediaContent = 'RESTORED_SQLITE_CONTENT';
+        mockClient.driveFiles.add({'id': backupId, 'name': 'tempo_backup.db'});
 
-      // Restore
-      final restoredFile = File('${tempDir.path}/restored_tempo.db');
-      final resultFile = await syncService.restoreDatabaseFromDrive(targetFile: restoredFile);
+        // Restore
+        final restoredFile = File('${tempDir.path}/restored_tempo.db');
+        final resultFile = await syncService.restoreDatabaseFromDrive(
+          targetFile: restoredFile,
+        );
 
-      expect(await resultFile.exists(), isTrue);
-      expect(await resultFile.readAsString(), 'RESTORED_SQLITE_CONTENT');
-    });
+        expect(await resultFile.exists(), isTrue);
+        expect(await resultFile.readAsString(), 'RESTORED_SQLITE_CONTENT');
+      },
+    );
 
-    test('attachToExportEngine triggers automatic CSV sync upon export', () async {
-      final db = await TempoDatabase.openInMemory();
-      final csvTarget = File('${tempDir.path}/export_test.csv');
-      final exportEngine = CsvExportEngine(
-        database: db,
-        targetFile: csvTarget,
-      );
+    test(
+      'attachToExportEngine triggers automatic CSV sync upon export',
+      () async {
+        final db = await TempoDatabase.openInMemory();
+        final csvTarget = File('${tempDir.path}/export_test.csv');
+        final exportEngine = CsvExportEngine(
+          database: db,
+          targetFile: csvTarget,
+        );
 
-      syncService.attachToExportEngine(exportEngine);
+        syncService.attachToExportEngine(exportEngine);
 
-      // Trigger export
-      final exported = await exportEngine.exportImmediately();
-      expect(await exported.exists(), isTrue);
-      expect(syncService.lastSyncTime, isNotNull);
+        // Trigger export
+        final exported = await exportEngine.exportImmediately();
+        expect(await exported.exists(), isTrue);
+        expect(syncService.lastSyncTime, isNotNull);
 
-      await db.close();
-    });
+        await db.close();
+      },
+    );
   });
 }

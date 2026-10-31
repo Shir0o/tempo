@@ -22,15 +22,33 @@ void main() {
     });
 
     test('maps repeated contact names to the same consistent pseudonym in a session', () {
-      expect(sanitizer.sanitize('Sync w/ Alice Smith'), equals('Sync w/ [Contact-1]'));
-      expect(sanitizer.sanitize('Call with Charlie Brown'), equals('Call with [Contact-2]'));
-      expect(sanitizer.sanitize('Follow-up w/ Alice Smith'), equals('Follow-up w/ [Contact-1]'));
-      expect(sanitizer.sanitize('Wrap-up with Charlie Brown'), equals('Wrap-up with [Contact-2]'));
+      expect(
+        sanitizer.sanitize('Sync w/ Alice Smith'),
+        equals('Sync w/ [Contact-1]'),
+      );
+      expect(
+        sanitizer.sanitize('Call with Charlie Brown'),
+        equals('Call with [Contact-2]'),
+      );
+      expect(
+        sanitizer.sanitize('Follow-up w/ Alice Smith'),
+        equals('Follow-up w/ [Contact-1]'),
+      );
+      expect(
+        sanitizer.sanitize('Wrap-up with Charlie Brown'),
+        equals('Wrap-up with [Contact-2]'),
+      );
     });
 
     test('masks single-word contact names properly', () {
-      expect(sanitizer.sanitize('Lunch with Diana'), equals('Lunch with [Contact-1]'));
-      expect(sanitizer.sanitize('Discussion w/ Diana'), equals('Discussion w/ [Contact-1]'));
+      expect(
+        sanitizer.sanitize('Lunch with Diana'),
+        equals('Lunch with [Contact-1]'),
+      );
+      expect(
+        sanitizer.sanitize('Discussion w/ Diana'),
+        equals('Discussion w/ [Contact-1]'),
+      );
     });
 
     test('masks email addresses with [EMAIL]', () {
@@ -40,26 +58,49 @@ void main() {
     });
 
     test('masks URLs with [URL]', () {
-      final input = 'Checked https://github.com/flutter/flutter and http://tempo.dev/docs';
+      final input =
+          'Checked https://github.com/flutter/flutter and http://tempo.dev/docs';
       final sanitized = sanitizer.sanitize(input);
       expect(sanitized, equals('Checked [URL] and [URL]'));
     });
 
     test('masks various phone number formats with [PHONE] without masking dates or times', () {
-      expect(sanitizer.sanitize('Call at +1-555-123-4567'), equals('Call at [PHONE]'));
-      expect(sanitizer.sanitize('Reach me at 555-123-4567'), equals('Reach me at [PHONE]'));
-      expect(sanitizer.sanitize('Office: (555) 123-4567'), equals('Office: [PHONE]'));
-      expect(sanitizer.sanitize('Direct: 555.123.4567'), equals('Direct: [PHONE]'));
+      expect(
+        sanitizer.sanitize('Call at +1-555-123-4567'),
+        equals('Call at [PHONE]'),
+      );
+      expect(
+        sanitizer.sanitize('Reach me at 555-123-4567'),
+        equals('Reach me at [PHONE]'),
+      );
+      expect(
+        sanitizer.sanitize('Office: (555) 123-4567'),
+        equals('Office: [PHONE]'),
+      );
+      expect(
+        sanitizer.sanitize('Direct: 555.123.4567'),
+        equals('Direct: [PHONE]'),
+      );
       expect(sanitizer.sanitize('UK: +44 20 7946 0958'), equals('UK: [PHONE]'));
 
       // Crucial: ISO dates, times, and hex colors must NOT be masked as phone numbers
-      expect(sanitizer.sanitize('Logged session on 2026-10-31'), equals('Logged session on 2026-10-31'));
-      expect(sanitizer.sanitize('Completed at 14:30:00 UTC'), equals('Completed at 14:30:00 UTC'));
-      expect(sanitizer.sanitize('Accent color is #4CAF50'), equals('Accent color is #4CAF50'));
+      expect(
+        sanitizer.sanitize('Logged session on 2026-10-31'),
+        equals('Logged session on 2026-10-31'),
+      );
+      expect(
+        sanitizer.sanitize('Completed at 14:30:00 UTC'),
+        equals('Completed at 14:30:00 UTC'),
+      );
+      expect(
+        sanitizer.sanitize('Accent color is #4CAF50'),
+        equals('Accent color is #4CAF50'),
+      );
     });
 
     test('preserves non-PII comments verbatim', () {
-      final comment = 'Refactoring SQLite database state machine and fixing unit tests';
+      final comment =
+          'Refactoring SQLite database state machine and fixing unit tests';
       expect(sanitizer.sanitize(comment), equals(comment));
     });
 
@@ -102,12 +143,16 @@ void main() {
       );
 
       final sanitized = sanitizer.sanitizeActiveTimer(timer);
-      expect(sanitized.currentComment, equals('Interviewing candidate with [Contact-1]'));
+      expect(
+        sanitized.currentComment,
+        equals('Interviewing candidate with [Contact-1]'),
+      );
     });
 
     test('returns original string when enabled is false', () {
       final disabledSanitizer = PIISanitizer(enabled: false);
-      final input = 'Meeting w/ Alice Smith at alice@example.com (555-123-4567)';
+      final input =
+          'Meeting w/ Alice Smith at alice@example.com (555-123-4567)';
       expect(disabledSanitizer.sanitize(input), equals(input));
     });
 

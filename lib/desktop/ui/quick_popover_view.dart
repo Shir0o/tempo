@@ -1,7 +1,9 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
+
 import '../../core/state/timer_state_machine.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
@@ -63,8 +65,9 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
     super.initState();
     _loadData();
 
-    widget.timerStateMachine.activeTimerNotifier
-        .addListener(_onActiveTimerChanged);
+    widget.timerStateMachine.activeTimerNotifier.addListener(
+      _onActiveTimerChanged,
+    );
     _onActiveTimerChanged();
   }
 
@@ -72,8 +75,9 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
   void dispose() {
     _liveTicker?.cancel();
     _liveTicker = null;
-    widget.timerStateMachine.activeTimerNotifier
-        .removeListener(_onActiveTimerChanged);
+    widget.timerStateMachine.activeTimerNotifier.removeListener(
+      _onActiveTimerChanged,
+    );
     _rootFocusNode.dispose();
     _searchFocusNode.dispose();
     _commentFocusNode.dispose();
@@ -103,7 +107,9 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
 
     // Compute weekly durations from records since start of week
     final startOfWeekMs = _getStartOfWeekEpochMs();
-    final weekRecords = await widget.database.getRecords(startedAfter: startOfWeekMs);
+    final weekRecords = await widget.database.getRecords(
+      startedAfter: startOfWeekMs,
+    );
 
     final durations = <String, int>{};
     for (final r in weekRecords) {
@@ -452,7 +458,9 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
   Widget _buildActiveTimerBanner(ActiveTimer timer, int elapsedMs) {
     final actName = _activeActivity?.name ?? 'Tracking';
     final isPaused = timer.isPaused;
-    final dotColor = isPaused ? const Color(0xFFFFB300) : const Color(0xFF4CAF50);
+    final dotColor = isPaused
+        ? const Color(0xFFFFB300)
+        : const Color(0xFF4CAF50);
     final elapsedStr = _formatElapsedDuration(elapsedMs);
 
     return Container(
@@ -488,8 +496,10 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
                 onTap: _togglePauseResume,
                 borderRadius: BorderRadius.circular(4),
                 child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white10,
                     borderRadius: BorderRadius.circular(4),
@@ -562,14 +572,20 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
           isDense: true,
           contentPadding: const EdgeInsets.symmetric(vertical: 8),
           prefixIcon: const Icon(Icons.search, size: 18, color: Colors.white54),
-          prefixIconConstraints:
-              const BoxConstraints(minWidth: 32, minHeight: 32),
+          prefixIconConstraints: const BoxConstraints(
+            minWidth: 32,
+            minHeight: 32,
+          ),
           hintText: 'Search or create activity... (/)',
           hintStyle: const TextStyle(color: Colors.white38, fontSize: 13),
           border: InputBorder.none,
           suffixIcon: _searchQuery.isNotEmpty
               ? IconButton(
-                  icon: const Icon(Icons.clear, size: 16, color: Colors.white54),
+                  icon: const Icon(
+                    Icons.clear,
+                    size: 16,
+                    color: Colors.white54,
+                  ),
                   onPressed: () {
                     _searchController.clear();
                     setState(() => _searchQuery = '');
@@ -585,10 +601,11 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
     final filtered = _searchQuery.isEmpty
         ? _pinnedActivities
         : _pinnedActivities
-            .where(
-              (a) => a.name.toLowerCase().contains(_searchQuery.toLowerCase()),
-            )
-            .toList();
+              .where(
+                (a) =>
+                    a.name.toLowerCase().contains(_searchQuery.toLowerCase()),
+              )
+              .toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -637,7 +654,9 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
       onTap: () => _startHabit(activity),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-        color: isCurrent ? Colors.white.withValues(alpha: 0.06) : Colors.transparent,
+        color: isCurrent
+            ? Colors.white.withValues(alpha: 0.06)
+            : Colors.transparent,
         child: Row(
           children: [
             if (hotkeyNumber != null)
@@ -714,17 +733,20 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
           InkWell(
             onTap: () => _startHabit(act),
             child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
               child: Row(
                 children: [
-                  const Text('• ',
-                      style: TextStyle(color: Colors.white38, fontSize: 14)),
+                  const Text(
+                    '• ',
+                    style: TextStyle(color: Colors.white38, fontSize: 14),
+                  ),
                   Expanded(
                     child: Text(
                       act.name,
                       style: const TextStyle(
-                          color: Colors.white70, fontSize: 12),
+                        color: Colors.white70,
+                        fontSize: 12,
+                      ),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),

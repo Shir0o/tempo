@@ -26,26 +26,32 @@ void main() {
       );
       final tableNames = tables.map((t) => t['name'] as String).toSet();
 
-      expect(tableNames, containsAll([
-        'activities',
-        'tags',
-        'records',
-        'record_tags',
-        'active_timer',
-        'tombstones',
-      ]));
+      expect(
+        tableNames,
+        containsAll([
+          'activities',
+          'tags',
+          'records',
+          'record_tags',
+          'active_timer',
+          'tombstones',
+        ]),
+      );
 
       final indexes = await db.db.rawQuery(
         "SELECT name FROM sqlite_master WHERE type='index' ORDER BY name;",
       );
       final indexNames = indexes.map((i) => i['name'] as String).toSet();
 
-      expect(indexNames, containsAll([
-        'idx_records_started',
-        'idx_records_activity',
-        'idx_records_updated',
-        'idx_tombstones_deleted',
-      ]));
+      expect(
+        indexNames,
+        containsAll([
+          'idx_records_started',
+          'idx_records_activity',
+          'idx_records_updated',
+          'idx_tombstones_deleted',
+        ]),
+      );
     });
 
     test('enforces foreign keys pragma', () async {
@@ -97,55 +103,62 @@ void main() {
       expect(allList.map((a) => a.id), containsAll(['act-1', 'act-2']));
     });
 
-    test('deleting an activity creates tombstone and cascades to records', () async {
-      final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-      final activity = Activity(
-        id: 'act-del',
-        name: 'Reading',
-        createdAtEpochMs: now,
-        updatedAtEpochMs: now,
-      );
-      await db.insertActivity(activity);
+    test(
+      'deleting an activity creates tombstone and cascades to records',
+      () async {
+        final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+        final activity = Activity(
+          id: 'act-del',
+          name: 'Reading',
+          createdAtEpochMs: now,
+          updatedAtEpochMs: now,
+        );
+        await db.insertActivity(activity);
 
-      final record = Record(
-        id: 'rec-1',
-        activityId: 'act-del',
-        startedAtEpochMs: now - 3600000,
-        endedAtEpochMs: now,
-        durationMs: 3600000,
-        comment: 'Book chapter',
-        timezoneId: 'UTC',
-        createdAtEpochMs: now,
-        updatedAtEpochMs: now,
-      );
-      await db.insertRecord(record);
+        final record = Record(
+          id: 'rec-1',
+          activityId: 'act-del',
+          startedAtEpochMs: now - 3600000,
+          endedAtEpochMs: now,
+          durationMs: 3600000,
+          comment: 'Book chapter',
+          timezoneId: 'UTC',
+          createdAtEpochMs: now,
+          updatedAtEpochMs: now,
+        );
+        await db.insertRecord(record);
 
-      // Verify record exists
-      expect(await db.getRecordById('rec-1'), isNotNull);
+        // Verify record exists
+        expect(await db.getRecordById('rec-1'), isNotNull);
 
-      // Delete activity
-      final deleteTime = now + 1000;
-      await db.deleteActivity('act-del', deletedAtEpochMs: deleteTime);
+        // Delete activity
+        final deleteTime = now + 1000;
+        await db.deleteActivity('act-del', deletedAtEpochMs: deleteTime);
 
-      // Verify activity deleted
-      expect(await db.getActivityById('act-del'), isNull);
+        // Verify activity deleted
+        expect(await db.getActivityById('act-del'), isNull);
 
-      // Verify cascaded record deleted
-      expect(await db.getRecordById('rec-1'), isNull);
+        // Verify cascaded record deleted
+        expect(await db.getRecordById('rec-1'), isNull);
 
-      // Verify tombstones recorded for both activity and cascaded record
-      final tombstones = await db.getTombstones();
-      final entityIds = tombstones.map((t) => t.entityId).toList();
-      expect(entityIds, containsAll(['act-del', 'rec-1']));
+        // Verify tombstones recorded for both activity and cascaded record
+        final tombstones = await db.getTombstones();
+        final entityIds = tombstones.map((t) => t.entityId).toList();
+        expect(entityIds, containsAll(['act-del', 'rec-1']));
 
-      final actTombstone = tombstones.firstWhere((t) => t.entityId == 'act-del');
-      expect(actTombstone.entityType, 'activity');
-      expect(actTombstone.deletedAtEpochMs, deleteTime);
+        final actTombstone = tombstones.firstWhere(
+          (t) => t.entityId == 'act-del',
+        );
+        expect(actTombstone.entityType, 'activity');
+        expect(actTombstone.deletedAtEpochMs, deleteTime);
 
-      final recTombstone = tombstones.firstWhere((t) => t.entityId == 'rec-1');
-      expect(recTombstone.entityType, 'record');
-      expect(recTombstone.deletedAtEpochMs, deleteTime);
-    });
+        final recTombstone = tombstones.firstWhere(
+          (t) => t.entityId == 'rec-1',
+        );
+        expect(recTombstone.entityType, 'record');
+        expect(recTombstone.deletedAtEpochMs, deleteTime);
+      },
+    );
   });
 
   group('Tags CRUD & Tombstones', () {
@@ -189,7 +202,10 @@ void main() {
       expect(await db.getTagById('tag-1'), isNull);
 
       final tombstones = await db.getTombstones();
-      expect(tombstones.any((t) => t.entityId == 'tag-1' && t.entityType == 'tag'), isTrue);
+      expect(
+        tombstones.any((t) => t.entityId == 'tag-1' && t.entityType == 'tag'),
+        isTrue,
+      );
     });
   });
 
@@ -315,58 +331,66 @@ void main() {
       expect(paged.first.tagIds, equals([testTag2.id]));
     });
 
-    test('deleting a record removes junction rows and writes tombstone', () async {
-      final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-      final record = Record(
-        id: 'rec-del',
-        activityId: testActivity.id,
-        startedAtEpochMs: now,
-        endedAtEpochMs: now + 500,
-        durationMs: 500,
-        timezoneId: 'UTC',
-        createdAtEpochMs: now,
-        updatedAtEpochMs: now,
-        tagIds: [testTag1.id],
-      );
-      await db.insertRecord(record);
+    test(
+      'deleting a record removes junction rows and writes tombstone',
+      () async {
+        final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+        final record = Record(
+          id: 'rec-del',
+          activityId: testActivity.id,
+          startedAtEpochMs: now,
+          endedAtEpochMs: now + 500,
+          durationMs: 500,
+          timezoneId: 'UTC',
+          createdAtEpochMs: now,
+          updatedAtEpochMs: now,
+          tagIds: [testTag1.id],
+        );
+        await db.insertRecord(record);
 
-      await db.deleteRecord('rec-del', deletedAtEpochMs: now + 100);
-      expect(await db.getRecordById('rec-del'), isNull);
+        await db.deleteRecord('rec-del', deletedAtEpochMs: now + 100);
+        expect(await db.getRecordById('rec-del'), isNull);
 
-      // Verify junction table cascade
-      final junctionRows = await db.db.query(
-        'record_tags',
-        where: 'record_id = ?',
-        whereArgs: ['rec-del'],
-      );
-      expect(junctionRows, isEmpty);
+        // Verify junction table cascade
+        final junctionRows = await db.db.query(
+          'record_tags',
+          where: 'record_id = ?',
+          whereArgs: ['rec-del'],
+        );
+        expect(junctionRows, isEmpty);
 
-      // Verify tombstone
-      final tombstones = await db.getTombstones();
-      expect(
-        tombstones.any((t) => t.entityId == 'rec-del' && t.entityType == 'record'),
-        isTrue,
-      );
-    });
+        // Verify tombstone
+        final tombstones = await db.getTombstones();
+        expect(
+          tombstones.any(
+            (t) => t.entityId == 'rec-del' && t.entityType == 'record',
+          ),
+          isTrue,
+        );
+      },
+    );
 
-    test('foreign key constraint fails on invalid activity reference', () async {
-      final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-      final invalidRecord = Record(
-        id: 'rec-invalid',
-        activityId: 'non-existent-activity',
-        startedAtEpochMs: now,
-        endedAtEpochMs: now + 100,
-        durationMs: 100,
-        timezoneId: 'UTC',
-        createdAtEpochMs: now,
-        updatedAtEpochMs: now,
-      );
+    test(
+      'foreign key constraint fails on invalid activity reference',
+      () async {
+        final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+        final invalidRecord = Record(
+          id: 'rec-invalid',
+          activityId: 'non-existent-activity',
+          startedAtEpochMs: now,
+          endedAtEpochMs: now + 100,
+          durationMs: 100,
+          timezoneId: 'UTC',
+          createdAtEpochMs: now,
+          updatedAtEpochMs: now,
+        );
 
-      expect(
-        () async => await db.insertRecord(invalidRecord),
-        throwsA(isA<DatabaseException>()),
-      );
-    });
+        expect(
+          () async => await db.insertRecord(invalidRecord),
+          throwsA(isA<DatabaseException>()),
+        );
+      },
+    );
   });
 
   group('ActiveTimer Operations & Invariants', () {
@@ -452,24 +476,37 @@ void main() {
   });
 
   group('Tombstones purging and querying', () {
-    test('queries tombstones by timestamp threshold and purges old ones', () async {
-      final t1 = 100000;
-      final t2 = 200000;
-      final t3 = 300000;
+    test(
+      'queries tombstones by timestamp threshold and purges old ones',
+      () async {
+        final t1 = 100000;
+        final t2 = 200000;
+        final t3 = 300000;
 
-      await db.insertTombstone(Tombstone(entityId: 'e1', entityType: 'record', deletedAtEpochMs: t1));
-      await db.insertTombstone(Tombstone(entityId: 'e2', entityType: 'activity', deletedAtEpochMs: t2));
-      await db.insertTombstone(Tombstone(entityId: 'e3', entityType: 'tag', deletedAtEpochMs: t3));
+        await db.insertTombstone(
+          Tombstone(entityId: 'e1', entityType: 'record', deletedAtEpochMs: t1),
+        );
+        await db.insertTombstone(
+          Tombstone(
+            entityId: 'e2',
+            entityType: 'activity',
+            deletedAtEpochMs: t2,
+          ),
+        );
+        await db.insertTombstone(
+          Tombstone(entityId: 'e3', entityType: 'tag', deletedAtEpochMs: t3),
+        );
 
-      final recent = await db.getTombstones(deletedAfterEpochMs: t1);
-      expect(recent.map((t) => t.entityId), equals(['e2', 'e3']));
+        final recent = await db.getTombstones(deletedAfterEpochMs: t1);
+        expect(recent.map((t) => t.entityId), equals(['e2', 'e3']));
 
-      // Purge older than t2
-      final purgedCount = await db.purgeTombstonesOlderThan(t2);
-      expect(purgedCount, 1);
+        // Purge older than t2
+        final purgedCount = await db.purgeTombstonesOlderThan(t2);
+        expect(purgedCount, 1);
 
-      final remaining = await db.getTombstones();
-      expect(remaining.map((t) => t.entityId), equals(['e2', 'e3']));
-    });
+        final remaining = await db.getTombstones();
+        expect(remaining.map((t) => t.entityId), equals(['e2', 'e3']));
+      },
+    );
   });
 }

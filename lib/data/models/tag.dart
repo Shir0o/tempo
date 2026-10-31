@@ -14,20 +14,20 @@ class Tag {
   });
 
   Map<String, dynamic> toMap() => {
-        'id': id,
-        'name': name,
-        'color_hex': colorHex,
-        'created_at_epoch_ms': createdAtEpochMs,
-        'updated_at_epoch_ms': updatedAtEpochMs,
-      };
+    'id': id,
+    'name': name,
+    'color_hex': colorHex,
+    'created_at_epoch_ms': createdAtEpochMs,
+    'updated_at_epoch_ms': updatedAtEpochMs,
+  };
 
   factory Tag.fromMap(Map<String, dynamic> map) => Tag(
-        id: map['id'] as String,
-        name: map['name'] as String,
-        colorHex: map['color_hex'] as String? ?? '#9E9E9E',
-        createdAtEpochMs: map['created_at_epoch_ms'] as int,
-        updatedAtEpochMs: map['updated_at_epoch_ms'] as int,
-      );
+    id: map['id'] as String,
+    name: map['name'] as String,
+    colorHex: map['color_hex'] as String? ?? '#9E9E9E',
+    createdAtEpochMs: map['created_at_epoch_ms'] as int,
+    updatedAtEpochMs: map['updated_at_epoch_ms'] as int,
+  );
 
   Tag copyWith({
     String? id,
@@ -35,14 +35,13 @@ class Tag {
     String? colorHex,
     int? createdAtEpochMs,
     int? updatedAtEpochMs,
-  }) =>
-      Tag(
-        id: id ?? this.id,
-        name: name ?? this.name,
-        colorHex: colorHex ?? this.colorHex,
-        createdAtEpochMs: createdAtEpochMs ?? this.createdAtEpochMs,
-        updatedAtEpochMs: updatedAtEpochMs ?? this.updatedAtEpochMs,
-      );
+  }) => Tag(
+    id: id ?? this.id,
+    name: name ?? this.name,
+    colorHex: colorHex ?? this.colorHex,
+    createdAtEpochMs: createdAtEpochMs ?? this.createdAtEpochMs,
+    updatedAtEpochMs: updatedAtEpochMs ?? this.updatedAtEpochMs,
+  );
 
   @override
   bool operator ==(Object other) =>

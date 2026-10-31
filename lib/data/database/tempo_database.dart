@@ -1,9 +1,12 @@
 import 'dart:io';
+
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
 import '../models/models.dart';
 
-const bool _kIsWeb = bool.fromEnvironment('dart.library.js_util') ||
+const bool _kIsWeb =
+    bool.fromEnvironment('dart.library.js_util') ||
     bool.fromEnvironment('dart.library.js_interop');
 
 class TempoDatabase {
@@ -142,9 +145,7 @@ CREATE TABLE IF NOT EXISTS tombstones (
   }
 
   /// Opens an in-memory SQLite database, ideal for tests and ephemeral sessions.
-  static Future<TempoDatabase> openInMemory({
-    DatabaseFactory? factory,
-  }) async {
+  static Future<TempoDatabase> openInMemory({DatabaseFactory? factory}) async {
     sqfliteFfiInit();
     final dbFactory = factory ?? databaseFactoryFfi;
     final db = await dbFactory.openDatabase(
@@ -198,7 +199,9 @@ CREATE TABLE IF NOT EXISTS tombstones (
     return Activity.fromMap(results.first);
   }
 
-  Future<List<Activity>> getAllActivities({bool includeArchived = false}) async {
+  Future<List<Activity>> getAllActivities({
+    bool includeArchived = false,
+  }) async {
     final results = await _db.query(
       'activities',
       where: includeArchived ? null : 'is_archived = 0',
@@ -218,11 +221,7 @@ CREATE TABLE IF NOT EXISTS tombstones (
         whereArgs: [id],
       );
 
-      await txn.delete(
-        'activities',
-        where: 'id = ?',
-        whereArgs: [id],
-      );
+      await txn.delete('activities', where: 'id = ?', whereArgs: [id]);
 
       await txn.insert(
         'tombstones',
@@ -262,12 +261,7 @@ CREATE TABLE IF NOT EXISTS tombstones (
   }
 
   Future<void> updateTag(Tag tag) async {
-    await _db.update(
-      'tags',
-      tag.toMap(),
-      where: 'id = ?',
-      whereArgs: [tag.id],
-    );
+    await _db.update('tags', tag.toMap(), where: 'id = ?', whereArgs: [tag.id]);
   }
 
   Future<Tag?> getTagById(String id) async {
@@ -293,10 +287,7 @@ CREATE TABLE IF NOT EXISTS tombstones (
   }
 
   Future<List<Tag>> getAllTags() async {
-    final results = await _db.query(
-      'tags',
-      orderBy: 'name ASC',
-    );
+    final results = await _db.query('tags', orderBy: 'name ASC');
     return results.map(Tag.fromMap).toList();
   }
 
@@ -304,11 +295,7 @@ CREATE TABLE IF NOT EXISTS tombstones (
     final deletedAt =
         deletedAtEpochMs ?? DateTime.now().toUtc().millisecondsSinceEpoch;
     await _db.transaction((txn) async {
-      await txn.delete(
-        'tags',
-        where: 'id = ?',
-        whereArgs: [id],
-      );
+      await txn.delete('tags', where: 'id = ?', whereArgs: [id]);
       await txn.insert(
         'tombstones',
         Tombstone(
@@ -333,11 +320,10 @@ CREATE TABLE IF NOT EXISTS tombstones (
         conflictAlgorithm: ConflictAlgorithm.abort,
       );
       for (final tagId in record.tagIds) {
-        await txn.insert(
-          'record_tags',
-          {'record_id': record.id, 'tag_id': tagId},
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        await txn.insert('record_tags', {
+          'record_id': record.id,
+          'tag_id': tagId,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
     });
   }
@@ -356,11 +342,10 @@ CREATE TABLE IF NOT EXISTS tombstones (
         whereArgs: [record.id],
       );
       for (final tagId in record.tagIds) {
-        await txn.insert(
-          'record_tags',
-          {'record_id': record.id, 'tag_id': tagId},
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        await txn.insert('record_tags', {
+          'record_id': record.id,
+          'tag_id': tagId,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
     });
   }
@@ -450,11 +435,7 @@ CREATE TABLE IF NOT EXISTS tombstones (
     final deletedAt =
         deletedAtEpochMs ?? DateTime.now().toUtc().millisecondsSinceEpoch;
     await _db.transaction((txn) async {
-      await txn.delete(
-        'records',
-        where: 'id = ?',
-        whereArgs: [id],
-      );
+      await txn.delete('records', where: 'id = ?', whereArgs: [id]);
       await txn.insert(
         'tombstones',
         Tombstone(
@@ -472,11 +453,7 @@ CREATE TABLE IF NOT EXISTS tombstones (
   // ==========================================
 
   Future<ActiveTimer?> getActiveTimer() async {
-    final results = await _db.query(
-      'active_timer',
-      where: 'id = 1',
-      limit: 1,
-    );
+    final results = await _db.query('active_timer', where: 'id = 1', limit: 1);
     if (results.isEmpty) return null;
     return ActiveTimer.fromMap(results.first);
   }
@@ -494,11 +471,9 @@ CREATE TABLE IF NOT EXISTS tombstones (
   }
 
   Future<void> updateHeartbeat(int heartbeatEpochMs) async {
-    await _db.update(
-      'active_timer',
-      {'last_heartbeat_epoch_ms': heartbeatEpochMs},
-      where: 'id = 1',
-    );
+    await _db.update('active_timer', {
+      'last_heartbeat_epoch_ms': heartbeatEpochMs,
+    }, where: 'id = 1');
   }
 
   // ==========================================
@@ -514,9 +489,12 @@ CREATE TABLE IF NOT EXISTS tombstones (
   }
 
   Future<List<Tombstone>> getTombstones({int? deletedAfterEpochMs}) async {
-    final where =
-        deletedAfterEpochMs != null ? 'deleted_at_epoch_ms > ?' : null;
-    final whereArgs = deletedAfterEpochMs != null ? [deletedAfterEpochMs] : null;
+    final where = deletedAfterEpochMs != null
+        ? 'deleted_at_epoch_ms > ?'
+        : null;
+    final whereArgs = deletedAfterEpochMs != null
+        ? [deletedAfterEpochMs]
+        : null;
     final results = await _db.query(
       'tombstones',
       where: where,

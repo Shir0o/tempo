@@ -11,8 +11,12 @@ void main() {
     databaseFactory = databaseFactoryFfiNoIsolate;
   });
 
-  testWidgets('TempoApp smoke test displays dashboard shell', (WidgetTester tester) async {
-    final db = await TempoDatabase.openInMemory(factory: databaseFactoryFfiNoIsolate);
+  testWidgets('TempoApp smoke test displays dashboard shell', (
+    WidgetTester tester,
+  ) async {
+    final db = await TempoDatabase.openInMemory(
+      factory: databaseFactoryFfiNoIsolate,
+    );
     await db.insertActivity(
       const Activity(
         id: 'act-test-1',
@@ -28,12 +32,7 @@ void main() {
     final sm = TimerStateMachine(database: db);
     await sm.initialize();
 
-    await tester.pumpWidget(
-      TempoApp(
-        timerStateMachine: sm,
-        database: db,
-      ),
-    );
+    await tester.pumpWidget(TempoApp(timerStateMachine: sm, database: db));
 
     // Initial frame + data load
     await tester.pump();

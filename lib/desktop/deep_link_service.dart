@@ -1,6 +1,8 @@
 import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
+
 import '../core/state/timer_state_machine.dart';
 import '../data/database/tempo_database.dart';
 import '../data/models/models.dart';
@@ -29,10 +31,10 @@ class DeepLinkService {
     MethodChannel? channel,
     int Function()? nowUtcMs,
     String Function()? generateId,
-  })  : _channel = channel ?? const MethodChannel(channelName),
-        _nowUtcMs =
-            nowUtcMs ?? (() => DateTime.now().toUtc().millisecondsSinceEpoch),
-        _generateId = generateId ?? (() => const Uuid().v4()) {
+  }) : _channel = channel ?? const MethodChannel(channelName),
+       _nowUtcMs =
+           nowUtcMs ?? (() => DateTime.now().toUtc().millisecondsSinceEpoch),
+       _generateId = generateId ?? (() => const Uuid().v4()) {
     _initChannelHandler();
   }
 
@@ -55,8 +57,9 @@ class DeepLinkService {
 
   Future<void> _checkInitialDeepLink() async {
     try {
-      final initialUrl =
-          await _channel.invokeMethod<String>('getInitialDeepLink');
+      final initialUrl = await _channel.invokeMethod<String>(
+        'getInitialDeepLink',
+      );
       if (initialUrl != null && initialUrl.isNotEmpty) {
         await handleUrl(initialUrl);
       }

@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:uuid/uuid.dart';
 
 import '../core/export/csv_export_engine.dart';
@@ -92,10 +93,7 @@ class TempoMcpServer {
           return jsonEncode({
             'jsonrpc': '2.0',
             'id': id,
-            'error': {
-              'code': -32601,
-              'message': 'Method not found: $method',
-            },
+            'error': {'code': -32601, 'message': 'Method not found: $method'},
           });
       }
     } catch (e, stack) {
@@ -117,55 +115,39 @@ class TempoMcpServer {
       'id': id,
       'result': {
         'protocolVersion': '2024-11-05',
-        'capabilities': {
-          'tools': {},
-        },
-        'serverInfo': {
-          'name': 'tempo-mcp',
-          'version': '1.0.0',
-        },
+        'capabilities': {'tools': {}},
+        'serverInfo': {'name': 'tempo-mcp', 'version': '1.0.0'},
       },
     });
   }
 
   String _handlePing(dynamic id) {
-    return jsonEncode({
-      'jsonrpc': '2.0',
-      'id': id,
-      'result': {},
-    });
+    return jsonEncode({'jsonrpc': '2.0', 'id': id, 'result': {}});
   }
 
   String _handleToolsList(dynamic id) {
     final tools = <Map<String, dynamic>>[
       {
         'name': 'get_active_timer',
-        'description':
-            'Returns the status of the currently ticking timer, elapsed seconds, activity, comment, and tags.',
-        'inputSchema': {
-          'type': 'object',
-          'properties': {},
-        },
+        'description': 'Returns the status of the currently ticking timer, elapsed seconds, activity, comment, and tags.',
+        'inputSchema': {'type': 'object', 'properties': {}},
       },
       {
         'name': 'get_daily_summary',
-        'description':
-            'Aggregates total tracked time, record count, and category breakdown for a single day.',
+        'description': 'Aggregates total tracked time, record count, and category breakdown for a single day.',
         'inputSchema': {
           'type': 'object',
           'properties': {
             'date': {
               'type': 'string',
-              'description':
-                  'Target date in YYYY-MM-DD format (UTC). Defaults to current day.',
+              'description': 'Target date in YYYY-MM-DD format (UTC). Defaults to current day.',
             },
           },
         },
       },
       {
         'name': 'query_records',
-        'description':
-            'Searches historical time records with date range, activity name, and tag filters with sanitized comments.',
+        'description': 'Searches historical time records with date range, activity name, and tag filters with sanitized comments.',
         'inputSchema': {
           'type': 'object',
           'properties': {
@@ -195,8 +177,7 @@ class TempoMcpServer {
       },
       {
         'name': 'analyze_trends',
-        'description':
-            'Calculates multi-week habit consistency, time-of-day hourly histogram (00:00-23:00), and habit streaks.',
+        'description': 'Calculates multi-week habit consistency, time-of-day hourly histogram (00:00-23:00), and habit streaks.',
         'inputSchema': {
           'type': 'object',
           'properties': {
@@ -238,8 +219,7 @@ class TempoMcpServer {
         },
         {
           'name': 'stop_timer',
-          'description':
-              'Stops the currently active timer and records the session (guarded write tool).',
+          'description': 'Stops the currently active timer and records the session (guarded write tool).',
           'inputSchema': {
             'type': 'object',
             'properties': {
@@ -252,8 +232,7 @@ class TempoMcpServer {
         },
         {
           'name': 'add_manual_record',
-          'description':
-              'Manually logs a past completed time session (guarded write tool).',
+          'description': 'Manually logs a past completed time session (guarded write tool).',
           'inputSchema': {
             'type': 'object',
             'properties': {
@@ -269,10 +248,7 @@ class TempoMcpServer {
                 'type': 'string',
                 'description': 'End timestamp in ISO 8601 format.',
               },
-              'comment': {
-                'type': 'string',
-                'description': 'Optional comment.',
-              },
+              'comment': {'type': 'string', 'description': 'Optional comment.'},
               'tags': {
                 'type': 'array',
                 'items': {'type': 'string'},
@@ -288,9 +264,7 @@ class TempoMcpServer {
     return jsonEncode({
       'jsonrpc': '2.0',
       'id': id,
-      'result': {
-        'tools': tools,
-      },
+      'result': {'tools': tools},
     });
   }
 
@@ -302,7 +276,10 @@ class TempoMcpServer {
     final args = (params['arguments'] as Map<String, dynamic>?) ?? {};
 
     if (toolName == null) {
-      return _errorToolResponse(id, 'Missing tool name in tools/call parameters.');
+      return _errorToolResponse(
+        id,
+        'Missing tool name in tools/call parameters.',
+      );
     }
 
     // Enforce mutation guard for write tools
@@ -380,7 +357,9 @@ class TempoMcpServer {
 
     final allTags = await database.getAllTags();
     final tagMap = {for (final t in allTags) t.id: t.name};
-    final tagNames = active.initialTagIds.map((id) => tagMap[id] ?? id).toList();
+    final tagNames = active.initialTagIds
+        .map((id) => tagMap[id] ?? id)
+        .toList();
 
     return {
       'is_tracking': !active.isPaused,
@@ -400,12 +379,14 @@ class TempoMcpServer {
   Future<Map<String, dynamic>> _getDailySummaryTool(
     Map<String, dynamic> args,
   ) async {
-    final dateStr = (args['date'] as String?)?.trim() ??
+    final dateStr =
+        (args['date'] as String?)?.trim() ??
         DateTime.now().toUtc().toIso8601String().substring(0, 10);
 
     final parsed = DateTime.parse('${dateStr}T00:00:00Z');
     final startMs = parsed.millisecondsSinceEpoch;
-    final endMs = DateTime.parse('${dateStr}T23:59:59.999Z').millisecondsSinceEpoch;
+    final endMs = DateTime.parse('${dateStr}T23:59:59.999Z')
+        .millisecondsSinceEpoch;
 
     final records = await database.getRecords(
       startedAfter: startMs,
@@ -438,8 +419,9 @@ class TempoMcpServer {
       });
     }
 
-    breakdown.sort((a, b) =>
-        (b['hours'] as double).compareTo(a['hours'] as double));
+    breakdown.sort(
+      (a, b) => (b['hours'] as double).compareTo(a['hours'] as double),
+    );
 
     final totalHours = totalDurationMs / 3600000.0;
 
@@ -460,14 +442,18 @@ class TempoMcpServer {
       throw ArgumentError('start_date and end_date are required');
     }
 
-    final startMs = DateTime.parse('${startDateStr}T00:00:00Z').millisecondsSinceEpoch;
-    final endMs = DateTime.parse('${endDateStr}T23:59:59.999Z').millisecondsSinceEpoch;
+    final startMs = DateTime.parse('${startDateStr}T00:00:00Z')
+        .millisecondsSinceEpoch;
+    final endMs = DateTime.parse('${endDateStr}T23:59:59.999Z')
+        .millisecondsSinceEpoch;
     final limit = (args['limit'] as int? ?? 50).clamp(1, 200);
 
     final activityFilter = args['activity_name'] as String?;
     final tagFilter = args['tag'] as String?;
 
-    final allActivities = await database.getAllActivities(includeArchived: true);
+    final allActivities = await database.getAllActivities(
+      includeArchived: true,
+    );
     final activityMap = {for (final a in allActivities) a.id: a};
 
     String? activityIdFilter;
@@ -533,11 +519,13 @@ class TempoMcpServer {
   ) async {
     final lookbackWeeks = (args['lookback_weeks'] as int? ?? 4).clamp(1, 52);
     final nowUtc = DateTime.now().toUtc();
-    final startMs = nowUtc.millisecondsSinceEpoch -
-        (lookbackWeeks * 7 * 24 * 3600 * 1000);
+    final startMs =
+        nowUtc.millisecondsSinceEpoch - (lookbackWeeks * 7 * 24 * 3600 * 1000);
 
     final records = await database.getRecords(startedAfter: startMs);
-    final allActivities = await database.getAllActivities(includeArchived: true);
+    final allActivities = await database.getAllActivities(
+      includeArchived: true,
+    );
     final activityMap = {for (final a in allActivities) a.id: a};
 
     // 1. Weekly averages
@@ -577,14 +565,17 @@ class TempoMcpServer {
 
     for (final act in pinnedActivities) {
       final actRecords = await database.getRecords(activityId: act.id);
-      final days = actRecords
-          .map((r) => DateTime.fromMillisecondsSinceEpoch(
-                r.startedAtEpochMs,
-                isUtc: true,
-              ).toIso8601String().substring(0, 10))
-          .toSet()
-          .toList()
-        ..sort();
+      final days =
+          actRecords
+              .map(
+                (r) => DateTime.fromMillisecondsSinceEpoch(
+                  r.startedAtEpochMs,
+                  isUtc: true,
+                ).toIso8601String().substring(0, 10),
+              )
+              .toSet()
+              .toList()
+            ..sort();
 
       var maxStreak = 0;
       var currentStreak = 0;
@@ -664,8 +655,8 @@ class TempoMcpServer {
       final duration = currentTimer.calculateDurationMs(now);
       final refEnd =
           (currentTimer.isPaused && currentTimer.pausedAtEpochMs != null)
-              ? currentTimer.pausedAtEpochMs!
-              : now;
+          ? currentTimer.pausedAtEpochMs!
+          : now;
       final record = Record(
         id: const Uuid().v4(),
         activityId: currentTimer.activityId,
@@ -711,9 +702,7 @@ class TempoMcpServer {
     };
   }
 
-  Future<Map<String, dynamic>> _stopTimerTool(
-    Map<String, dynamic> args,
-  ) async {
+  Future<Map<String, dynamic>> _stopTimerTool(Map<String, dynamic> args) async {
     final currentTimer = await database.getActiveTimer();
     if (currentTimer == null) {
       return {
@@ -726,10 +715,11 @@ class TempoMcpServer {
     final duration = currentTimer.calculateDurationMs(now);
     final refEnd =
         (currentTimer.isPaused && currentTimer.pausedAtEpochMs != null)
-            ? currentTimer.pausedAtEpochMs!
-            : now;
+        ? currentTimer.pausedAtEpochMs!
+        : now;
 
-    final finalComment = (args['comment'] as String?) ?? currentTimer.currentComment;
+    final finalComment =
+        (args['comment'] as String?) ?? currentTimer.currentComment;
     final record = Record(
       id: const Uuid().v4(),
       activityId: currentTimer.activityId,
@@ -777,7 +767,9 @@ class TempoMcpServer {
     final startDt = DateTime.parse(startTimeStr).toUtc();
     final endDt = DateTime.parse(endTimeStr).toUtc();
     if (endDt.isBefore(startDt)) {
-      throw ArgumentError('end_time must be greater than or equal to start_time');
+      throw ArgumentError(
+        'end_time must be greater than or equal to start_time',
+      );
     }
 
     final startMs = startDt.millisecondsSinceEpoch;
@@ -877,10 +869,7 @@ class TempoMcpServer {
       'id': id,
       'result': {
         'content': [
-          {
-            'type': 'text',
-            'text': jsonEncode(data),
-          }
+          {'type': 'text', 'text': jsonEncode(data)},
         ],
         'isError': false,
       },
@@ -893,10 +882,7 @@ class TempoMcpServer {
       'id': id,
       'result': {
         'content': [
-          {
-            'type': 'text',
-            'text': 'Error: $message',
-          }
+          {'type': 'text', 'text': 'Error: $message'},
         ],
         'isError': true,
       },

@@ -1,5 +1,7 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
+
 import '../../core/state/timer_state_machine.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
@@ -24,7 +26,8 @@ class DashboardView extends StatefulWidget {
   State<DashboardView> createState() => _DashboardViewState();
 }
 
-class _DashboardViewState extends State<DashboardView> with SingleTickerProviderStateMixin {
+class _DashboardViewState extends State<DashboardView>
+    with SingleTickerProviderStateMixin {
   Timer? _liveTicker;
   List<Activity> _activities = [];
   Map<String, int> _todayActivityDurations = {};
@@ -42,14 +45,15 @@ class _DashboardViewState extends State<DashboardView> with SingleTickerProvider
   @override
   void initState() {
     super.initState();
-    _stopHoldController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 600),
-    )..addStatusListener((status) {
-        if (status == AnimationStatus.completed) {
-          _performStop();
-        }
-      });
+    _stopHoldController =
+        AnimationController(
+          vsync: this,
+          duration: const Duration(milliseconds: 600),
+        )..addStatusListener((status) {
+          if (status == AnimationStatus.completed) {
+            _performStop();
+          }
+        });
 
     final timer = widget.timerStateMachine.activeTimer;
     if (timer != null) {
@@ -59,14 +63,18 @@ class _DashboardViewState extends State<DashboardView> with SingleTickerProvider
     }
 
     _loadData();
-    widget.timerStateMachine.activeTimerNotifier.addListener(_onActiveTimerChanged);
+    widget.timerStateMachine.activeTimerNotifier.addListener(
+      _onActiveTimerChanged,
+    );
   }
 
   @override
   void dispose() {
     _liveTicker?.cancel();
     _stopHoldController.dispose();
-    widget.timerStateMachine.activeTimerNotifier.removeListener(_onActiveTimerChanged);
+    widget.timerStateMachine.activeTimerNotifier.removeListener(
+      _onActiveTimerChanged,
+    );
     _commentController.dispose();
     _commentFocusNode.dispose();
     super.dispose();
@@ -75,7 +83,8 @@ class _DashboardViewState extends State<DashboardView> with SingleTickerProvider
   void _onActiveTimerChanged() {
     final timer = widget.timerStateMachine.activeTimer;
     if (timer != null) {
-      if (_commentController.text != timer.currentComment && !_commentFocusNode.hasFocus) {
+      if (_commentController.text != timer.currentComment &&
+          !_commentFocusNode.hasFocus) {
         _commentController.text = timer.currentComment;
       }
       _resolveActiveActivity(timer.activityId);
@@ -105,10 +114,24 @@ class _DashboardViewState extends State<DashboardView> with SingleTickerProvider
 
   Future<void> _loadData() async {
     try {
-      final allActivities = await widget.database.getAllActivities(includeArchived: false);
+      final allActivities = await widget.database.getAllActivities(
+        includeArchived: false,
+      );
       final now = DateTime.now();
-      final startOfToday = DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
-      final endOfToday = DateTime(now.year, now.month, now.day, 23, 59, 59, 999).millisecondsSinceEpoch;
+      final startOfToday = DateTime(
+        now.year,
+        now.month,
+        now.day,
+      ).millisecondsSinceEpoch;
+      final endOfToday = DateTime(
+        now.year,
+        now.month,
+        now.day,
+        23,
+        59,
+        59,
+        999,
+      ).millisecondsSinceEpoch;
 
       final todayRecords = await widget.database.getRecords(
         startedAfter: startOfToday,
@@ -203,9 +226,8 @@ class _DashboardViewState extends State<DashboardView> with SingleTickerProvider
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to start timer: $e')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Failed to start timer: $e')));
       }
     }
   }
@@ -220,9 +242,8 @@ class _DashboardViewState extends State<DashboardView> with SingleTickerProvider
       if (mounted) setState(() {});
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Action failed: $e')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Action failed: $e')));
       }
     }
   }
@@ -244,9 +265,8 @@ class _DashboardViewState extends State<DashboardView> with SingleTickerProvider
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to stop timer: $e')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Failed to stop timer: $e')));
       }
     }
   }
@@ -301,10 +321,7 @@ class _DashboardViewState extends State<DashboardView> with SingleTickerProvider
                 ),
                 Text(
                   UiHelpers.formatDateHeader(DateTime.now()),
-                  style: const TextStyle(
-                    color: Colors.white54,
-                    fontSize: 13,
-                  ),
+                  style: const TextStyle(color: Colors.white54, fontSize: 13),
                 ),
               ],
             ),
@@ -314,7 +331,8 @@ class _DashboardViewState extends State<DashboardView> with SingleTickerProvider
               onPressed: () async {
                 await Navigator.of(context).push(
                   MaterialPageRoute(
-                    builder: (_) => ActivityManagerView(database: widget.database),
+                    builder: (_) =>
+                        ActivityManagerView(database: widget.database),
                   ),
                 );
                 _loadData();
@@ -340,7 +358,11 @@ class _DashboardViewState extends State<DashboardView> with SingleTickerProvider
         ),
         child: Column(
           children: [
-            Icon(Icons.timer_outlined, color: Colors.white.withValues(alpha: 0.2), size: 48),
+            Icon(
+              Icons.timer_outlined,
+              color: Colors.white.withValues(alpha: 0.2),
+              size: 48,
+            ),
             const SizedBox(height: 12),
             const Text(
               'No Active Timer',
@@ -458,8 +480,15 @@ class _DashboardViewState extends State<DashboardView> with SingleTickerProvider
               hintStyle: const TextStyle(color: Colors.white30, fontSize: 13),
               filled: true,
               fillColor: Colors.white.withValues(alpha: 0.05),
-              prefixIcon: const Icon(Icons.edit_note, size: 18, color: Colors.white38),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              prefixIcon: const Icon(
+                Icons.edit_note,
+                size: 18,
+                color: Colors.white38,
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 8,
+              ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
                 borderSide: BorderSide.none,
@@ -481,11 +510,16 @@ class _DashboardViewState extends State<DashboardView> with SingleTickerProvider
                   ),
                   label: Text(
                     isPaused ? 'Resume' : 'Pause',
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.white,
-                    side: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
+                    side: BorderSide(
+                      color: Colors.white.withValues(alpha: 0.2),
+                    ),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
@@ -500,7 +534,8 @@ class _DashboardViewState extends State<DashboardView> with SingleTickerProvider
                 child: GestureDetector(
                   onTapDown: (_) => _stopHoldController.forward(),
                   onTapUp: (_) {
-                    if (_stopHoldController.status != AnimationStatus.completed) {
+                    if (_stopHoldController.status !=
+                        AnimationStatus.completed) {
                       _stopHoldController.reverse();
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
@@ -539,7 +574,11 @@ class _DashboardViewState extends State<DashboardView> with SingleTickerProvider
                                 ),
                               )
                             else
-                              const Icon(Icons.stop_rounded, size: 20, color: Colors.white),
+                              const Icon(
+                                Icons.stop_rounded,
+                                size: 20,
+                                color: Colors.white,
+                              ),
                             const SizedBox(width: 8),
                             Text(
                               progress > 0 ? 'Hold...' : 'Hold to Stop',
@@ -588,7 +627,11 @@ class _DashboardViewState extends State<DashboardView> with SingleTickerProvider
                     color: const Color(0xFF4CAF50).withValues(alpha: 0.15),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.insights, color: Color(0xFF4CAF50), size: 18),
+                  child: const Icon(
+                    Icons.insights,
+                    color: Color(0xFF4CAF50),
+                    size: 18,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Column(
@@ -604,7 +647,10 @@ class _DashboardViewState extends State<DashboardView> with SingleTickerProvider
                     ),
                     Text(
                       '$_todaySessionCount sessions completed',
-                      style: const TextStyle(color: Colors.white38, fontSize: 11),
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                      ),
                     ),
                   ],
                 ),
@@ -622,7 +668,11 @@ class _DashboardViewState extends State<DashboardView> with SingleTickerProvider
                   ),
                 ),
                 const SizedBox(width: 4),
-                const Icon(Icons.chevron_right, color: Colors.white38, size: 18),
+                const Icon(
+                  Icons.chevron_right,
+                  color: Colors.white38,
+                  size: 18,
+                ),
               ],
             ),
           ],
@@ -658,7 +708,8 @@ class _DashboardViewState extends State<DashboardView> with SingleTickerProvider
                 onPressed: () async {
                   await Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => ActivityManagerView(database: widget.database),
+                      builder: (_) =>
+                          ActivityManagerView(database: widget.database),
                     ),
                   );
                   _loadData();
@@ -687,108 +738,116 @@ class _DashboardViewState extends State<DashboardView> with SingleTickerProvider
           crossAxisSpacing: 12,
           childAspectRatio: 1.35,
         ),
-        delegate: SliverChildBuilderDelegate(
-          (context, index) {
-            final activity = _activities[index];
-            final isRunning = activity.id == activeId;
-            final durationTodayMs = _todayActivityDurations[activity.id] ?? 0;
-            final color = UiHelpers.parseHexColor(activity.colorHex);
-            final icon = UiHelpers.getIconData(activity.iconName);
+        delegate: SliverChildBuilderDelegate((context, index) {
+          final activity = _activities[index];
+          final isRunning = activity.id == activeId;
+          final durationTodayMs = _todayActivityDurations[activity.id] ?? 0;
+          final color = UiHelpers.parseHexColor(activity.colorHex);
+          final icon = UiHelpers.getIconData(activity.iconName);
 
-            return InkWell(
-              onTap: () => _handleStartHabit(activity),
-              borderRadius: BorderRadius.circular(16),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
+          return InkWell(
+            onTap: () => _handleStartHabit(activity),
+            borderRadius: BorderRadius.circular(16),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: isRunning
+                    ? color.withValues(alpha: 0.18)
+                    : const Color(0xFF1A1A22),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
                   color: isRunning
-                      ? color.withValues(alpha: 0.18)
-                      : const Color(0xFF1A1A22),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: isRunning ? color : Colors.white.withValues(alpha: 0.06),
-                    width: isRunning ? 2.0 : 1.0,
-                  ),
-                  boxShadow: isRunning
-                      ? [
-                          BoxShadow(
-                            color: color.withValues(alpha: 0.25),
-                            blurRadius: 10,
-                            spreadRadius: 1,
-                          ),
-                        ]
-                      : null,
+                      ? color
+                      : Colors.white.withValues(alpha: 0.06),
+                  width: isRunning ? 2.0 : 1.0,
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: color.withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Icon(icon, color: color, size: 20),
+                boxShadow: isRunning
+                    ? [
+                        BoxShadow(
+                          color: color.withValues(alpha: 0.25),
+                          blurRadius: 10,
+                          spreadRadius: 1,
                         ),
-                        if (activity.isPinned)
-                          const Icon(Icons.push_pin, color: Colors.white30, size: 14)
-                        else if (isRunning)
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: color,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Text(
-                              'LIVE',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 9,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          activity.name,
-                          style: TextStyle(
-                            color: isRunning ? Colors.white : Colors.white.withValues(alpha: 0.9),
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          durationTodayMs > 0
-                              ? UiHelpers.formatDurationHuman(durationTodayMs)
-                              : '0m today',
-                          style: TextStyle(
-                            color: isRunning ? color : Colors.white38,
-                            fontSize: 11,
-                            fontFamily: 'monospace',
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+                      ]
+                    : null,
               ),
-            );
-          },
-          childCount: _activities.length,
-        ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(icon, color: color, size: 20),
+                      ),
+                      if (activity.isPinned)
+                        const Icon(
+                          Icons.push_pin,
+                          color: Colors.white30,
+                          size: 14,
+                        )
+                      else if (isRunning)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: color,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Text(
+                            'LIVE',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        activity.name,
+                        style: TextStyle(
+                          color: isRunning
+                              ? Colors.white
+                              : Colors.white.withValues(alpha: 0.9),
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        durationTodayMs > 0
+                            ? UiHelpers.formatDurationHuman(durationTodayMs)
+                            : '0m today',
+                        style: TextStyle(
+                          color: isRunning ? color : Colors.white38,
+                          fontSize: 11,
+                          fontFamily: 'monospace',
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        }, childCount: _activities.length),
       ),
     );
   }
