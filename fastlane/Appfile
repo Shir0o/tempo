@@ -1,2 +1,2 @@
 json_key_file("fastlane/play-supply-credentials.json")
-package_name("com.shir0o.tempo")
+package_name("com.tempo.tracker")

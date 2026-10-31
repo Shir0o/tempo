@@ -28,7 +28,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
             <intent-filter>
-                <action android:name="com.shir0o.tempo.action.QUICK_LOG" />
+                <action android:name="com.tempo.tracker.action.QUICK_LOG" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
@@ -40,7 +40,7 @@
             android:taskAffinity=""
             android:launchMode="singleTask">
             <intent-filter>
-                <action android:name="com.shir0o.tempo.action.ACTIVE_SESSION" />
+                <action android:name="com.tempo.tracker.action.ACTIVE_SESSION" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
