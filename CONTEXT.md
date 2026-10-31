@@ -34,6 +34,14 @@ _Avoid_: Cancel window, rollback buffer
 An intentional interaction requirement (a 600ms continuous hold) preventing accidental termination of a running ActiveTimer by clothing or incidental screen contact.
 _Avoid_: Confirmation dialog, lock switch
 
+**HeartbeatCheckpoint**:
+A lightweight periodic timestamp (saved every 60 seconds) used to detect abrupt power loss or abnormal device shutdown during an active tracking session.
+_Avoid_: Auto-save, ping, keep-alive
+
+**Tombstone**:
+A dedicated record in an auxiliary deletion table capturing the entity ID and deletion timestamp to prevent resurrected items during peer sync.
+_Avoid_: Soft delete, trash, ghost record
+
 ### Integrations & Interoperability
 
 **NameMarker**:
