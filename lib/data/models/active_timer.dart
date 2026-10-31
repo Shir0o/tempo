@@ -81,6 +81,7 @@ class ActiveTimer {
     int? startedAtEpochMs,
     bool? isPaused,
     int? pausedAtEpochMs,
+    bool clearPausedAt = false,
     int? accumulatedPauseMs,
     String? currentComment,
     List<String>? initialTagIds,
@@ -92,7 +93,8 @@ class ActiveTimer {
         activityId: activityId ?? this.activityId,
         startedAtEpochMs: startedAtEpochMs ?? this.startedAtEpochMs,
         isPaused: isPaused ?? this.isPaused,
-        pausedAtEpochMs: pausedAtEpochMs ?? this.pausedAtEpochMs,
+        pausedAtEpochMs:
+            clearPausedAt ? null : (pausedAtEpochMs ?? this.pausedAtEpochMs),
         accumulatedPauseMs: accumulatedPauseMs ?? this.accumulatedPauseMs,
         currentComment: currentComment ?? this.currentComment,
         initialTagIds: initialTagIds ?? this.initialTagIds,
