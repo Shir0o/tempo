@@ -22,6 +22,18 @@ _Avoid_: Stopwatch, running record, tracker
 A secondary label attached to an Activity or Record for orthogonal filtering and cross-app routing (e.g., "Contact", "DeepWork").
 _Avoid_: Label, badge, category, marker
 
+**QuickLog**:
+A rapid 1-tap capture action on a watch complication, tile, or mobile widget that initiates an ActiveTimer and automatically finishes back to the ambient home surface.
+_Avoid_: Fast track, instant start, one-click
+
+**UndoGraceWindow**:
+The transient interval (default 3 seconds) following a QuickLog action allowing single-tap reversal of an accidental timer start.
+_Avoid_: Cancel window, rollback buffer
+
+**GuardedStop**:
+An intentional interaction requirement (a 600ms continuous hold) preventing accidental termination of a running ActiveTimer by clothing or incidental screen contact.
+_Avoid_: Confirmation dialog, lock switch
+
 ### Integrations & Interoperability
 
 **NameMarker**:
