@@ -31,6 +31,7 @@ class CsvExportEngine {
   Future<File>? _lastExportFuture;
   Future<void>? _mutexLock;
   bool _isDisposed = false;
+  FutureOr<void> Function(File file)? onExportCompleted;
 
   CsvExportEngine({
     required this.database,
@@ -41,6 +42,7 @@ class CsvExportEngine {
     this.debounceDuration = defaultDebounceDuration,
     String Function()? generateUuid,
     DateTime Function(int epochMs)? epochToDateTime,
+    this.onExportCompleted,
   })  : targetFile = _resolveTargetFile(
           targetFile: targetFile,
           targetFilePath: targetFilePath,
@@ -288,6 +290,7 @@ class CsvExportEngine {
 
           // Atomic rename: POSIX rename replaces destination file atomically.
           final renamedFile = await tempFile.rename(targetFile.path);
+          await onExportCompleted?.call(renamedFile);
           return renamedFile;
         } catch (e) {
           if (raf != null) {

@@ -1,5 +1,6 @@
 package com.shir0o.tempo
 
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import com.google.android.gms.wearable.DataClient
@@ -26,14 +27,31 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var methodChannel: MethodChannel? = null
+    private var deepLinkChannel: MethodChannel? = null
+    private var initialDeepLink: String? = null
 
     companion object {
         private const val TAG = "TempoMainActivity"
         const val CHANNEL_NAME = "com.shir0o.tempo/wearable"
+        const val DEEPLINK_CHANNEL_NAME = "com.shir0o.tempo/deeplink"
         const val PATH_ACTIVE_TIMER = "/tempo/active_timer"
         const val PATH_ACTIVITIES = "/tempo/activities"
         const val PATH_ACTIONS_PREFIX = "/tempo/actions/"
         const val PATH_ACTION_RPC = "/tempo/action"
+
+        @Volatile
+        var instance: MainActivity? = null
+    }
+
+    fun isFlutterEngineRunning(): Boolean {
+        return deepLinkChannel != null || methodChannel != null
+    }
+
+    fun dispatchDeepLink(url: String) {
+        runOnUiThread {
+            Log.d(TAG, "Dispatching deep link to Flutter: $url")
+            deepLinkChannel?.invokeMethod("onDeepLinkReceived", mapOf("url" to url))
+        }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -47,10 +65,29 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
                 else -> result.notImplemented()
             }
         }
+
+        deepLinkChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DEEPLINK_CHANNEL_NAME)
+        deepLinkChannel?.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getInitialDeepLink" -> {
+                    result.success(initialDeepLink)
+                    initialDeepLink = null
+                }
+                else -> result.notImplemented()
+            }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        instance = this
+
+        val dataString = intent?.dataString
+        if (!dataString.isNullOrEmpty()) {
+            initialDeepLink = dataString
+            Log.d(TAG, "Captured initial deep link: $initialDeepLink")
+        }
+
         try {
             Wearable.getDataClient(this).addListener(this)
             Wearable.getMessageClient(this).addListener(this)
@@ -59,7 +96,20 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val dataString = intent.dataString
+        if (!dataString.isNullOrEmpty()) {
+            Log.d(TAG, "Captured onNewIntent deep link: $dataString")
+            dispatchDeepLink(dataString)
+        }
+    }
+
     override fun onDestroy() {
+        if (instance == this) {
+            instance = null
+        }
         try {
             Wearable.getDataClient(this).removeListener(this)
             Wearable.getMessageClient(this).removeListener(this)
@@ -84,6 +134,18 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
         val accPause = (args["accumulatedPauseMs"] as? Number)?.toLong() ?: 0L
         val revision = (args["revision"] as? Number)?.toLong() ?: 0L
         val updatedAt = (args["updatedAtEpochMs"] as? Number)?.toLong() ?: System.currentTimeMillis()
+
+        // Update Quick Settings Tile
+        try {
+            TempoQuickSettingsTileService.updateTileState(
+                this,
+                isRunning && !isPaused,
+                activityName,
+                startedAt
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to update Quick Settings Tile: ${e.message}")
+        }
 
         scope.launch {
             try {

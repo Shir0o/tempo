@@ -572,6 +572,9 @@ class TimerStateMachine {
         _updateActiveTimer(null);
       });
 
+  /// Undoes a recently started timer within the UndoGraceWindow, discarding it without saving a Record.
+  Future<void> undoStart() => discard();
+
   // ==========================================
   // Heartbeat Loop Management
   // ==========================================

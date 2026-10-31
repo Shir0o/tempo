@@ -1,6 +1,6 @@
 # 14: Android Broadcast Intents and Quick Settings Tile
 
-Status: ready
+Status: completed
 Phase: 5 - Mobile & Sync
 Dependencies: 02, 13
 

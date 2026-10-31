@@ -1,6 +1,6 @@
 # 15: Google Drive Backup and Sync Adapter
 
-Status: ready
+Status: completed
 Phase: 5 - Mobile & Sync
 Dependencies: 01, 03
 

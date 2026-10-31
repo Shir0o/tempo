@@ -24,7 +24,42 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Deep link intent filter for tempo:// and timetracker:// -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="tempo" />
+                <data android:scheme="timetracker" />
+            </intent-filter>
         </activity>
+
+        <!-- Broadcast receiver for external automation (Tasker, NFC, Bluetooth triggers) -->
+        <receiver
+            android:name=".TempoBroadcastReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="app.tempo.action.START_TIMER" />
+                <action android:name="app.tempo.action.STOP_TIMER" />
+                <action android:name="app.tempo.action.TOGGLE_TIMER" />
+                <action android:name="app.timetracker.action.START_TIMER" />
+                <action android:name="app.timetracker.action.STOP_TIMER" />
+                <action android:name="app.timetracker.action.TOGGLE_TIMER" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Quick Settings notification pull-down shade tile -->
+        <service
+            android:name=".TempoQuickSettingsTileService"
+            android:label="Tempo"
+            android:icon="@drawable/ic_stat_timer"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
