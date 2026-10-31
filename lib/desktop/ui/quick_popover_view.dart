@@ -292,7 +292,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
     if (widget.onClose != null) {
       widget.onClose!();
     } else {
-      const MethodChannel('com.shir0o.tempo/menubar')
+      const MethodChannel('com.tempo.tracker/menubar')
           .invokeMethod('closeWindow')
           .catchError((_) => null);
     }
@@ -302,7 +302,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
     if (widget.onOpenFullWindow != null) {
       widget.onOpenFullWindow!();
     } else {
-      const MethodChannel('com.shir0o.tempo/menubar')
+      const MethodChannel('com.tempo.tracker/menubar')
           .invokeMethod('openFullWindow')
           .catchError((_) => null);
     }

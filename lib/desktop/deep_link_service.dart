@@ -16,7 +16,7 @@ import '../data/models/models.dart';
 /// - `tempo://resume`
 /// - `tempo://toggle?activity=...`
 class DeepLinkService {
-  static const String channelName = 'com.shir0o.tempo/deeplink';
+  static const String channelName = 'com.tempo.tracker/deeplink';
   static const Set<String> supportedSchemes = {'tempo', 'timetracker'};
 
   final TimerStateMachine timerStateMachine;

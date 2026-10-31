@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.shir0o.tempo.wear"
+    namespace = "com.tempo.tracker.wear"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.shir0o.tempo"
+        applicationId = "com.tempo.tracker"
         minSdk = 30
         targetSdk = 34
         versionCode = 1

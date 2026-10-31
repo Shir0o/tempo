@@ -34,7 +34,7 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>com.shir0o.tempo</string>
+			<string>com.tempo.tracker</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>tempo</string>

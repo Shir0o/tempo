@@ -1,4 +1,4 @@
-package com.shir0o.tempo
+package com.tempo.tracker
 
 import android.content.ComponentName
 import android.content.Context
