@@ -1,6 +1,6 @@
 # 10: Deep Link URL Scheme Handler (`timetracker://`)
 
-Status: ready
+Status: completed
 Phase: 3 - Desktop macOS & Automations
 Dependencies: 02, 08
 

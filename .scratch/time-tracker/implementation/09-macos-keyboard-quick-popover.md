@@ -1,6 +1,6 @@
 # 09: macOS Keyboard-Navigable Quick Popover
 
-Status: ready
+Status: completed
 Phase: 3 - Desktop macOS
 Dependencies: 08
 

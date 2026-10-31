@@ -1,6 +1,6 @@
 # 08: macOS Menu Bar Status Item
 
-Status: ready
+Status: completed
 Phase: 3 - Desktop macOS
 Dependencies: 01, 02
 

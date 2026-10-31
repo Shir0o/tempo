@@ -302,6 +302,26 @@ class TimerStateMachine {
         return updated;
       });
 
+  /// Updates the comment of the running active timer in-place.
+  /// Throws [StateError] if idle.
+  Future<ActiveTimer> updateComment(String comment) => _synchronized(() async {
+        await _ensureInitializedLocked();
+
+        final current = _activeTimerNotifier.value;
+        if (current == null) {
+          throw StateError('No active timer is currently running.');
+        }
+
+        final updated = current.copyWith(
+          currentComment: comment,
+          revision: current.revision + 1,
+        );
+
+        await _db.setActiveTimer(updated);
+        _updateActiveTimer(updated);
+        return updated;
+      });
+
   /// Stops the active timer.
   /// Calculates final duration, inserts a new [Record] with tags, and deletes [ActiveTimer] in one transaction.
   /// Throws [StateError] if no active timer is running.
