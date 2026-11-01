@@ -105,7 +105,7 @@ void main() {
 
         await stateMachine.start('act-coding');
         // Allow async activity lookup to finish
-        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
 
         expect(methodCalls.isNotEmpty, isTrue);
         final lastCall = methodCalls.last;
@@ -126,12 +126,12 @@ void main() {
       () async {
         syncService.initialize();
         await stateMachine.start('act-coding');
-        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
         methodCalls.clear();
 
         mockTime += 60000;
         await stateMachine.pause();
-        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
 
         expect(methodCalls.isNotEmpty, isTrue);
         final pauseCall = methodCalls.last;
@@ -142,7 +142,7 @@ void main() {
         methodCalls.clear();
         mockTime += 30000;
         await stateMachine.resume();
-        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
 
         expect(methodCalls.isNotEmpty, isTrue);
         final resumeCall = methodCalls.last;
@@ -156,11 +156,11 @@ void main() {
     test('stopping a timer dispatches idle state to watch', () async {
       syncService.initialize();
       await stateMachine.start('act-coding');
-      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
       methodCalls.clear();
 
       await stateMachine.stop();
-      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
 
       expect(methodCalls.isNotEmpty, isTrue);
       final stopCall = methodCalls.last;
