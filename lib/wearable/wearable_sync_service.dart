@@ -43,7 +43,7 @@ class WatchAction {
 /// Listens to TimerStateMachine and synchronizes active timer state and activities
 /// over the Wearable Data Layer platform channel.
 class WearableSyncService {
-  static const String channelName = 'com.tempo.tracker/wearable';
+  static const String channelName = 'com.tempos.tracker/wearable';
 
   final TimerStateMachine timerStateMachine;
   final TempoDatabase? database;

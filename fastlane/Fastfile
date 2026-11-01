@@ -3,7 +3,7 @@ default_platform(:android)
 # Mirrors the applicationId in android/app/build.gradle.kts and the
 # Play Console app listing. Update both here and in Play Console if the
 # application id ever changes.
-APP_PACKAGE_NAME = "com.tempo.tracker"
+APP_PACKAGE_NAME = "com.tempos.tracker"
 
 # AAB path is supplied by the release workflow via FASTLANE_AAB_PATH
 # so the Fastfile stays build-artefact-agnostic.

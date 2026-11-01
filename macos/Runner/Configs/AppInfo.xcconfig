@@ -8,7 +8,7 @@
 PRODUCT_NAME = tempo
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.tempo.tracker
+PRODUCT_BUNDLE_IDENTIFIER = com.tempos.tracker
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 com.shir0o. All rights reserved.

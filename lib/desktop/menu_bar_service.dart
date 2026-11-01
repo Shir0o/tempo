@@ -31,9 +31,9 @@ enum StatusDisplayMode {
 /// - Listens to [TimerStateMachine.activeTimerNotifier].
 /// - Formats title string across full, compact, minimal, idle, and paused states.
 /// - 1-second in-memory duration ticker without SQLite I/O during active tracking.
-/// - Bridges to native AppKit via method channel `com.tempo.tracker/menubar`.
+/// - Bridges to native AppKit via method channel `com.tempos.tracker/menubar`.
 class MenuBarService {
-  static const String channelName = 'com.tempo.tracker/menubar';
+  static const String channelName = 'com.tempos.tracker/menubar';
 
   final TimerStateMachine timerStateMachine;
   final TempoDatabase database;

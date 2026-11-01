@@ -1,4 +1,4 @@
-package com.tempo.tracker
+package com.tempos.tracker
 
 import android.content.Intent
 import android.os.Bundle
@@ -32,8 +32,8 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
 
     companion object {
         private const val TAG = "TempoMainActivity"
-        const val CHANNEL_NAME = "com.tempo.tracker/wearable"
-        const val DEEPLINK_CHANNEL_NAME = "com.tempo.tracker/deeplink"
+        const val CHANNEL_NAME = "com.tempos.tracker/wearable"
+        const val DEEPLINK_CHANNEL_NAME = "com.tempos.tracker/deeplink"
         const val PATH_ACTIVE_TIMER = "/tempo/active_timer"
         const val PATH_ACTIVITIES = "/tempo/activities"
         const val PATH_ACTIONS_PREFIX = "/tempo/actions/"
