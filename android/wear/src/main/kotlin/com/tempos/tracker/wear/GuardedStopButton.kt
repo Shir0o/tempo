@@ -1,4 +1,4 @@
-package com.tempo.tracker.wear
+package com.tempos.tracker.wear
 
 import android.content.Context
 import android.os.Build

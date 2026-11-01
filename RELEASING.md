@@ -82,8 +82,8 @@ gh secret set RELEASE_PLEASE_TOKEN --repo Shir0o/tempo --body "<your-release-ple
 
 ### Play Console Configuration
 
-1. In **Google Play Console**, ensure the app `com.tempo.tracker` exists.
-2. In **Play Console → Settings → API access**, link the service account named in `release-please-supply-key.json` and ensure it has **Release Manager** permissions (account-wide or specifically for `com.tempo.tracker`).
+1. In **Google Play Console**, ensure the app `com.tempos.tracker` exists.
+2. In **Play Console → Settings → API access**, link the service account named in `release-please-supply-key.json` and ensure it has **Release Manager** permissions (account-wide or specifically for `com.tempos.tracker`).
 3. Ensure **Play App Signing** is active so Google accepts the upload key signature and re-signs for end users.
 
 ## Security hardening

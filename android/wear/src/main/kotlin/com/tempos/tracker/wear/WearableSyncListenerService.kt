@@ -1,4 +1,4 @@
-package com.tempo.tracker.wear
+package com.tempos.tracker.wear
 
 import android.util.Log
 import com.google.android.gms.wearable.DataEvent

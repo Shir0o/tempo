@@ -32,7 +32,7 @@ class AppDelegate: FlutterAppDelegate {
   }
 
   private func setupMethodChannels(messenger: FlutterBinaryMessenger) {
-    let menuChannel = FlutterMethodChannel(name: "com.tempo.tracker/menubar", binaryMessenger: messenger)
+    let menuChannel = FlutterMethodChannel(name: "com.tempos.tracker/menubar", binaryMessenger: messenger)
     menuChannel.setMethodCallHandler { [weak self] (call, result) in
       guard let self = self else {
         result(nil)
@@ -71,7 +71,7 @@ class AppDelegate: FlutterAppDelegate {
     }
     self.menuBarChannel = menuChannel
 
-    let linkChannel = FlutterMethodChannel(name: "com.tempo.tracker/deeplink", binaryMessenger: messenger)
+    let linkChannel = FlutterMethodChannel(name: "com.tempos.tracker/deeplink", binaryMessenger: messenger)
     linkChannel.setMethodCallHandler { [weak self] (call, result) in
       guard let self = self else {
         result(nil)
