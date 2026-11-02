@@ -207,95 +207,33 @@ void main() {
       );
     });
 
-    group('tempo://stop', () {
+    group('tempo://split', () {
       test('splits the open Lap into an Untracked Record', () async {
         await deepLinkService.handleUrl('tempo://start?activity=Coding');
         mockTime += 120000;
 
-        final success = await deepLinkService.handleUrl('tempo://stop');
+        final success = await deepLinkService.handleUrl('tempo://split');
 
         expect(success, isTrue);
 
         final records = await db.getRecords();
         expect(records.length, equals(2));
-        final stopped = records.firstWhere(
+        final split = records.firstWhere(
           (r) => r.startedAtEpochMs == 1000000000,
         );
-        expect(stopped.activityId, isNull);
-        expect(stopped.durationMs, equals(120000));
+        expect(split.activityId, isNull);
+        expect(split.durationMs, equals(120000));
         expect(dayRecorder.lap!.startedAtEpochMs, equals(1000120000));
       });
 
       test('splits with no previous Record without error', () async {
-        final success = await deepLinkService.handleUrl('tempo://stop');
+        final success = await deepLinkService.handleUrl('tempo://split');
         expect(success, isTrue);
         final records = await db.getRecords();
         expect(records.length, equals(1));
         expect(records.single.activityId, isNull);
         expect(dayRecorder.lap!.startedAtEpochMs, equals(1000000000));
       });
-
-      test('tempo://split is an alias for the same Split', () async {
-        mockTime += 60000;
-        expect(await deepLinkService.handleUrl('tempo://split'), isTrue);
-
-        final records = await db.getRecords();
-        expect(records.single.activityId, isNull);
-        expect(records.single.durationMs, equals(60000));
-      });
-    });
-
-    group('retired pause and resume links', () {
-      test('pause and resume are no longer recognised', () async {
-        expect(await deepLinkService.handleUrl('tempo://pause'), isFalse);
-        expect(await deepLinkService.handleUrl('tempo://resume'), isFalse);
-        expect(await db.getRecords(), isEmpty);
-      });
-    });
-
-    group('tempo://toggle', () {
-      test('labels the open Lap when an activity is provided', () async {
-        final success = await deepLinkService.handleUrl(
-          'tempo://toggle?activity=Coding',
-        );
-
-        expect(success, isTrue);
-        final records = await db.getRecords();
-        expect(records.single.activityId, equals('act-coding'));
-      });
-
-      test(
-        'refuses an unknown Activity instead of falling back to the last one',
-        () async {
-          await deepLinkService.handleUrl('tempo://start?activity=Coding');
-          mockTime += 30000;
-          final lapStart = dayRecorder.lap!.startedAtEpochMs;
-
-          final success = await deepLinkService.handleUrl(
-            'tempo://toggle?activity=Guitar',
-          );
-
-          expect(success, isFalse);
-          expect(deepLinkService.lastError, contains('Guitar'));
-          expect(dayRecorder.lap!.startedAtEpochMs, equals(lapStart));
-          expect(await db.getRecords(), hasLength(1));
-        },
-      );
-
-      test(
-        'labels the open Lap with the last Activity without a parameter',
-        () async {
-          await deepLinkService.handleUrl('tempo://start?activity=Coding');
-          mockTime += 30000;
-
-          final success = await deepLinkService.handleUrl('tempo://toggle');
-          expect(success, isTrue);
-
-          final records = await db.getRecords();
-          expect(records.length, equals(2));
-          expect(records.first.activityId, equals('act-coding'));
-        },
-      );
     });
 
     group('Edge cases and URI variations', () {
@@ -304,7 +242,7 @@ void main() {
           await deepLinkService.handleUrl('http://start?activity=Coding'),
           isFalse,
         );
-        expect(await deepLinkService.handleUrl('https://stop'), isFalse);
+        expect(await deepLinkService.handleUrl('https://split'), isFalse);
         expect(
           await deepLinkService.handleUrl('file:///path/to/tempo'),
           isFalse,

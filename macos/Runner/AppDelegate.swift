@@ -133,9 +133,9 @@ class AppDelegate: FlutterAppDelegate {
 
   private func showContextMenu() {
     let menu = NSMenu()
-    let toggleItem = NSMenuItem(title: "Label Same as Last", action: #selector(menuToggleTimer), keyEquivalent: "t")
-    toggleItem.target = self
-    menu.addItem(toggleItem)
+    let labelSameAsLastItem = NSMenuItem(title: "Label Same as Last", action: #selector(menuLabelSameAsLast), keyEquivalent: "t")
+    labelSameAsLastItem.target = self
+    menu.addItem(labelSameAsLastItem)
 
     let openItem = NSMenuItem(title: "Open Full Window", action: #selector(menuOpenFullWindow), keyEquivalent: "o")
     openItem.target = self
@@ -150,8 +150,8 @@ class AppDelegate: FlutterAppDelegate {
     statusItem?.popUpMenu(menu)
   }
 
-  @objc private func menuToggleTimer() {
-    menuBarChannel?.invokeMethod("onQuickMenuAction", arguments: ["action": "toggle"])
+  @objc private func menuLabelSameAsLast() {
+    menuBarChannel?.invokeMethod("onQuickMenuAction", arguments: ["action": "labelSameAsLast"])
   }
 
   @objc private func menuOpenFullWindow() {

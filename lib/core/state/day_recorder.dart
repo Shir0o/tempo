@@ -10,8 +10,7 @@ import '../export/csv_export_engine.dart';
 import '../time/timezone_id.dart';
 
 /// Owns the always-running Lap and serializes every write that closes it into
-/// a Record. There is no pause, resume, or idle state: the Lap simply continues
-/// from its persisted start.
+/// a Record. The Lap continues from its persisted start.
 class DayRecorder {
   /// The interval after a label or split during which [undoLast] still works.
   static const Duration defaultUndoGraceWindow = Duration(seconds: 3);
@@ -481,9 +480,10 @@ class DayRecorder {
     final now = _nowUtcMs();
     if (now <= current.startedAtEpochMs) return;
 
-    // On resume the best available reading of "the zone the user was in at
-    // that midnight" is the device's current zone; while running, this is the
-    // zone at the instant the timer fires.
+    // When the app returns to the foreground, the best available reading of
+    // "the zone the user was in at that midnight" is the device's current
+    // zone; while running, this is the zone at the instant the midnight timer
+    // fires.
     final zoneAtMidnight = await _getTimezoneId();
     var cursor = current.startedAtEpochMs;
     var cursorTimezoneId = current.startTimezoneOr(zoneAtMidnight);
@@ -636,7 +636,7 @@ class DayRecorder {
         await applyMidnightSplits();
       } catch (_) {
         // A failed split must not leave the recorder without a timer; the next
-        // write or resume tries again.
+        // write or foreground pass tries again.
       } finally {
         await _armMidnightTimer();
       }

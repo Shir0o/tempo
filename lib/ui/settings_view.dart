@@ -251,7 +251,7 @@ class _SettingsViewState extends State<SettingsView> {
                       style: TextStyle(color: Colors.white, fontSize: 13),
                     ),
                     subtitle: const Text(
-                      'Pushes stt_records_automatic.csv to "Time track" on timer stop',
+                      'Pushes stt_records_automatic.csv to "Time track" after each label',
                       style: TextStyle(color: Colors.white38, fontSize: 11),
                     ),
                     value: syncService.autoSyncEnabled,

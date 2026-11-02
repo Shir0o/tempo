@@ -38,8 +38,8 @@ Unlike cloud-locked, corporate subscription trackers (Toggl, Clockify, Harvest) 
   - Google Play Services Wearable Data Layer (`DataClient` with `setUrgent()`) for instantaneous, battery-efficient watch-phone synchronization.
   - Local stdio MCP server CLI executable on macOS.
 - **Storage & Relational Schema**:
-  - Normalized SQLite database (`activities`, `tags`, `records`, `record_tags`, `active_timer`, and indexed `tombstones`).
-  - Monotonic UTC epoch arithmetic (`nowUtc - lapStartedAt`; no pause) guaranteeing exact durations across device sleep, timezone crossings, and daylight saving shifts — a 6h flight is always 6h.
+  - Normalized SQLite database (`activities`, `tags`, `records`, `record_tags`, `lap`, and indexed `tombstones`).
+  - Monotonic UTC epoch arithmetic (`nowUtc - lapStartedAt`) guaranteeing exact durations across device sleep, timezone crossings, and daylight saving shifts — a 6h flight is always 6h.
   - Each Record stores its start and end IANA time zone; past Records always display in the zones they happened in, never the device's current zone.
   - Continuous coverage: every moment of a Day belongs to exactly one Record or the open Lap, enforced by atomic SQLite transitions (label = close Lap as Record + open new Lap). Records crossing midnight are split at 00:00 local.
   - The open Lap's start is persisted, so battery death or a reboot simply extends the Lap; nothing is lost.
@@ -58,7 +58,7 @@ Unlike cloud-locked, corporate subscription trackers (Toggl, Clockify, Harvest) 
 ## Brand Commitments
 
 - **Name**: Tempo (CLI binary: `tempo-mcp`, scheme: `tempo://`).
-- **Design Language**: Clean, high-contrast utility design system with vibrant activity accent colors, dark mode defaults, legible monospace duration timers, and minimal visual noise.
+- **Design Language**: Clean, high-contrast utility design system with vibrant activity accent colors, dark mode defaults, legible monospace duration readouts, and minimal visual noise.
 - **Tone & Voice**: Calm, plain, unobtrusive, and rigorously private. Descriptive, never evaluative. Zero nag screens, zero goals or streaks, zero subscription prompts, and zero uninvited telemetry.
 
 ## Product Principles
@@ -66,6 +66,6 @@ Unlike cloud-locked, corporate subscription trackers (Toggl, Clockify, Harvest) 
 1. **Sub-Second Capture**: Labeling time must never feel like a chore. Wrist complications, menu bar hotkeys, and widget buttons must label the open Lap in $\le 1$ second.
 2. **Never Miss a Notification**: Watch interactions must execute an Action-and-Exit pattern, immediately returning to the watch face so system alerts and communications remain unblocked.
 3. **Data Sovereign & Local-First**: Time history is deeply personal. All data resides on physical hardware in open formats (SQLite, CSV, JSON); synchronization uses private user accounts (Google Drive) without middlemen.
-4. **The Day Is Continuous**: Time is never paused or stopped. Every label is 1 tap with a 3-second Undo window, and any past Boundary can be moved later — so an accidental tap costs nothing.
+4. **The Day Is Continuous**: Every moment belongs to a Record or the open Lap. Every label is 1 tap with a 3-second Undo window, and any past Boundary can be moved later — so an accidental tap costs nothing.
 5. **Private AI Assistance**: AI analysis must be performed locally via MCP with deterministic sanitization so personal names, notes, and contacts are never leaked to cloud models.
 6. **True to Where You Were**: Records show the local times they were lived in and their true durations, across any time zone or daylight saving change.

@@ -34,7 +34,7 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
         private const val TAG = "TempoMainActivity"
         const val CHANNEL_NAME = "com.tempos.tracker/wearable"
         const val DEEPLINK_CHANNEL_NAME = "com.tempos.tracker/deeplink"
-        const val PATH_ACTIVE_TIMER = "/tempo/active_timer"
+        const val PATH_LAP = "/tempo/lap"
         const val PATH_ACTIVITIES = "/tempo/activities"
         const val PATH_ACTIONS_PREFIX = "/tempo/actions/"
         const val PATH_ACTION_RPC = "/tempo/action"
@@ -60,7 +60,7 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
         methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_NAME)
         methodChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
-                "syncActiveTimer" -> handleSyncActiveTimer(call, result)
+                "syncLap" -> handleSyncLap(call, result)
                 "syncActivities" -> handleSyncActivities(call, result)
                 else -> result.notImplemented()
             }
@@ -119,54 +119,31 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
         super.onDestroy()
     }
 
-    private fun handleSyncActiveTimer(call: MethodCall, result: MethodChannel.Result) {
+    private fun handleSyncLap(call: MethodCall, result: MethodChannel.Result) {
         val args = call.arguments as? Map<*, *> ?: run {
             result.error("INVALID_ARGS", "Expected Map arguments", null)
             return
         }
 
-        // The payload carries the open Lap (start instant and zone). Older Dart
-        // builds only sent the retired timer keys, so those are still read.
-        val lapStartedAt = (args["lapStartedAtEpochMs"] as? Number)?.toLong() ?: 0L
-        val legacyRunning = args["isRunning"] as? Boolean ?: false
-        val legacyStartedAt = (args["startedAtEpochMs"] as? Number)?.toLong() ?: 0L
-        val startedAt = when {
-            lapStartedAt > 0L -> lapStartedAt
-            legacyRunning && legacyStartedAt > 0L -> legacyStartedAt
-            else -> 0L
-        }
+        val startedAt = (args["lapStartedAtEpochMs"] as? Number)?.toLong() ?: 0L
         val timezoneId = args["lapStartedTimezoneId"] as? String ?: ""
         val revision = (args["revision"] as? Number)?.toLong() ?: 0L
         val updatedAt = (args["updatedAtEpochMs"] as? Number)?.toLong() ?: System.currentTimeMillis()
 
         // Update Quick Settings Tile
         try {
-            TempoQuickSettingsTileService.updateTileState(
-                this,
-                startedAt > 0L,
-                null,
-                startedAt
-            )
+            TempoQuickSettingsTileService.updateTileState(this, startedAt)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to update Quick Settings Tile: ${e.message}")
         }
 
         scope.launch {
             try {
-                val putRequest = PutDataMapRequest.create(PATH_ACTIVE_TIMER).apply {
+                val putRequest = PutDataMapRequest.create(PATH_LAP).apply {
                     dataMap.putLong("lapStartedAtEpochMs", startedAt)
                     dataMap.putString("lapStartedTimezoneId", timezoneId)
                     dataMap.putLong("revision", revision)
                     dataMap.putLong("updatedAtEpochMs", updatedAt)
-                    // Legacy timer keys for older watch builds: the Lap is the
-                    // only span and it always runs.
-                    dataMap.putBoolean("isRunning", startedAt > 0L)
-                    dataMap.putString("activityId", "")
-                    dataMap.putString("activityName", "")
-                    dataMap.putString("activityColorHex", "#4CAF50")
-                    dataMap.putLong("startedAtEpochMs", startedAt)
-                    dataMap.putBoolean("isPaused", false)
-                    dataMap.putLong("accumulatedPauseMs", 0L)
                 }.asPutDataRequest().setUrgent()
 
                 Wearable.getDataClient(this@MainActivity).putDataItem(putRequest).await()

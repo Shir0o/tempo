@@ -12,13 +12,11 @@ import '../data/models/models.dart';
 ///
 /// Endpoints:
 /// - `tempo://start?activity=...&comment=...&tags=...` labels the open Lap.
-/// - `tempo://split` (and the legacy `tempo://stop`) closes the open Lap as an
-///   Untracked Record without labelling it.
-/// - `tempo://toggle?activity=...` labels the open Lap.
+/// - `tempo://split` closes the open Lap as an Untracked Record without
+///   labelling it.
 ///
 /// Links naming an Activity that does not exist are refused without touching
 /// the Lap. [lastError] carries the reason for the most recent refusal.
-/// Pause and resume no longer exist.
 class DeepLinkService {
   static const String channelName = 'com.tempos.tracker/deeplink';
   static const Set<String> supportedSchemes = {'tempo', 'timetracker'};
@@ -92,7 +90,7 @@ class DeepLinkService {
     }
   }
 
-  /// Routes an incoming [Uri] to the corresponding timer action.
+  /// Routes an incoming [Uri] to the corresponding Lap action.
   Future<bool> handleUri(Uri uri) async {
     _lastError = null;
     final scheme = uri.scheme.toLowerCase();
@@ -104,11 +102,8 @@ class DeepLinkService {
     switch (action) {
       case 'start':
         return await _handleStart(uri);
-      case 'stop':
       case 'split':
         return await _handleSplit();
-      case 'toggle':
-        return await _handleToggle(uri);
       default:
         return _refuse('Unsupported link action "$action".');
     }
@@ -160,26 +155,6 @@ class DeepLinkService {
 
   Future<bool> _handleSplit() async {
     await dayRecorder.split();
-    return true;
-  }
-
-  Future<bool> _handleToggle(Uri uri) async {
-    final activityParam = uri.queryParameters['activity'];
-
-    if (activityParam == null || activityParam.trim().isEmpty) {
-      final record = await dayRecorder.sameAsLast();
-      if (record == null) {
-        return _refuse('There is no earlier Record to repeat yet.');
-      }
-      return true;
-    }
-
-    final identifier = activityParam.trim();
-    final activity = await _findActivity(identifier);
-    if (activity == null) {
-      return _refuse('Unknown Activity "$identifier".');
-    }
-    await dayRecorder.label(activity.id);
     return true;
   }
 

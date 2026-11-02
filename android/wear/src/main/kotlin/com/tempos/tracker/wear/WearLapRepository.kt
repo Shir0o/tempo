@@ -21,7 +21,7 @@ import java.util.UUID
 
 /**
  * The open, always-running Lap as the watch knows it: a start instant and the
- * zone it started in. There is no pause, stop, or idle timer state.
+ * zone it started in.
  */
 data class LapState(
     val startedAtEpochMs: Long = 0L,
@@ -217,17 +217,9 @@ class WearLapRepository private constructor(private val context: Context) {
         saveLap(next)
     }
 
-    /**
-     * Applies the Lap the phone pushed. Older payloads predate the Lap keys and
-     * carry the same instant as a running timer, so those are still accepted.
-     */
+    /** Applies the Lap the phone pushed. */
     fun updateFromPhone(dataMap: DataMap) {
-        val lapStartedAt = dataMap.getLong("lapStartedAtEpochMs", 0L).takeIf { it > 0L }
-            ?: if (dataMap.getBoolean("isRunning", false)) {
-                dataMap.getLong("startedAtEpochMs", 0L)
-            } else {
-                0L
-            }
+        val lapStartedAt = dataMap.getLong("lapStartedAtEpochMs", 0L).takeIf { it > 0L } ?: 0L
 
         val state = LapState(
             startedAtEpochMs = lapStartedAt,
@@ -355,7 +347,7 @@ class WearLapRepository private constructor(private val context: Context) {
                     dequeueOfflineAction(action.actionId)
                     Log.d(TAG, "Flushed action: ${action.actionId}")
                 } catch (e: Exception) {
-                    Log.w(TAG, "Offline flush retry paused: ${e.message}")
+                    Log.w(TAG, "Offline flush retry deferred: ${e.message}")
                     break
                 }
             }
