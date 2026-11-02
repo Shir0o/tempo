@@ -15,7 +15,7 @@ Usage: tempo-mcp [flags]
 Flags:
   --db-path <path>    Path to the SQLite database file.
   --[no-]sanitize-pii Redact contact names, emails, and phone numbers (default: true).
-  --[no-]allow-writes Enable guarded mutation tools (start/stop timer, add manual records) (default: false).
+  --[no-]allow-writes Enable write tools (label the Lap, split the Lap, move a Boundary) (default: false).
   -h, --help          Show this usage message.
 ''');
 }
