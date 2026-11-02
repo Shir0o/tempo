@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
+import '../core/time/timezone_id.dart';
 import 'helpers/ui_helpers.dart';
 
 /// Historical records browser grouping sessions by day, with interactive
@@ -55,11 +56,11 @@ class _HistoryViewState extends State<HistoryView> {
     }
   }
 
-  /// Groups records by date string key "YYYY-MM-DD"
+  /// Groups records by the local date in the zone each record started in.
   Map<String, List<Record>> _groupRecordsByDate() {
     final Map<String, List<Record>> grouped = {};
     for (final r in _records) {
-      final dt = DateTime.fromMillisecondsSinceEpoch(r.startedAtEpochMs);
+      final dt = wallClockAt(r.timezoneId, r.startedAtEpochMs);
       final key = DateFormat('yyyy-MM-dd').format(dt);
       (grouped[key] ??= []).add(r);
     }
@@ -71,10 +72,20 @@ class _HistoryViewState extends State<HistoryView> {
     final color = UiHelpers.parseHexColor(activity?.colorHex);
     final commentController = TextEditingController(text: record.comment);
 
-    DateTime startDateTime = DateTime.fromMillisecondsSinceEpoch(
+    DateTime startDateTime = wallClockAt(
+      record.timezoneId,
       record.startedAtEpochMs,
     );
-    DateTime endDateTime = DateTime.fromMillisecondsSinceEpoch(
+    DateTime endDateTime = wallClockAt(
+      record.endTimezoneId,
+      record.endedAtEpochMs,
+    );
+    final startZoneLabel = zoneAbbreviationAt(
+      record.timezoneId,
+      record.startedAtEpochMs,
+    );
+    final endZoneLabel = zoneAbbreviationAt(
+      record.endTimezoneId,
       record.endedAtEpochMs,
     );
     List<String> selectedTagIds = List.from(record.tagIds);
@@ -92,8 +103,16 @@ class _HistoryViewState extends State<HistoryView> {
         return StatefulBuilder(
           builder: (context, setModalState) {
             final durationMs =
-                endDateTime.millisecondsSinceEpoch -
-                startDateTime.millisecondsSinceEpoch;
+                epochMsFromWallClock(
+                  endDateTime,
+                  record.endTimezoneId,
+                  referenceEpochMs: record.endedAtEpochMs,
+                ) -
+                epochMsFromWallClock(
+                  startDateTime,
+                  record.timezoneId,
+                  referenceEpochMs: record.startedAtEpochMs,
+                );
             final durationStr = UiHelpers.formatDurationHuman(durationMs);
 
             return Padding(
@@ -219,7 +238,7 @@ class _HistoryViewState extends State<HistoryView> {
                               );
                               if (time != null) {
                                 setModalState(() {
-                                  startDateTime = DateTime(
+                                  startDateTime = DateTime.utc(
                                     startDateTime.year,
                                     startDateTime.month,
                                     startDateTime.day,
@@ -236,9 +255,9 @@ class _HistoryViewState extends State<HistoryView> {
                             },
                             child: Column(
                               children: [
-                                const Text(
-                                  'START',
-                                  style: TextStyle(
+                                Text(
+                                  'START · $startZoneLabel',
+                                  style: const TextStyle(
                                     color: Colors.white38,
                                     fontSize: 10,
                                   ),
@@ -271,7 +290,7 @@ class _HistoryViewState extends State<HistoryView> {
                               );
                               if (time != null) {
                                 setModalState(() {
-                                  endDateTime = DateTime(
+                                  endDateTime = DateTime.utc(
                                     endDateTime.year,
                                     endDateTime.month,
                                     endDateTime.day,
@@ -288,9 +307,9 @@ class _HistoryViewState extends State<HistoryView> {
                             },
                             child: Column(
                               children: [
-                                const Text(
-                                  'END',
-                                  style: TextStyle(
+                                Text(
+                                  'END · $endZoneLabel',
+                                  style: const TextStyle(
                                     color: Colors.white38,
                                     fontSize: 10,
                                   ),
@@ -391,14 +410,21 @@ class _HistoryViewState extends State<HistoryView> {
                     // Save Button
                     ElevatedButton(
                       onPressed: () async {
+                        final startMs = epochMsFromWallClock(
+                          startDateTime,
+                          record.timezoneId,
+                          referenceEpochMs: record.startedAtEpochMs,
+                        );
+                        final endMs = epochMsFromWallClock(
+                          endDateTime,
+                          record.endTimezoneId,
+                          referenceEpochMs: record.endedAtEpochMs,
+                        );
                         final updated = record.copyWith(
                           comment: commentController.text.trim(),
-                          startedAtEpochMs:
-                              startDateTime.millisecondsSinceEpoch,
-                          endedAtEpochMs: endDateTime.millisecondsSinceEpoch,
-                          durationMs:
-                              endDateTime.millisecondsSinceEpoch -
-                              startDateTime.millisecondsSinceEpoch,
+                          startedAtEpochMs: startMs,
+                          endedAtEpochMs: endMs,
+                          durationMs: endMs > startMs ? endMs - startMs : 0,
                           updatedAtEpochMs: DateTime.now()
                               .toUtc()
                               .millisecondsSinceEpoch,
@@ -492,14 +518,15 @@ class _HistoryViewState extends State<HistoryView> {
       itemBuilder: (context, dateIndex) {
         final dateKey = dateKeys[dateIndex];
         final recordsForDate = grouped[dateKey]!;
-        final firstDate = DateTime.fromMillisecondsSinceEpoch(
+        final firstDate = wallClockAt(
+          recordsForDate.first.timezoneId,
           recordsForDate.first.startedAtEpochMs,
         );
         final headerTitle = UiHelpers.formatDateHeader(firstDate);
 
         final totalDayMs = recordsForDate.fold<int>(
           0,
-          (sum, r) => sum + r.durationMs,
+          (sum, r) => sum + r.elapsedMs,
         );
         final totalDayStr = UiHelpers.formatDurationHuman(totalDayMs);
 
@@ -543,12 +570,8 @@ class _HistoryViewState extends State<HistoryView> {
     final activity = _activitiesMap[record.activityId];
     final color = UiHelpers.parseHexColor(activity?.colorHex);
     final icon = UiHelpers.getIconData(activity?.iconName);
-    final startTime = DateTime.fromMillisecondsSinceEpoch(
-      record.startedAtEpochMs,
-    );
-    final endTime = DateTime.fromMillisecondsSinceEpoch(record.endedAtEpochMs);
-    final timeRange = UiHelpers.formatTimeRange(startTime, endTime);
-    final durationStr = UiHelpers.formatDurationHuman(record.durationMs);
+    final timeRange = UiHelpers.formatZonedTimeRange(record);
+    final durationStr = UiHelpers.formatDurationHuman(record.elapsedMs);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),

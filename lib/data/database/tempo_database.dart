@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../models/models.dart';
+import 'migrations.dart';
 
 const bool _kIsWeb =
     bool.fromEnvironment('dart.library.js_util') ||
@@ -16,10 +17,10 @@ class TempoDatabase {
 
   Database get db => _db;
 
-  static const int databaseVersion = 1;
+  static const int databaseVersion = 2;
   static const String databaseFileName = 'tempo.db';
 
-  // --- DDL Constants matching specs/03-local-sqlite-schema-and-state-machine.md exactly ---
+  // --- DDL Constants (schema v2) ---
 
   static const String createActivitiesTable = '''
 CREATE TABLE IF NOT EXISTS activities (
@@ -54,6 +55,7 @@ CREATE TABLE IF NOT EXISTS records (
     duration_ms INTEGER NOT NULL,
     comment TEXT NOT NULL DEFAULT '',
     timezone_id TEXT NOT NULL,
+    end_timezone_id TEXT NOT NULL DEFAULT '',
     created_at_epoch_ms INTEGER NOT NULL,
     updated_at_epoch_ms INTEGER NOT NULL
 );
@@ -72,6 +74,7 @@ CREATE TABLE IF NOT EXISTS active_timer (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     activity_id TEXT NOT NULL REFERENCES activities(id),
     started_at_epoch_ms INTEGER NOT NULL,
+    started_timezone_id TEXT NOT NULL DEFAULT '',
     is_paused INTEGER NOT NULL DEFAULT 0,
     paused_at_epoch_ms INTEGER DEFAULT NULL,
     accumulated_pause_ms INTEGER NOT NULL DEFAULT 0,
@@ -138,6 +141,11 @@ CREATE TABLE IF NOT EXISTS tombstones (
         },
         onCreate: (db, version) async {
           await createSchema(db);
+        },
+        onUpgrade: (db, oldVersion, newVersion) async {
+          if (oldVersion < 2) {
+            await migrateV1ToV2(db);
+          }
         },
       ),
     );

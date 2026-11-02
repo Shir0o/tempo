@@ -15,7 +15,14 @@ class Record {
   final int endedAtEpochMs;
   final int durationMs;
   final String comment;
+
+  /// IANA zone the Record started in.
   final String timezoneId;
+
+  /// IANA zone the Record ended in. Defaults to [timezoneId] for Records that
+  /// never crossed a zone and for rows written before end zones existed.
+  final String endTimezoneId;
+
   final int createdAtEpochMs;
   final int updatedAtEpochMs;
   final List<String> tagIds;
@@ -28,10 +35,21 @@ class Record {
     required this.durationMs,
     this.comment = '',
     required this.timezoneId,
+    String? endTimezoneId,
     required this.createdAtEpochMs,
     required this.updatedAtEpochMs,
     this.tagIds = const [],
-  });
+  }) : endTimezoneId = endTimezoneId ?? timezoneId;
+
+  /// True elapsed time from UTC epochs. Never derived from wall-clock times,
+  /// so a 6h flight across zones is always 6h.
+  int get elapsedMs {
+    final elapsed = endedAtEpochMs - startedAtEpochMs;
+    return elapsed < 0 ? 0 : elapsed;
+  }
+
+  /// Whether the Record started and ended in different zones.
+  bool get crossesTimezones => endTimezoneId != timezoneId;
 
   Map<String, dynamic> toMap() => {
     'id': id,
@@ -41,6 +59,7 @@ class Record {
     'duration_ms': durationMs,
     'comment': comment,
     'timezone_id': timezoneId,
+    'end_timezone_id': endTimezoneId,
     'created_at_epoch_ms': createdAtEpochMs,
     'updated_at_epoch_ms': updatedAtEpochMs,
   };
@@ -48,18 +67,25 @@ class Record {
   factory Record.fromMap(
     Map<String, dynamic> map, {
     List<String> tagIds = const [],
-  }) => Record(
-    id: map['id'] as String,
-    activityId: map['activity_id'] as String,
-    startedAtEpochMs: map['started_at_epoch_ms'] as int,
-    endedAtEpochMs: map['ended_at_epoch_ms'] as int,
-    durationMs: map['duration_ms'] as int,
-    comment: map['comment'] as String? ?? '',
-    timezoneId: map['timezone_id'] as String,
-    createdAtEpochMs: map['created_at_epoch_ms'] as int,
-    updatedAtEpochMs: map['updated_at_epoch_ms'] as int,
-    tagIds: tagIds,
-  );
+  }) {
+    final timezoneId = map['timezone_id'] as String;
+    final storedEndZone = map['end_timezone_id'] as String?;
+    return Record(
+      id: map['id'] as String,
+      activityId: map['activity_id'] as String,
+      startedAtEpochMs: map['started_at_epoch_ms'] as int,
+      endedAtEpochMs: map['ended_at_epoch_ms'] as int,
+      durationMs: map['duration_ms'] as int,
+      comment: map['comment'] as String? ?? '',
+      timezoneId: timezoneId,
+      endTimezoneId: (storedEndZone == null || storedEndZone.isEmpty)
+          ? timezoneId
+          : storedEndZone,
+      createdAtEpochMs: map['created_at_epoch_ms'] as int,
+      updatedAtEpochMs: map['updated_at_epoch_ms'] as int,
+      tagIds: tagIds,
+    );
+  }
 
   Record copyWith({
     String? id,
@@ -69,6 +95,7 @@ class Record {
     int? durationMs,
     String? comment,
     String? timezoneId,
+    String? endTimezoneId,
     int? createdAtEpochMs,
     int? updatedAtEpochMs,
     List<String>? tagIds,
@@ -80,6 +107,7 @@ class Record {
     durationMs: durationMs ?? this.durationMs,
     comment: comment ?? this.comment,
     timezoneId: timezoneId ?? this.timezoneId,
+    endTimezoneId: endTimezoneId ?? this.endTimezoneId,
     createdAtEpochMs: createdAtEpochMs ?? this.createdAtEpochMs,
     updatedAtEpochMs: updatedAtEpochMs ?? this.updatedAtEpochMs,
     tagIds: tagIds ?? this.tagIds,
@@ -97,6 +125,7 @@ class Record {
           durationMs == other.durationMs &&
           comment == other.comment &&
           timezoneId == other.timezoneId &&
+          endTimezoneId == other.endTimezoneId &&
           createdAtEpochMs == other.createdAtEpochMs &&
           updatedAtEpochMs == other.updatedAtEpochMs &&
           _listEquals(tagIds, other.tagIds);
@@ -110,11 +139,12 @@ class Record {
       durationMs.hashCode ^
       comment.hashCode ^
       timezoneId.hashCode ^
+      endTimezoneId.hashCode ^
       createdAtEpochMs.hashCode ^
       updatedAtEpochMs.hashCode ^
       Object.hashAll(tagIds);
 
   @override
   String toString() =>
-      'Record(id: $id, activityId: $activityId, startedAtEpochMs: $startedAtEpochMs, endedAtEpochMs: $endedAtEpochMs, durationMs: $durationMs, comment: $comment, timezoneId: $timezoneId, tagIds: $tagIds)';
+      'Record(id: $id, activityId: $activityId, startedAtEpochMs: $startedAtEpochMs, endedAtEpochMs: $endedAtEpochMs, durationMs: $durationMs, comment: $comment, timezoneId: $timezoneId, endTimezoneId: $endTimezoneId, tagIds: $tagIds)';
 }

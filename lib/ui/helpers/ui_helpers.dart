@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/time/timezone_id.dart';
+import '../../data/models/models.dart';
+
 /// Helper utilities for UI formatting, color parsing, and icon mapping in Tempo.
 class UiHelpers {
   /// Parses a hex color string (e.g. "#4CAF50", "4CAF50", "#FF4CAF50") to [Color].
@@ -153,10 +156,23 @@ class UiHelpers {
     return DateFormat('EEE, MMM d, yyyy').format(dateTime);
   }
 
-  /// Formats time range: "14:00 – 15:30".
-  static String formatTimeRange(DateTime start, DateTime end) {
+  /// Formats a Record's start and end in the zones they were lived in.
+  /// Same zone: "14:00 – 15:30". Different zones: "08:00 PDT → 16:00 EDT".
+  static String formatZonedTimeRange(Record record) {
+    final start = wallClockAt(record.timezoneId, record.startedAtEpochMs);
+    final end = wallClockAt(record.endTimezoneId, record.endedAtEpochMs);
     final startStr = DateFormat('HH:mm').format(start);
     final endStr = DateFormat('HH:mm').format(end);
-    return '$startStr – $endStr';
+    if (!record.crossesTimezones) return '$startStr – $endStr';
+
+    final startZone = zoneAbbreviationAt(
+      record.timezoneId,
+      record.startedAtEpochMs,
+    );
+    final endZone = zoneAbbreviationAt(
+      record.endTimezoneId,
+      record.endedAtEpochMs,
+    );
+    return '$startStr $startZone → $endStr $endZone';
   }
 }

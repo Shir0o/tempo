@@ -14,6 +14,11 @@ class ActiveTimer {
   final int id;
   final String activityId;
   final int startedAtEpochMs;
+
+  /// IANA zone the timer started in, so the committed Record keeps the zone it
+  /// was lived in even if the device moves before the timer stops.
+  final String startedTimezoneId;
+
   final bool isPaused;
   final int? pausedAtEpochMs;
   final int accumulatedPauseMs;
@@ -26,6 +31,7 @@ class ActiveTimer {
     this.id = 1,
     required this.activityId,
     required this.startedAtEpochMs,
+    this.startedTimezoneId = '',
     this.isPaused = false,
     this.pausedAtEpochMs,
     this.accumulatedPauseMs = 0,
@@ -39,6 +45,7 @@ class ActiveTimer {
     'id': id,
     'activity_id': activityId,
     'started_at_epoch_ms': startedAtEpochMs,
+    'started_timezone_id': startedTimezoneId,
     'is_paused': isPaused ? 1 : 0,
     'paused_at_epoch_ms': pausedAtEpochMs,
     'accumulated_pause_ms': accumulatedPauseMs,
@@ -64,6 +71,7 @@ class ActiveTimer {
       id: map['id'] as int? ?? 1,
       activityId: map['activity_id'] as String,
       startedAtEpochMs: map['started_at_epoch_ms'] as int,
+      startedTimezoneId: map['started_timezone_id'] as String? ?? '',
       isPaused: (map['is_paused'] as int? ?? 0) == 1,
       pausedAtEpochMs: map['paused_at_epoch_ms'] as int?,
       accumulatedPauseMs: map['accumulated_pause_ms'] as int? ?? 0,
@@ -73,6 +81,11 @@ class ActiveTimer {
       revision: map['revision'] as int? ?? 1,
     );
   }
+
+  /// The zone this timer actually started in, falling back to [fallback]
+  /// for timers that predate start-zone capture (pre-v2 rows).
+  String startTimezoneOr(String fallback) =>
+      startedTimezoneId.isEmpty ? fallback : startedTimezoneId;
 
   /// Evaluates elapsed duration in milliseconds based on UTC epoch arithmetic.
   /// Matches specification section 3.1:
@@ -89,6 +102,7 @@ class ActiveTimer {
     int? id,
     String? activityId,
     int? startedAtEpochMs,
+    String? startedTimezoneId,
     bool? isPaused,
     int? pausedAtEpochMs,
     bool clearPausedAt = false,
@@ -101,6 +115,7 @@ class ActiveTimer {
     id: id ?? this.id,
     activityId: activityId ?? this.activityId,
     startedAtEpochMs: startedAtEpochMs ?? this.startedAtEpochMs,
+    startedTimezoneId: startedTimezoneId ?? this.startedTimezoneId,
     isPaused: isPaused ?? this.isPaused,
     pausedAtEpochMs: clearPausedAt
         ? null
@@ -120,6 +135,7 @@ class ActiveTimer {
           id == other.id &&
           activityId == other.activityId &&
           startedAtEpochMs == other.startedAtEpochMs &&
+          startedTimezoneId == other.startedTimezoneId &&
           isPaused == other.isPaused &&
           pausedAtEpochMs == other.pausedAtEpochMs &&
           accumulatedPauseMs == other.accumulatedPauseMs &&
@@ -133,6 +149,7 @@ class ActiveTimer {
       id.hashCode ^
       activityId.hashCode ^
       startedAtEpochMs.hashCode ^
+      startedTimezoneId.hashCode ^
       isPaused.hashCode ^
       pausedAtEpochMs.hashCode ^
       accumulatedPauseMs.hashCode ^
@@ -143,5 +160,5 @@ class ActiveTimer {
 
   @override
   String toString() =>
-      'ActiveTimer(id: $id, activityId: $activityId, startedAtEpochMs: $startedAtEpochMs, isPaused: $isPaused, pausedAtEpochMs: $pausedAtEpochMs, accumulatedPauseMs: $accumulatedPauseMs, currentComment: $currentComment, initialTagIds: $initialTagIds, lastHeartbeatEpochMs: $lastHeartbeatEpochMs, revision: $revision)';
+      'ActiveTimer(id: $id, activityId: $activityId, startedAtEpochMs: $startedAtEpochMs, startedTimezoneId: $startedTimezoneId, isPaused: $isPaused, pausedAtEpochMs: $pausedAtEpochMs, accumulatedPauseMs: $accumulatedPauseMs, currentComment: $currentComment, initialTagIds: $initialTagIds, lastHeartbeatEpochMs: $lastHeartbeatEpochMs, revision: $revision)';
 }

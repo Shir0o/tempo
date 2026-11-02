@@ -662,7 +662,48 @@ void main() {
       expect(record.durationMs, 5400000);
     });
 
-    test('timezone change mid-tracking records the ending timezone without altering duration', () async {
+    test(
+      'a zone-crossing record keeps its start and end zones and a UTC duration',
+      () async {
+        final sm = createStateMachine();
+        addTearDown(sm.dispose);
+
+        // Start in Los Angeles and fly 6h to New York (a 3h clock jump).
+        mockTime = 1000000;
+        mockTimezone = 'America/Los_Angeles';
+        await sm.start(activityA.id);
+
+        mockTime = 1000000 + 6 * 3600000;
+        mockTimezone = 'America/New_York';
+
+        final record = await sm.stop();
+        expect(record.durationMs, 6 * 3600000);
+        expect(record.elapsedMs, 6 * 3600000);
+        expect(record.timezoneId, 'America/Los_Angeles');
+        expect(record.endTimezoneId, 'America/New_York');
+        expect(record.crossesTimezones, isTrue);
+      },
+    );
+
+    test('switching activity carries the zone into the next timer', () async {
+      final sm = createStateMachine();
+      addTearDown(sm.dispose);
+
+      mockTime = 1000000;
+      mockTimezone = 'America/Los_Angeles';
+      await sm.start(activityA.id);
+
+      mockTimezone = 'Europe/London';
+      mockTime = 1000000 + 3600000;
+      await sm.switchActivity(activityB.id);
+
+      final record = sm.lastStoppedRecord!;
+      expect(record.timezoneId, 'America/Los_Angeles');
+      expect(record.endTimezoneId, 'Europe/London');
+      expect(sm.activeTimer!.startedTimezoneId, 'Europe/London');
+    });
+
+    test('timezone change mid-tracking records both zones without altering duration', () async {
       final sm = createStateMachine();
       addTearDown(sm.dispose);
 
@@ -677,7 +718,8 @@ void main() {
 
       final record = await sm.stop();
       expect(record.durationMs, 36000000);
-      expect(record.timezoneId, 'Europe/London');
+      expect(record.timezoneId, 'America/Los_Angeles');
+      expect(record.endTimezoneId, 'Europe/London');
     });
   });
 
