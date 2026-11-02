@@ -8,6 +8,23 @@ import '../../core/state/day_recorder.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
 
+/// The three-second window an undo bar offers after a label or Split.
+const Duration _undoWindow = DayRecorder.defaultUndoGraceWindow;
+
+class _UndoState {
+  final String message;
+  final DateTime deadline;
+
+  const _UndoState({required this.message, required this.deadline});
+
+  int get secondsLeft {
+    final ms = deadline.difference(DateTime.now()).inMilliseconds;
+    if (ms <= 0) return 0;
+    final seconds = (ms / 1000).ceil();
+    return seconds > _undoWindow.inSeconds ? _undoWindow.inSeconds : seconds;
+  }
+}
+
 /// Keyboard-navigable macOS Menu Bar Quick Popover View.
 ///
 /// Implements the specification wireframe from:
@@ -52,6 +69,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
   final TextEditingController _commentController = TextEditingController();
 
   Timer? _liveTicker;
+  _UndoState? _undo;
   List<Activity> _pinnedActivities = [];
   List<Activity> _recentActivities = [];
   Map<String, int> _weeklyDurations = {};
@@ -85,7 +103,9 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
     _liveTicker?.cancel();
     _liveTicker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (widget.dayRecorder.lap != null && mounted) {
-        setState(() {});
+        setState(() {
+          if (_undo != null && _undo!.secondsLeft == 0) _undo = null;
+        });
       } else {
         _liveTicker?.cancel();
         _liveTicker = null;
@@ -219,7 +239,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
       return KeyEventResult.handled;
     }
 
-    // Number keys 1-9: Start pinned habit
+    // Number keys 1-9: Label the open Lap with pinned Activity N
     final keyChar = event.logicalKey.keyLabel;
     if (keyChar.length == 1 && RegExp(r'^[1-9]$').hasMatch(keyChar)) {
       final idx = int.parse(keyChar) - 1;
@@ -238,15 +258,47 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
 
   Future<void> _startHabit(Activity activity) async {
     final comment = _commentController.text.trim();
-    await widget.dayRecorder.label(activity.id, comment: comment);
+    final record = await widget.dayRecorder.label(
+      activity.id,
+      comment: comment,
+    );
     _commentController.clear();
     await _loadData();
+    _showUndo('Logged ${activity.name}', record);
   }
 
   Future<void> _labelSameAsLast() async {
-    await widget.dayRecorder.sameAsLast();
+    final record = await widget.dayRecorder.sameAsLast();
     _commentController.clear();
     await _loadData();
+    if (record != null) {
+      _showUndo('Logged same as last', record);
+    }
+  }
+
+  Future<void> _split() async {
+    final record = await widget.dayRecorder.split();
+    await _loadData();
+    _showUndo('Split at the current time', record);
+  }
+
+  Future<void> _undoLast() async {
+    final undone = await widget.dayRecorder.undoLast();
+    if (!mounted) return;
+    setState(() => _undo = null);
+    if (undone) {
+      await _loadData();
+    }
+  }
+
+  void _showUndo(String message, Record record) {
+    if (!mounted) return;
+    setState(() {
+      _undo = _UndoState(
+        message: message,
+        deadline: DateTime.now().add(_undoWindow),
+      );
+    });
   }
 
   void _closePopover() {
@@ -405,6 +457,8 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
                       ),
               ),
 
+              if (_undo != null) _buildUndoBar(_undo!),
+
               const Divider(height: 1, color: Colors.white12),
 
               // Footer Toolbar
@@ -473,23 +527,80 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
             ),
           ),
           const SizedBox(height: 8),
-          // Same as last
-          ElevatedButton.icon(
-            onPressed: _labelSameAsLast,
-            icon: const Icon(Icons.repeat, size: 16, color: Colors.white),
-            label: const Text(
-              'Same as last (Cmd+Enter)',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _split,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white70,
+                    side: const BorderSide(color: Colors.white24),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    minimumSize: const Size(double.infinity, 32),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                  child: const Text(
+                    'Split',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                flex: 2,
+                child: ElevatedButton.icon(
+                  onPressed: _labelSameAsLast,
+                  icon: const Icon(Icons.repeat, size: 16, color: Colors.white),
+                  label: const Text(
+                    'Same as last (Cmd+Enter)',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF4CAF50),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    minimumSize: const Size(double.infinity, 32),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUndoBar(_UndoState undo) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+      color: const Color(0xFF262630),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              undo.message,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
             ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF4CAF50),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              minimumSize: const Size(double.infinity, 32),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(6),
+          ),
+          TextButton(
+            onPressed: _undoLast,
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFF4CAF50),
+              minimumSize: const Size(0, 32),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              textStyle: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
               ),
             ),
+            child: Text('Undo · ${undo.secondsLeft}'),
           ),
         ],
       ),

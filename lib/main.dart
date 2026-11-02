@@ -75,7 +75,7 @@ Future<void> main() async {
       database.getAllActivities().then(wearableSyncService.syncActivities);
     } else if (Platform.isMacOS) {
       // Connect macOS menu bar status item
-      MenuBarService(dayRecorder: dayRecorder, database: database);
+      MenuBarService(dayRecorder: dayRecorder);
     }
   }
 

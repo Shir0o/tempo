@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
@@ -11,10 +12,12 @@ import '../data/models/models.dart';
 ///
 /// Endpoints:
 /// - `tempo://start?activity=...&comment=...&tags=...` labels the open Lap.
-/// - `tempo://stop` and `tempo://split` close the open Lap as an Untracked
-///   Record without labelling it.
+/// - `tempo://split` (and the legacy `tempo://stop`) closes the open Lap as an
+///   Untracked Record without labelling it.
 /// - `tempo://toggle?activity=...` labels the open Lap.
 ///
+/// Links naming an Activity that does not exist are refused without touching
+/// the Lap. [lastError] carries the reason for the most recent refusal.
 /// Pause and resume no longer exist.
 class DeepLinkService {
   static const String channelName = 'com.tempos.tracker/deeplink';
@@ -25,6 +28,9 @@ class DeepLinkService {
   final MethodChannel _channel;
   final int Function() _nowUtcMs;
   final String Function() _generateId;
+  final void Function(String message)? onError;
+
+  String? _lastError;
 
   DeepLinkService({
     required this.dayRecorder,
@@ -32,12 +38,16 @@ class DeepLinkService {
     MethodChannel? channel,
     int Function()? nowUtcMs,
     String Function()? generateId,
+    this.onError,
   }) : _channel = channel ?? const MethodChannel(channelName),
        _nowUtcMs =
            nowUtcMs ?? (() => DateTime.now().toUtc().millisecondsSinceEpoch),
        _generateId = generateId ?? (() => const Uuid().v4()) {
     _initChannelHandler();
   }
+
+  /// Why the most recent link was refused, or null when it succeeded.
+  String? get lastError => _lastError;
 
   void _initChannelHandler() {
     _channel.setMethodCallHandler((call) async {
@@ -70,20 +80,24 @@ class DeepLinkService {
   /// Parses a string URL and routes to the appropriate deep link handler.
   /// Returns `true` if recognized and executed successfully; otherwise `false`.
   Future<bool> handleUrl(String urlString) async {
-    if (urlString.trim().isEmpty) return false;
+    _lastError = null;
+    if (urlString.trim().isEmpty) {
+      return _refuse('The link is empty.');
+    }
     try {
       final uri = Uri.parse(urlString.trim());
       return await handleUri(uri);
     } catch (_) {
-      return false;
+      return _refuse('The link could not be parsed.');
     }
   }
 
   /// Routes an incoming [Uri] to the corresponding timer action.
   Future<bool> handleUri(Uri uri) async {
+    _lastError = null;
     final scheme = uri.scheme.toLowerCase();
     if (!supportedSchemes.contains(scheme)) {
-      return false;
+      return _refuse('Unsupported link scheme "$scheme".');
     }
 
     final action = _extractAction(uri);
@@ -91,14 +105,21 @@ class DeepLinkService {
       case 'start':
         return await _handleStart(uri);
       case 'stop':
-        return await _handleSplit();
       case 'split':
         return await _handleSplit();
       case 'toggle':
         return await _handleToggle(uri);
       default:
-        return false;
+        return _refuse('Unsupported link action "$action".');
     }
+  }
+
+  /// Records and reports a refusal without changing the Lap.
+  bool _refuse(String message) {
+    _lastError = message;
+    debugPrint('Tempo deep link refused: $message');
+    onError?.call(message);
+    return false;
   }
 
   String _extractAction(Uri uri) {
@@ -114,10 +135,15 @@ class DeepLinkService {
   Future<bool> _handleStart(Uri uri) async {
     final activityParam = uri.queryParameters['activity'];
     if (activityParam == null || activityParam.trim().isEmpty) {
-      return false;
+      return _refuse('A start link needs an Activity.');
     }
 
-    final activity = await _findOrCreateActivity(activityParam.trim());
+    final identifier = activityParam.trim();
+    final activity = await _findActivity(identifier);
+    if (activity == null) {
+      return _refuse('Unknown Activity "$identifier".');
+    }
+
     final comment = uri.queryParameters['comment'] ?? '';
     final tagsRaw = uri.queryParameters['tags'] ?? '';
     final tagNames = tagsRaw
@@ -140,12 +166,20 @@ class DeepLinkService {
   Future<bool> _handleToggle(Uri uri) async {
     final activityParam = uri.queryParameters['activity'];
 
-    if (activityParam != null && activityParam.trim().isNotEmpty) {
-      final activity = await _findOrCreateActivity(activityParam.trim());
-      await dayRecorder.label(activity.id);
-    } else {
-      await dayRecorder.sameAsLast();
+    if (activityParam == null || activityParam.trim().isEmpty) {
+      final record = await dayRecorder.sameAsLast();
+      if (record == null) {
+        return _refuse('There is no earlier Record to repeat yet.');
+      }
+      return true;
     }
+
+    final identifier = activityParam.trim();
+    final activity = await _findActivity(identifier);
+    if (activity == null) {
+      return _refuse('Unknown Activity "$identifier".');
+    }
+    await dayRecorder.label(activity.id);
     return true;
   }
 
@@ -153,34 +187,19 @@ class DeepLinkService {
   // Activity & Tag Resolvers
   // ==========================================
 
-  Future<Activity> _findOrCreateActivity(String identifier) async {
-    // 1. Try exact ID lookup
+  /// Resolves an Activity by ID or case-insensitive name. Deep links never
+  /// create Activities, so a typo cannot silently change what the Lap means.
+  Future<Activity?> _findActivity(String identifier) async {
     final byId = await database.getActivityById(identifier);
     if (byId != null) return byId;
 
-    // 2. Try case-insensitive name match
     final all = await database.getAllActivities(includeArchived: true);
     for (final a in all) {
       if (a.name.toLowerCase() == identifier.toLowerCase()) {
         return a;
       }
     }
-
-    // 3. Create new Activity if not found
-    final now = _nowUtcMs();
-    final newActivity = Activity(
-      id: _generateId(),
-      name: identifier,
-      colorHex: '#4CAF50',
-      iconName: 'schedule',
-      isPinned: false,
-      sortOrder: all.length,
-      isArchived: false,
-      createdAtEpochMs: now,
-      updatedAtEpochMs: now,
-    );
-    await database.insertActivity(newActivity);
-    return newActivity;
+    return null;
   }
 
   Future<List<String>> _resolveTagIds(List<String> tagNames) async {
