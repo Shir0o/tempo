@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
+import '../time/timezone_id.dart';
 
 /// Atomic Write-Flush-Rename CSV Export Engine guaranteeing 100% Simple Time Tracker
 /// schema parity and zero-corruption reads for peer tools such as BNPB.
@@ -146,8 +147,18 @@ class CsvExportEngine {
     required List<String> tagNames,
     String categories = '',
   }) {
-    final startedDt = _epochToDateTime(record.startedAtEpochMs);
-    final endedDt = _epochToDateTime(record.endedAtEpochMs);
+    // Both ends use the Record's offset at its start, so rows never shift
+    // when the device changes zone and the two offset-less timestamps always
+    // subtract to the real elapsed time (even across DST or a flight).
+    final offset = utcOffsetAt(record.timezoneId, record.startedAtEpochMs);
+    DateTime toWallClock(int ms) => offset == null
+        ? _epochToDateTime(ms)
+        : DateTime.fromMillisecondsSinceEpoch(
+            ms + offset.inMilliseconds,
+            isUtc: true,
+          );
+    final startedDt = toWallClock(record.startedAtEpochMs);
+    final endedDt = toWallClock(record.endedAtEpochMs);
 
     final timeStarted = formatDateTime(startedDt);
     final timeEnded = formatDateTime(endedDt);

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
@@ -44,6 +45,8 @@ Future<void> main() async {
   final timerStateMachine = TimerStateMachine(
     database: database,
     csvExportEngine: exportEngine,
+    getTimezoneId: () async =>
+        (await FlutterTimezone.getLocalTimezone()).identifier,
   );
 
   // Check for boot-up crash recovery (>6 hours) and resume or recover
