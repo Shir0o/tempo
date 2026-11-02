@@ -42,11 +42,16 @@ Future<void> main() async {
   );
 
   // 4. Open the always-running Lap
+  WearableSyncService? wearableSyncService;
   final dayRecorder = DayRecorder(
     database: database,
     csvExportEngine: exportEngine,
     getTimezoneId: () async =>
         (await FlutterTimezone.getLocalTimezone()).identifier,
+    // The watch tile ranks Activities by recent use, so keep its slots current.
+    onRecordCommitted: (_) async {
+      await wearableSyncService?.refreshActivities();
+    },
   );
   await dayRecorder.initialize();
 
@@ -61,7 +66,7 @@ Future<void> main() async {
   if (!kIsWeb) {
     if (Platform.isAndroid) {
       // Connect Wear OS Companion synchronization
-      final wearableSyncService = WearableSyncService(
+      wearableSyncService = WearableSyncService(
         dayRecorder: dayRecorder,
         database: database,
       );

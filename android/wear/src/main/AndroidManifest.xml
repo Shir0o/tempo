@@ -17,7 +17,7 @@
             android:name="com.google.android.wearable.standalone"
             android:value="true" />
 
-        <!-- Quick Log Activity (Action-and-Exit, top pinned habits, 3s undo snackbar) -->
+        <!-- Quick Log Activity (Action-and-Exit: labels the open Lap and finishes) -->
         <activity
             android:name=".QuickLogActivity"
             android:exported="true"
@@ -33,19 +33,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Active Session Activity (Monospace elapsed ticker, GuardedStop button) -->
-        <activity
-            android:name=".ActiveSessionActivity"
-            android:exported="true"
-            android:taskAffinity=""
-            android:launchMode="singleTask">
-            <intent-filter>
-                <action android:name="com.tempos.tracker.action.ACTIVE_SESSION" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </activity>
-
-        <!-- ProtoLayout Smart Tile Service (Circular 3-slot layout, Dynamic Duration) -->
+        <!-- ProtoLayout Smart Tile Service (Lap elapsed header, top-3 Activity slots) -->
         <service
             android:name=".TempoTileService"
             android:exported="true"
@@ -56,7 +44,7 @@
             </intent-filter>
         </service>
 
-        <!-- Watch Face Complication Data Source Service (Stopwatch dynamic elapsed ticker) -->
+        <!-- Watch Face Complication Data Source Service (Lap stopwatch elapsed ticker) -->
         <service
             android:name=".TempoComplicationService"
             android:exported="true"

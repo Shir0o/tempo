@@ -5,18 +5,17 @@ import androidx.wear.protolayout.ActionBuilders
 import androidx.wear.protolayout.ColorBuilders.argb
 import androidx.wear.protolayout.DimensionBuilders.dp
 import androidx.wear.protolayout.DimensionBuilders.expand
+import androidx.wear.protolayout.DimensionBuilders.sp
 import androidx.wear.protolayout.DimensionBuilders.wrap
 import androidx.wear.protolayout.LayoutElementBuilders
 import androidx.wear.protolayout.ModifiersBuilders
 import androidx.wear.protolayout.TypeBuilders
-import androidx.wear.protolayout.expression.DynamicBuilders
 import androidx.wear.protolayout.ResourceBuilders
 import androidx.wear.protolayout.TimelineBuilders
 import androidx.wear.tiles.RequestBuilders
 import androidx.wear.tiles.TileBuilders
 import androidx.wear.tiles.TileService
 import com.google.common.util.concurrent.ListenableFuture
-import java.time.Instant
 import java.util.Locale
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
@@ -32,11 +31,11 @@ class ImmediateFuture<V>(private val value: V) : ListenableFuture<V> {
 
 /**
  * TempoTileService:
- * Non-scrolling circular 3-slot layout built with ProtoLayout:
- * - Header: Active timer banner (with DynamicDuration live elapsed time) or "Quick Start"
- * - Slot 1: Primary pinned habit button (>= 52dp height, high contrast)
- * - Slot 2 & 3: Contextual recent activities
- * - Slot 4: "More..." action pill launching QuickLogActivity
+ * Non-scrolling circular tile built with ProtoLayout.
+ * - Header: the open Lap's elapsed time; tapping it opens the full Activity list.
+ * - Three slots: the most-used Activities over the last 14 days, most used
+ *   first. Tapping a slot labels the open Lap with that Activity and exits
+ *   straight back to the watch face.
  */
 class TempoTileService : TileService() {
 
@@ -49,23 +48,17 @@ class TempoTileService : TileService() {
     }
 
     override fun onTileRequest(requestParams: RequestBuilders.TileRequest): ListenableFuture<TileBuilders.Tile> {
-        val repository = WearTimerRepository.getInstance(this)
-        val activeTimer = repository.activeTimerState.value
-        val activities = repository.activities.value
+        val repository = WearLapRepository.getInstance(this)
+        val lap = repository.lap.value
+        val slots = repository.tileActivities()
 
-        val pinned = activities.filter { it.isPinned }
-        val primary = pinned.firstOrNull() ?: activities.firstOrNull()
-            ?: WearActivity(id = "act_coding", name = "Coding", colorHex = "#2563EB")
-        val recents = activities.filter { it.id != primary.id }.take(2)
-
-        val rootElement = buildCircularTileLayout(activeTimer, primary, recents)
-
-        val timeline = TimelineBuilders.Timeline.fromLayoutElement(rootElement)
+        val timeline = TimelineBuilders.Timeline.fromLayoutElement(buildTileLayout(lap, slots))
 
         val tile = TileBuilders.Tile.Builder()
             .setResourcesVersion(RESOURCES_VERSION)
             .setTileTimeline(timeline)
-            .setFreshnessIntervalMillis(0)
+            // Re-render once a minute so the elapsed header stays current.
+            .setFreshnessIntervalMillis(60_000)
             .build()
 
         return ImmediateFuture(tile)
@@ -79,30 +72,22 @@ class TempoTileService : TileService() {
         )
     }
 
-    private fun buildCircularTileLayout(
-        timer: ActiveTimerState,
-        primary: WearActivity,
-        recents: List<WearActivity>
+    private fun buildTileLayout(
+        lap: LapState,
+        slots: List<WearActivity>
     ): LayoutElementBuilders.LayoutElement {
         val columnBuilder = LayoutElementBuilders.Column.Builder()
             .setWidth(expand())
             .setHeight(expand())
             .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
 
-        // 1. Header: Active status banner OR "Quick Start"
-        columnBuilder.addContent(buildHeaderElement(timer))
+        columnBuilder.addContent(buildHeaderElement(lap))
         columnBuilder.addContent(buildSpacer(6))
 
-        // 2. Slot 1: Primary Pinned Habit (>= 52dp height)
-        columnBuilder.addContent(buildPrimaryHabitButton(primary))
-        columnBuilder.addContent(buildSpacer(4))
-
-        // 3. Slot 2 & 3: Contextual Recent Activities Row
-        columnBuilder.addContent(buildRecentRow(recents))
-        columnBuilder.addContent(buildSpacer(4))
-
-        // 4. Slot 4: "More..." action pill
-        columnBuilder.addContent(buildMoreButton())
+        slots.forEachIndexed { index, activity ->
+            columnBuilder.addContent(buildSlotButton(activity, isPrimary = index == 0))
+            columnBuilder.addContent(buildSpacer(4))
+        }
 
         return LayoutElementBuilders.Box.Builder()
             .setWidth(expand())
@@ -120,108 +105,83 @@ class TempoTileService : TileService() {
             .build()
     }
 
-    private fun buildHeaderElement(timer: ActiveTimerState): LayoutElementBuilders.LayoutElement {
-        return if (timer.isRunning) {
-            val staticDuration = formatElapsed(timer.startedAtEpochMs)
-            val dynamicStringProp = buildDynamicDurationStringProp(timer.startedAtEpochMs, staticDuration)
+    /** Lap elapsed, tapping opens the list of every Activity. */
+    private fun buildHeaderElement(lap: LapState): LayoutElementBuilders.LayoutElement {
+        val elapsed = if (lap.isOpen) formatElapsed(lap.startedAtEpochMs) else "--:--"
 
-            val text = LayoutElementBuilders.Text.Builder()
-                .setText(dynamicStringProp)
-                .setFontStyle(
-                    LayoutElementBuilders.FontStyle.Builder()
-                        .setSize(androidx.wear.protolayout.DimensionBuilders.sp(12f))
-                        .setWeight(LayoutElementBuilders.FONT_WEIGHT_BOLD)
-                        .setColor(argb(0xFF4ADE80.toInt()))
-                        .build()
-                )
-                .build()
-
-            val activityName = LayoutElementBuilders.Text.Builder()
-                .setText(
-                    TypeBuilders.StringProp.Builder("● ${timer.activityName ?: "Active"}: ")
-                        .build()
-                )
-                .setFontStyle(
-                    LayoutElementBuilders.FontStyle.Builder()
-                        .setSize(androidx.wear.protolayout.DimensionBuilders.sp(12f))
-                        .setWeight(LayoutElementBuilders.FONT_WEIGHT_MEDIUM)
-                        .setColor(argb(0xFFE2E8F0.toInt()))
-                        .build()
-                )
-                .build()
-
-            val row = LayoutElementBuilders.Row.Builder()
-                .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
-                .addContent(activityName)
-                .addContent(text)
-                .build()
-
-            val activeClick = ModifiersBuilders.Clickable.Builder()
-                .setId("open_active_session")
-                .setOnClick(
-                    ActionBuilders.LaunchAction.Builder()
-                        .setAndroidActivity(
-                            ActionBuilders.AndroidActivity.Builder()
-                                .setPackageName(packageName)
-                                .setClassName(ActiveSessionActivity::class.java.name)
-                                .build()
-                        )
-                        .build()
-                )
-                .build()
-
-            LayoutElementBuilders.Box.Builder()
-                .setWidth(wrap())
-                .setHeight(dp(22f))
-                .setModifiers(
-                    ModifiersBuilders.Modifiers.Builder()
-                        .setClickable(activeClick)
-                        .setBackground(
-                            ModifiersBuilders.Background.Builder()
-                                .setColor(argb(0xFF1E293B.toInt()))
-                                .setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(11f)).build())
-                                .build()
-                        )
-                        .setPadding(
-                            ModifiersBuilders.Padding.Builder()
-                                .setStart(dp(10f))
-                                .setEnd(dp(10f))
-                                .build()
-                        )
-                        .build()
-                )
-                .addContent(row)
-                .build()
-        } else {
-            LayoutElementBuilders.Text.Builder()
-                .setText(TypeBuilders.StringProp.Builder("QUICK START").build())
-                .setFontStyle(
-                    LayoutElementBuilders.FontStyle.Builder()
-                        .setSize(androidx.wear.protolayout.DimensionBuilders.sp(12f))
-                        .setWeight(LayoutElementBuilders.FONT_WEIGHT_BOLD)
-                        .setColor(argb(0xFF94A3B8.toInt()))
-                        .build()
-                )
-                .build()
-        }
-    }
-
-    private fun buildPrimaryHabitButton(primary: WearActivity): LayoutElementBuilders.LayoutElement {
-        val clickAction = ActionBuilders.LaunchAction.Builder()
-            .setAndroidActivity(
-                ActionBuilders.AndroidActivity.Builder()
-                    .setPackageName(packageName)
-                    .setClassName(QuickLogActivity::class.java.name)
+        val label = LayoutElementBuilders.Text.Builder()
+            .setText(TypeBuilders.StringProp.Builder("LAP ").build())
+            .setFontStyle(
+                LayoutElementBuilders.FontStyle.Builder()
+                    .setSize(sp(11f))
+                    .setWeight(LayoutElementBuilders.FONT_WEIGHT_MEDIUM)
+                    .setColor(argb(0xFF94A3B8.toInt()))
                     .build()
             )
             .build()
 
-        val text = LayoutElementBuilders.Text.Builder()
-            .setText(TypeBuilders.StringProp.Builder("★ ${primary.name}").build())
+        val value = LayoutElementBuilders.Text.Builder()
+            .setText(TypeBuilders.StringProp.Builder(elapsed).build())
             .setFontStyle(
                 LayoutElementBuilders.FontStyle.Builder()
-                    .setSize(androidx.wear.protolayout.DimensionBuilders.sp(15f))
+                    .setSize(sp(13f))
                     .setWeight(LayoutElementBuilders.FONT_WEIGHT_BOLD)
+                    .setColor(argb(0xFF4ADE80.toInt()))
+                    .build()
+            )
+            .build()
+
+        val row = LayoutElementBuilders.Row.Builder()
+            .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+            .addContent(label)
+            .addContent(value)
+            .build()
+
+        return LayoutElementBuilders.Box.Builder()
+            .setWidth(wrap())
+            .setHeight(dp(24f))
+            .setModifiers(
+                ModifiersBuilders.Modifiers.Builder()
+                    .setClickable(
+                        ModifiersBuilders.Clickable.Builder()
+                            .setId("open_quick_log")
+                            .setOnClick(launchQuickLog())
+                            .build()
+                    )
+                    .setBackground(
+                        ModifiersBuilders.Background.Builder()
+                            .setColor(argb(0xFF1E293B.toInt()))
+                            .setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(12f)).build())
+                            .build()
+                    )
+                    .setPadding(
+                        ModifiersBuilders.Padding.Builder()
+                            .setStart(dp(10f))
+                            .setEnd(dp(10f))
+                            .build()
+                    )
+                    .build()
+            )
+            .addContent(row)
+            .build()
+    }
+
+    /** One Activity slot: a single tap labels the open Lap and exits. */
+    private fun buildSlotButton(activity: WearActivity, isPrimary: Boolean): LayoutElementBuilders.LayoutElement {
+        val heightDp = if (isPrimary) 52f else 36f
+
+        val text = LayoutElementBuilders.Text.Builder()
+            .setText(TypeBuilders.StringProp.Builder(activity.name).build())
+            .setFontStyle(
+                LayoutElementBuilders.FontStyle.Builder()
+                    .setSize(sp(if (isPrimary) 15f else 12f))
+                    .setWeight(
+                        if (isPrimary) {
+                            LayoutElementBuilders.FONT_WEIGHT_BOLD
+                        } else {
+                            LayoutElementBuilders.FONT_WEIGHT_MEDIUM
+                        }
+                    )
                     .setColor(argb(0xFFFFFFFF.toInt()))
                     .build()
             )
@@ -229,19 +189,19 @@ class TempoTileService : TileService() {
 
         return LayoutElementBuilders.Box.Builder()
             .setWidth(dp(156f))
-            .setHeight(dp(52f)) // >= 52dp touch target
+            .setHeight(dp(heightDp)) // >= 36dp, primary >= 52dp touch target
             .setModifiers(
                 ModifiersBuilders.Modifiers.Builder()
                     .setClickable(
                         ModifiersBuilders.Clickable.Builder()
-                            .setId("primary_${primary.id}")
-                            .setOnClick(clickAction)
+                            .setId("label_${activity.id}")
+                            .setOnClick(launchQuickLog(activity.id))
                             .build()
                     )
                     .setBackground(
                         ModifiersBuilders.Background.Builder()
                             .setColor(argb(0xFF1E3A8A.toInt()))
-                            .setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(26f)).build())
+                            .setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(heightDp / 2f)).build())
                             .build()
                     )
                     .build()
@@ -250,108 +210,24 @@ class TempoTileService : TileService() {
             .build()
     }
 
-    private fun buildRecentRow(recents: List<WearActivity>): LayoutElementBuilders.LayoutElement {
-        val row = LayoutElementBuilders.Row.Builder()
-            .setWidth(dp(156f))
-            .setHeight(dp(36f))
-            .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+    /**
+     * Opens QuickLogActivity. With [activityId] the Activity labels the open
+     * Lap and exits on launch; without it the list is shown.
+     */
+    private fun launchQuickLog(activityId: String? = null): ActionBuilders.LaunchAction {
+        val androidActivity = ActionBuilders.AndroidActivity.Builder()
+            .setPackageName(packageName)
+            .setClassName(QuickLogActivity::class.java.name)
 
-        if (recents.isNotEmpty()) {
-            row.addContent(buildMiniHabitButton(recents[0], 76f))
+        if (activityId != null) {
+            androidActivity.addKeyToExtraMapping(
+                QuickLogActivity.EXTRA_LABEL_ACTIVITY_ID,
+                ActionBuilders.stringExtra(activityId)
+            )
         }
-        if (recents.size > 1) {
-            row.addContent(buildSpacer(4))
-            row.addContent(buildMiniHabitButton(recents[1], 76f))
-        }
 
-        return row.build()
-    }
-
-    private fun buildMiniHabitButton(activity: WearActivity, widthDp: Float): LayoutElementBuilders.LayoutElement {
-        val clickAction = ActionBuilders.LaunchAction.Builder()
-            .setAndroidActivity(
-                ActionBuilders.AndroidActivity.Builder()
-                    .setPackageName(packageName)
-                    .setClassName(QuickLogActivity::class.java.name)
-                    .build()
-            )
-            .build()
-
-        val text = LayoutElementBuilders.Text.Builder()
-            .setText(TypeBuilders.StringProp.Builder(activity.name).build())
-            .setFontStyle(
-                LayoutElementBuilders.FontStyle.Builder()
-                    .setSize(androidx.wear.protolayout.DimensionBuilders.sp(12f))
-                    .setWeight(LayoutElementBuilders.FONT_WEIGHT_MEDIUM)
-                    .setColor(argb(0xFFE2E8F0.toInt()))
-                    .build()
-            )
-            .build()
-
-        return LayoutElementBuilders.Box.Builder()
-            .setWidth(dp(widthDp))
-            .setHeight(dp(36f))
-            .setModifiers(
-                ModifiersBuilders.Modifiers.Builder()
-                    .setClickable(
-                        ModifiersBuilders.Clickable.Builder()
-                            .setId("recent_${activity.id}")
-                            .setOnClick(clickAction)
-                            .build()
-                    )
-                    .setBackground(
-                        ModifiersBuilders.Background.Builder()
-                            .setColor(argb(0xFF1E293B.toInt()))
-                            .setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(18f)).build())
-                            .build()
-                    )
-                    .build()
-            )
-            .addContent(text)
-            .build()
-    }
-
-    private fun buildMoreButton(): LayoutElementBuilders.LayoutElement {
-        val clickAction = ActionBuilders.LaunchAction.Builder()
-            .setAndroidActivity(
-                ActionBuilders.AndroidActivity.Builder()
-                    .setPackageName(packageName)
-                    .setClassName(QuickLogActivity::class.java.name)
-                    .build()
-            )
-            .build()
-
-        val text = LayoutElementBuilders.Text.Builder()
-            .setText(TypeBuilders.StringProp.Builder("More Habits...").build())
-            .setFontStyle(
-                LayoutElementBuilders.FontStyle.Builder()
-                    .setSize(androidx.wear.protolayout.DimensionBuilders.sp(11f))
-                    .setWeight(LayoutElementBuilders.FONT_WEIGHT_NORMAL)
-                    .setColor(argb(0xFF94A3B8.toInt()))
-                    .build()
-            )
-            .build()
-
-        return LayoutElementBuilders.Box.Builder()
-            .setWidth(dp(100f))
-            .setHeight(dp(26f))
-            .setModifiers(
-                ModifiersBuilders.Modifiers.Builder()
-                    .setClickable(
-                        ModifiersBuilders.Clickable.Builder()
-                            .setId("more_habits")
-                            .setOnClick(clickAction)
-                            .build()
-                    )
-                    .setBackground(
-                        ModifiersBuilders.Background.Builder()
-                            .setColor(argb(0xFF0F172A.toInt()))
-                            .setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(13f)).build())
-                            .build()
-                    )
-                    .build()
-            )
-            .addContent(text)
+        return ActionBuilders.LaunchAction.Builder()
+            .setAndroidActivity(androidActivity.build())
             .build()
     }
 
@@ -362,27 +238,17 @@ class TempoTileService : TileService() {
             .build()
     }
 
-    private fun buildDynamicDurationStringProp(
-        startedAtEpochMs: Long,
-        fallbackText: String
-    ): TypeBuilders.StringProp {
-        return try {
-            val startInstant = Instant.ofEpochMilli(startedAtEpochMs)
-            val duration = DynamicBuilders.DynamicInstant.withSecondsPrecision(startInstant)
-            // ProtoLayout dynamic string evaluated in compositor
-            TypeBuilders.StringProp.Builder(fallbackText)
-                .setDynamicValue(DynamicBuilders.DynamicString.constant(fallbackText))
-                .build()
-        } catch (_: Throwable) {
-            TypeBuilders.StringProp.Builder(fallbackText).build()
-        }
-    }
-
     private fun formatElapsed(startedAt: Long): String {
-        if (startedAt <= 0) return "00:00"
+        if (startedAt <= 0) return "--:--"
         val totalSec = ((System.currentTimeMillis() - startedAt) / 1000).coerceAtLeast(0)
-        val m = (totalSec / 60) % 60
-        val s = totalSec % 60
-        return String.format(Locale.US, "%02d:%02d", m, s)
+        val seconds = totalSec % 60
+        val totalMinutes = totalSec / 60
+        val minutes = totalMinutes % 60
+        val hours = totalMinutes / 60
+        return if (hours > 0) {
+            String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            String.format(Locale.US, "%02d:%02d", minutes, seconds)
+        }
     }
 }
