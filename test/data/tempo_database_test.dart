@@ -33,7 +33,7 @@ void main() {
           'tags',
           'records',
           'record_tags',
-          'active_timer',
+          'lap',
           'tombstones',
         ]),
       );
@@ -393,82 +393,42 @@ void main() {
     );
   });
 
-  group('ActiveTimer Operations & Invariants', () {
-    late Activity activity;
-
-    setUp(() async {
+  group('Lap Operations & Invariants', () {
+    test('manages the single-row Lap', () async {
       final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-      activity = Activity(
-        id: 'act-timer',
-        name: 'Sprint Focus',
-        createdAtEpochMs: now,
-        updatedAtEpochMs: now,
-      );
-      await db.insertActivity(activity);
-    });
-
-    test('manages active_timer singleton and heartbeat', () async {
-      final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-      final timer = ActiveTimer(
-        activityId: activity.id,
+      final lap = Lap(
         startedAtEpochMs: now - 60000,
-        isPaused: false,
-        accumulatedPauseMs: 0,
-        currentComment: 'Writing specs',
-        initialTagIds: ['tag-a', 'tag-b'],
-        lastHeartbeatEpochMs: now,
+        startedTimezoneId: 'America/Los_Angeles',
         revision: 1,
       );
 
-      await db.setActiveTimer(timer);
+      await db.setLap(lap);
 
-      final fetched = await db.getActiveTimer();
+      final fetched = await db.getLap();
       expect(fetched, isNotNull);
-      expect(fetched!.activityId, activity.id);
-      expect(fetched.currentComment, 'Writing specs');
-      expect(fetched.initialTagIds, equals(['tag-a', 'tag-b']));
-      expect(fetched.revision, 1);
+      expect(fetched!.startedAtEpochMs, equals(now - 60000));
+      expect(fetched.startedTimezoneId, equals('America/Los_Angeles'));
+      expect(fetched.revision, equals(1));
 
-      // Duration calculation
-      final duration = fetched.calculateDurationMs(now);
-      expect(duration, 60000);
+      // Elapsed duration uses UTC epoch arithmetic.
+      expect(fetched.elapsedMs(now), equals(60000));
 
-      // Heartbeat update
-      final newHeartbeat = now + 60000;
-      await db.updateHeartbeat(newHeartbeat);
-      final afterHeartbeat = await db.getActiveTimer();
-      expect(afterHeartbeat!.lastHeartbeatEpochMs, newHeartbeat);
+      // Replacing the row keeps exactly one Lap.
+      await db.setLap(fetched.copyWith(revision: 2, startedAtEpochMs: now));
+      final replaced = await db.getLap();
+      expect(replaced!.revision, equals(2));
+      expect(replaced.startedAtEpochMs, equals(now));
 
-      // Delete active timer
-      await db.deleteActiveTimer();
-      expect(await db.getActiveTimer(), isNull);
-    });
-
-    test('calculates duration correctly when paused', () {
-      final started = 1000000;
-      final paused = 1050000;
-      final accumulatedPause = 10000;
-
-      final timer = ActiveTimer(
-        activityId: 'act-timer',
-        startedAtEpochMs: started,
-        isPaused: true,
-        pausedAtEpochMs: paused,
-        accumulatedPauseMs: accumulatedPause,
-        lastHeartbeatEpochMs: paused,
-      );
-
-      // Duration should be paused - started - accumulatedPause
-      // 1050000 - 1000000 - 10000 = 40000
-      expect(timer.calculateDurationMs(2000000), 40000);
+      final rows = await db.db.query('lap');
+      expect(rows.length, equals(1));
     });
 
     test('violates CHECK (id = 1) constraint when id != 1', () async {
       final now = DateTime.now().toUtc().millisecondsSinceEpoch;
       expect(
         () async => await db.db.rawInsert('''
-          INSERT INTO active_timer (id, activity_id, started_at_epoch_ms, last_heartbeat_epoch_ms)
-          VALUES (2, '${activity.id}', $now, $now);
+          INSERT INTO lap (id, started_at_epoch_ms, started_timezone_id, revision)
+          VALUES (2, $now, 'UTC', 1);
         '''),
         throwsA(isA<DatabaseException>()),
       );

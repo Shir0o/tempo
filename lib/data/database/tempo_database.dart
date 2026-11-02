@@ -17,10 +17,10 @@ class TempoDatabase {
 
   Database get db => _db;
 
-  static const int databaseVersion = 2;
+  static const int databaseVersion = 3;
   static const String databaseFileName = 'tempo.db';
 
-  // --- DDL Constants (schema v2) ---
+  // --- DDL Constants (schema v3) ---
 
   static const String createActivitiesTable = '''
 CREATE TABLE IF NOT EXISTS activities (
@@ -69,22 +69,6 @@ CREATE TABLE IF NOT EXISTS record_tags (
 );
 ''';
 
-  static const String createActiveTimerTable = '''
-CREATE TABLE IF NOT EXISTS active_timer (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    activity_id TEXT NOT NULL REFERENCES activities(id),
-    started_at_epoch_ms INTEGER NOT NULL,
-    started_timezone_id TEXT NOT NULL DEFAULT '',
-    is_paused INTEGER NOT NULL DEFAULT 0,
-    paused_at_epoch_ms INTEGER DEFAULT NULL,
-    accumulated_pause_ms INTEGER NOT NULL DEFAULT 0,
-    current_comment TEXT NOT NULL DEFAULT '',
-    initial_tags_json TEXT NOT NULL DEFAULT '[]',
-    last_heartbeat_epoch_ms INTEGER NOT NULL,
-    revision INTEGER NOT NULL DEFAULT 1
-);
-''';
-
   static const String createTombstonesTable = '''
 CREATE TABLE IF NOT EXISTS tombstones (
     entity_id TEXT PRIMARY KEY NOT NULL,
@@ -105,7 +89,7 @@ CREATE TABLE IF NOT EXISTS tombstones (
     await db.execute(createTagsTable);
     await db.execute(createRecordsTable);
     await db.execute(createRecordTagsTable);
-    await db.execute(createActiveTimerTable);
+    await db.execute(createLapTableSql);
     await db.execute(createTombstonesTable);
     for (final indexSql in createIndexes) {
       await db.execute(indexSql);
@@ -145,6 +129,9 @@ CREATE TABLE IF NOT EXISTS tombstones (
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 2) {
             await migrateV1ToV2(db);
+          }
+          if (oldVersion < 3) {
+            await migrateV2ToV3(db);
           }
         },
       ),
@@ -457,31 +444,21 @@ CREATE TABLE IF NOT EXISTS tombstones (
   }
 
   // ==========================================
-  // Active Timer Operations
+  // Lap Operations
   // ==========================================
 
-  Future<ActiveTimer?> getActiveTimer() async {
-    final results = await _db.query('active_timer', where: 'id = 1', limit: 1);
+  Future<Lap?> getLap() async {
+    final results = await _db.query('lap', where: 'id = 1', limit: 1);
     if (results.isEmpty) return null;
-    return ActiveTimer.fromMap(results.first);
+    return Lap.fromMap(results.first);
   }
 
-  Future<void> setActiveTimer(ActiveTimer timer) async {
+  Future<void> setLap(Lap lap) async {
     await _db.insert(
-      'active_timer',
-      timer.toMap(),
+      'lap',
+      lap.toMap(),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
-  }
-
-  Future<void> deleteActiveTimer() async {
-    await _db.delete('active_timer', where: 'id = 1');
-  }
-
-  Future<void> updateHeartbeat(int heartbeatEpochMs) async {
-    await _db.update('active_timer', {
-      'last_heartbeat_epoch_ms': heartbeatEpochMs,
-    }, where: 'id = 1');
   }
 
   // ==========================================

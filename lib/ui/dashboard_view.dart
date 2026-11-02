@@ -1,23 +1,24 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
-import '../../core/state/timer_state_machine.dart';
+import '../../core/state/day_recorder.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
 import 'helpers/ui_helpers.dart';
 import 'activity_manager_view.dart';
 
-/// Main mobile dashboard for 1-tap habit capture, live timer monitoring,
-/// and daily productivity summary.
+/// Main mobile dashboard. The open Lap is always shown; tapping an Activity
+/// labels it, closing the Lap as a Record and opening the next one.
 class DashboardView extends StatefulWidget {
-  final TimerStateMachine timerStateMachine;
+  final DayRecorder dayRecorder;
   final TempoDatabase database;
   final VoidCallback? onNavigateToStats;
 
   const DashboardView({
     super.key,
-    required this.timerStateMachine,
+    required this.dayRecorder,
     required this.database,
     this.onNavigateToStats,
   });
@@ -26,90 +27,38 @@ class DashboardView extends StatefulWidget {
   State<DashboardView> createState() => _DashboardViewState();
 }
 
-class _DashboardViewState extends State<DashboardView>
-    with SingleTickerProviderStateMixin {
+class _DashboardViewState extends State<DashboardView> {
   Timer? _liveTicker;
   List<Activity> _activities = [];
   Map<String, int> _todayActivityDurations = {};
   int _todayTotalDurationMs = 0;
-  int _todaySessionCount = 0;
-  Activity? _activeActivity;
+  int _todayRecordCount = 0;
   bool _isLoading = true;
-
-  final TextEditingController _commentController = TextEditingController();
-  final FocusNode _commentFocusNode = FocusNode();
-
-  // Guarded Stop (600ms hold) controller
-  late AnimationController _stopHoldController;
 
   @override
   void initState() {
     super.initState();
-    _stopHoldController =
-        AnimationController(
-          vsync: this,
-          duration: const Duration(milliseconds: 600),
-        )..addStatusListener((status) {
-          if (status == AnimationStatus.completed) {
-            _performStop();
-          }
-        });
-
-    final timer = widget.timerStateMachine.activeTimer;
-    if (timer != null) {
-      _commentController.text = timer.currentComment;
-      _resolveActiveActivity(timer.activityId);
-      _startLiveTicker();
-    }
-
+    _startLiveTicker();
     _loadData();
-    widget.timerStateMachine.activeTimerNotifier.addListener(
-      _onActiveTimerChanged,
-    );
+    widget.dayRecorder.lapListenable.addListener(_onLapChanged);
   }
 
   @override
   void dispose() {
     _liveTicker?.cancel();
-    _stopHoldController.dispose();
-    widget.timerStateMachine.activeTimerNotifier.removeListener(
-      _onActiveTimerChanged,
-    );
-    _commentController.dispose();
-    _commentFocusNode.dispose();
+    widget.dayRecorder.lapListenable.removeListener(_onLapChanged);
     super.dispose();
   }
 
-  void _onActiveTimerChanged() {
-    final timer = widget.timerStateMachine.activeTimer;
-    if (timer != null) {
-      if (_commentController.text != timer.currentComment &&
-          !_commentFocusNode.hasFocus) {
-        _commentController.text = timer.currentComment;
-      }
-      _resolveActiveActivity(timer.activityId);
-      _startLiveTicker();
-    } else {
-      _activeActivity = null;
-      _stopLiveTicker();
-    }
+  void _onLapChanged() {
     if (mounted) setState(() {});
   }
 
   void _startLiveTicker() {
     _liveTicker?.cancel();
     _liveTicker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (widget.timerStateMachine.isTracking && mounted) {
-        setState(() {});
-      } else if (!widget.timerStateMachine.isTracking) {
-        _stopLiveTicker();
-      }
+      if (mounted) setState(() {});
     });
-  }
-
-  void _stopLiveTicker() {
-    _liveTicker?.cancel();
-    _liveTicker = null;
   }
 
   Future<void> _loadData() async {
@@ -149,44 +98,21 @@ class _DashboardViewState extends State<DashboardView>
         setState(() {
           _activities = allActivities;
           _todayTotalDurationMs = totalMs;
-          _todaySessionCount = todayRecords.length;
+          _todayRecordCount = todayRecords.length;
           _todayActivityDurations = map;
           _isLoading = false;
         });
-      }
-
-      final current = widget.timerStateMachine.activeTimer;
-      if (current != null) {
-        await _resolveActiveActivity(current.activityId);
       }
     } catch (_) {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  Future<void> _resolveActiveActivity(String activityId) async {
-    final act = await widget.database.getActivityById(activityId);
-    if (mounted) {
-      setState(() => _activeActivity = act);
-    }
-  }
-
-  Future<void> _handleStartHabit(Activity activity) async {
-    final currentTimer = widget.timerStateMachine.activeTimer;
-    if (currentTimer != null && currentTimer.activityId == activity.id) {
-      // Already running this activity
-      return;
-    }
-
+  Future<void> _labelActivity(Activity activity) async {
     try {
-      if (widget.timerStateMachine.isIdle) {
-        await widget.timerStateMachine.start(activity.id);
-      } else {
-        await widget.timerStateMachine.switchActivity(activity.id);
-      }
-      _loadData();
+      await widget.dayRecorder.label(activity.id);
+      await _loadData();
 
-      // Show 3-second Undo Grace Window
       if (mounted) {
         ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
@@ -204,76 +130,38 @@ class _DashboardViewState extends State<DashboardView>
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Started ${activity.name}',
+                    'Logged ${activity.name}',
                     style: const TextStyle(color: Colors.white, fontSize: 13),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],
             ),
-            action: SnackBarAction(
-              label: 'UNDO',
-              textColor: const Color(0xFF4CAF50),
-              onPressed: () async {
-                try {
-                  await widget.timerStateMachine.undoStart();
-                  _loadData();
-                } catch (_) {}
-              },
-            ),
           ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Failed to start timer: $e')));
+            .showSnackBar(SnackBar(content: Text('Failed to label Lap: $e')));
       }
     }
   }
 
-  Future<void> _togglePauseResume() async {
+  Future<void> _labelSameAsLast() async {
     try {
-      if (widget.timerStateMachine.isTracking) {
-        await widget.timerStateMachine.pause();
-      } else if (widget.timerStateMachine.isPaused) {
-        await widget.timerStateMachine.resume();
-      }
-      if (mounted) setState(() {});
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Action failed: $e')));
-      }
-    }
-  }
-
-  Future<void> _performStop() async {
-    _stopHoldController.reset();
-    try {
-      await widget.timerStateMachine.stop();
-      _commentController.clear();
-      _loadData();
-      if (mounted) {
+      final record = await widget.dayRecorder.sameAsLast();
+      await _loadData();
+      if (record == null && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            behavior: SnackBarBehavior.floating,
-            content: Text('Session saved to history.'),
-            duration: Duration(seconds: 2),
-          ),
+          const SnackBar(content: Text('No previous Record to repeat.')),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Failed to stop timer: $e')));
+            .showSnackBar(SnackBar(content: Text('Failed to label Lap: $e')));
       }
-    }
-  }
-
-  void _onCommentChanged(String val) {
-    if (widget.timerStateMachine.activeTimer != null) {
-      widget.timerStateMachine.updateComment(val);
     }
   }
 
@@ -289,7 +177,7 @@ class _DashboardViewState extends State<DashboardView>
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
               _buildTopHeader(),
-              SliverToBoxAdapter(child: _buildActiveTimerHero()),
+              SliverToBoxAdapter(child: _buildLapHero()),
               SliverToBoxAdapter(child: _buildTodaySummaryBanner()),
               _buildHabitsSection(),
               const SliverPadding(padding: EdgeInsets.only(bottom: 32)),
@@ -327,7 +215,7 @@ class _DashboardViewState extends State<DashboardView>
             ),
             IconButton(
               icon: const Icon(Icons.tune_rounded, color: Colors.white70),
-              tooltip: 'Manage Habits',
+              tooltip: 'Manage Activities',
               onPressed: () async {
                 await Navigator.of(context).push(
                   MaterialPageRoute(
@@ -344,53 +232,13 @@ class _DashboardViewState extends State<DashboardView>
     );
   }
 
-  Widget _buildActiveTimerHero() {
-    final activeTimer = widget.timerStateMachine.activeTimer;
-
-    if (activeTimer == null) {
-      return Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: const Color(0xFF1A1A22),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
-        ),
-        child: Column(
-          children: [
-            Icon(
-              Icons.timer_outlined,
-              color: Colors.white.withValues(alpha: 0.2),
-              size: 48,
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              'No Active Timer',
-              style: TextStyle(
-                color: Colors.white70,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              'Tap any habit below to start 1-tap capture',
-              style: TextStyle(color: Colors.white38, fontSize: 13),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      );
-    }
-
-    final durationMs = widget.timerStateMachine.currentDurationMs;
-    final timeStr = UiHelpers.formatMonospaceDuration(durationMs);
-    final isPaused = activeTimer.isPaused;
-    final activityColor = _activeActivity != null
-        ? UiHelpers.parseHexColor(_activeActivity!.colorHex)
-        : const Color(0xFF4CAF50);
-    final activityName = _activeActivity?.name ?? 'Tracking Activity';
-    final activityIcon = UiHelpers.getIconData(_activeActivity?.iconName);
+  Widget _buildLapHero() {
+    final lap = widget.dayRecorder.lap;
+    final since = lap == null
+        ? '--:--'
+        : DateFormat(
+            'HH:mm',
+          ).format(DateTime.fromMillisecondsSinceEpoch(lap.startedAtEpochMs));
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -398,204 +246,75 @@ class _DashboardViewState extends State<DashboardView>
       decoration: BoxDecoration(
         color: const Color(0xFF1C1C26),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: activityColor.withValues(alpha: 0.35),
-          width: 1.5,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: activityColor.withValues(alpha: 0.12),
-            blurRadius: 16,
-            spreadRadius: 2,
-          ),
-        ],
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Activity Badge + Status
           Row(
             children: [
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: activityColor.withValues(alpha: 0.2),
+                  color: Colors.white.withValues(alpha: 0.06),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(activityIcon, color: activityColor, size: 20),
+                child: const Icon(
+                  Icons.schedule,
+                  color: Colors.white54,
+                  size: 20,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      activityName,
-                      style: const TextStyle(
+                    const Text(
+                      'Untracked',
+                      style: TextStyle(
                         color: Colors.white,
                         fontSize: 17,
                         fontWeight: FontWeight.bold,
                       ),
-                      overflow: TextOverflow.ellipsis,
                     ),
                     Text(
-                      isPaused ? 'Paused' : 'Active tracking',
-                      style: TextStyle(
-                        color: isPaused ? Colors.amberAccent : activityColor,
+                      'since $since',
+                      style: const TextStyle(
+                        color: Colors.white54,
                         fontSize: 12,
-                        fontWeight: FontWeight.w500,
                       ),
                     ),
                   ],
                 ),
               ),
+              TextButton(
+                onPressed: _labelSameAsLast,
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.white70,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                ),
+                child: const Text(
+                  'Same as last',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 16),
-
-          // Big Monospace Timer Display
           Center(
             child: Text(
-              timeStr,
-              style: TextStyle(
-                color: isPaused ? Colors.white60 : Colors.white,
+              UiHelpers.formatMonospaceDuration(
+                widget.dayRecorder.currentElapsedMs,
+              ),
+              style: const TextStyle(
+                color: Colors.white,
                 fontSize: 44,
                 fontFamily: 'monospace',
                 fontWeight: FontWeight.bold,
                 letterSpacing: 2,
               ),
             ),
-          ),
-          const SizedBox(height: 14),
-
-          // Inline editable comment field
-          TextField(
-            controller: _commentController,
-            focusNode: _commentFocusNode,
-            onChanged: _onCommentChanged,
-            style: const TextStyle(color: Colors.white, fontSize: 13),
-            decoration: InputDecoration(
-              isDense: true,
-              hintText: 'Add note (e.g. w/ Sarah - sprint review)',
-              hintStyle: const TextStyle(color: Colors.white30, fontSize: 13),
-              filled: true,
-              fillColor: Colors.white.withValues(alpha: 0.05),
-              prefixIcon: const Icon(
-                Icons.edit_note,
-                size: 18,
-                color: Colors.white38,
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 8,
-              ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide.none,
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Action Controls: Pause/Resume and Guarded Stop
-          Row(
-            children: [
-              // Pause / Resume Button
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _togglePauseResume,
-                  icon: Icon(
-                    isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded,
-                    size: 20,
-                  ),
-                  label: Text(
-                    isPaused ? 'Resume' : 'Pause',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: BorderSide(
-                      color: Colors.white.withValues(alpha: 0.2),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-
-              // Guarded Stop Button (Hold 600ms)
-              Expanded(
-                child: GestureDetector(
-                  onTapDown: (_) => _stopHoldController.forward(),
-                  onTapUp: (_) {
-                    if (_stopHoldController.status !=
-                        AnimationStatus.completed) {
-                      _stopHoldController.reverse();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Hold stop button for 600ms to stop.'),
-                          duration: Duration(milliseconds: 1500),
-                        ),
-                      );
-                    }
-                  },
-                  onTapCancel: () => _stopHoldController.reverse(),
-                  child: AnimatedBuilder(
-                    animation: _stopHoldController,
-                    builder: (context, _) {
-                      final progress = _stopHoldController.value;
-                      return Container(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        decoration: BoxDecoration(
-                          color: Color.lerp(
-                            const Color(0xFFD32F2F),
-                            const Color(0xFFB71C1C),
-                            progress,
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            if (progress > 0)
-                              SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                  value: progress,
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            else
-                              const Icon(
-                                Icons.stop_rounded,
-                                size: 20,
-                                color: Colors.white,
-                              ),
-                            const SizedBox(width: 8),
-                            Text(
-                              progress > 0 ? 'Hold...' : 'Hold to Stop',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-            ],
           ),
         ],
       ),
@@ -638,7 +357,7 @@ class _DashboardViewState extends State<DashboardView>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      "Today's Progress",
+                      'Today',
                       style: TextStyle(
                         color: Colors.white70,
                         fontSize: 13,
@@ -646,7 +365,7 @@ class _DashboardViewState extends State<DashboardView>
                       ),
                     ),
                     Text(
-                      '$_todaySessionCount sessions completed',
+                      '$_todayRecordCount records',
                       style: const TextStyle(
                         color: Colors.white38,
                         fontSize: 11,
@@ -715,7 +434,7 @@ class _DashboardViewState extends State<DashboardView>
                   _loadData();
                 },
                 icon: const Icon(Icons.add),
-                label: const Text('Create Habits'),
+                label: const Text('Create Activities'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF4CAF50),
                   foregroundColor: Colors.white,
@@ -726,8 +445,6 @@ class _DashboardViewState extends State<DashboardView>
         ),
       );
     }
-
-    final activeId = widget.timerStateMachine.activeTimer?.activityId;
 
     return SliverPadding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -740,37 +457,19 @@ class _DashboardViewState extends State<DashboardView>
         ),
         delegate: SliverChildBuilderDelegate((context, index) {
           final activity = _activities[index];
-          final isRunning = activity.id == activeId;
           final durationTodayMs = _todayActivityDurations[activity.id] ?? 0;
           final color = UiHelpers.parseHexColor(activity.colorHex);
           final icon = UiHelpers.getIconData(activity.iconName);
 
           return InkWell(
-            onTap: () => _handleStartHabit(activity),
+            onTap: () => _labelActivity(activity),
             borderRadius: BorderRadius.circular(16),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
+            child: Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: isRunning
-                    ? color.withValues(alpha: 0.18)
-                    : const Color(0xFF1A1A22),
+                color: const Color(0xFF1A1A22),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: isRunning
-                      ? color
-                      : Colors.white.withValues(alpha: 0.06),
-                  width: isRunning ? 2.0 : 1.0,
-                ),
-                boxShadow: isRunning
-                    ? [
-                        BoxShadow(
-                          color: color.withValues(alpha: 0.25),
-                          blurRadius: 10,
-                          spreadRadius: 1,
-                        ),
-                      ]
-                    : null,
+                border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -792,25 +491,6 @@ class _DashboardViewState extends State<DashboardView>
                           Icons.push_pin,
                           color: Colors.white30,
                           size: 14,
-                        )
-                      else if (isRunning)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: color,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Text(
-                            'LIVE',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 9,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
                         ),
                     ],
                   ),
@@ -820,9 +500,7 @@ class _DashboardViewState extends State<DashboardView>
                       Text(
                         activity.name,
                         style: TextStyle(
-                          color: isRunning
-                              ? Colors.white
-                              : Colors.white.withValues(alpha: 0.9),
+                          color: Colors.white.withValues(alpha: 0.9),
                           fontSize: 15,
                           fontWeight: FontWeight.bold,
                         ),
@@ -834,8 +512,8 @@ class _DashboardViewState extends State<DashboardView>
                         durationTodayMs > 0
                             ? UiHelpers.formatDurationHuman(durationTodayMs)
                             : '0m today',
-                        style: TextStyle(
-                          color: isRunning ? color : Colors.white38,
+                        style: const TextStyle(
+                          color: Colors.white38,
                           fontSize: 11,
                           fontFamily: 'monospace',
                           fontWeight: FontWeight.w500,

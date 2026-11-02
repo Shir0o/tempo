@@ -1,4 +1,3 @@
-import '../data/models/active_timer.dart';
 import '../data/models/record.dart';
 
 /// Deterministic PII Sanitizer for the Tempo MCP Server.
@@ -88,11 +87,5 @@ class PIISanitizer {
   List<Record> sanitizeRecords(List<Record> records) {
     if (!enabled) return records;
     return records.map(sanitizeRecord).toList();
-  }
-
-  /// Sanitizes the comment of an [ActiveTimer].
-  ActiveTimer sanitizeActiveTimer(ActiveTimer timer) {
-    if (!enabled) return timer;
-    return timer.copyWith(currentComment: sanitize(timer.currentComment));
   }
 }

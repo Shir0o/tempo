@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 
-import '../core/state/timer_state_machine.dart';
+import '../core/state/day_recorder.dart';
 import '../data/database/tempo_database.dart';
 import '../data/models/activity.dart';
 
@@ -40,12 +40,12 @@ class WatchAction {
 }
 
 /// Service bridging the Flutter application with the Wear OS companion app.
-/// Listens to TimerStateMachine and synchronizes active timer state and activities
+/// Listens to DayRecorder and synchronizes the open Lap and activities
 /// over the Wearable Data Layer platform channel.
 class WearableSyncService {
   static const String channelName = 'com.tempos.tracker/wearable';
 
-  final TimerStateMachine timerStateMachine;
+  final DayRecorder dayRecorder;
   final TempoDatabase? database;
   final Future<Activity?> Function(String activityId)? getActivity;
   final MethodChannel channel;
@@ -56,7 +56,7 @@ class WearableSyncService {
   bool _isDisposed = false;
 
   WearableSyncService({
-    required this.timerStateMachine,
+    required this.dayRecorder,
     this.database,
     this.getActivity,
     MethodChannel? channel,
@@ -68,10 +68,10 @@ class WearableSyncService {
   /// Initializes listeners and registers the platform method call handler.
   void initialize() {
     channel.setMethodCallHandler(_handleNativeMethodCall);
-    timerStateMachine.activeTimerNotifier.addListener(_onActiveTimerChanged);
+    dayRecorder.lapListenable.addListener(_onLapChanged);
 
     // Initial sync of current state
-    _onActiveTimerChanged();
+    _onLapChanged();
   }
 
   /// Synchronizes the list of available activities with the Wear OS watch.
@@ -100,40 +100,27 @@ class WearableSyncService {
     }
   }
 
-  /// Sends the current active timer snapshot to the watch.
-  Future<void> _onActiveTimerChanged() async {
+  /// Sends the current open Lap snapshot to the watch.
+  ///
+  /// The channel method name and payload shape are unchanged so the existing
+  /// Wear OS companion keeps working: it now receives the Lap as an always
+  /// running, unpaused session with no Activity.
+  Future<void> _onLapChanged() async {
     if (_isDisposed) return;
 
-    final timer = timerStateMachine.activeTimer;
+    final lap = dayRecorder.lap;
 
     try {
-      if (timer != null) {
-        String? activityName;
-        String colorHex = '#4CAF50';
-
-        if (getActivity != null) {
-          final act = await getActivity!(timer.activityId);
-          if (act != null) {
-            activityName = act.name;
-            colorHex = act.colorHex;
-          }
-        } else if (database != null) {
-          final act = await database!.getActivityById(timer.activityId);
-          if (act != null) {
-            activityName = act.name;
-            colorHex = act.colorHex;
-          }
-        }
-
+      if (lap != null) {
         await channel.invokeMethod('syncActiveTimer', {
-          'isRunning': !timer.isPaused,
-          'activityId': timer.activityId,
-          'activityName': activityName ?? timer.activityId,
-          'activityColorHex': colorHex,
-          'startedAtEpochMs': timer.startedAtEpochMs,
-          'isPaused': timer.isPaused,
-          'accumulatedPauseMs': timer.accumulatedPauseMs,
-          'revision': timer.revision,
+          'isRunning': true,
+          'activityId': null,
+          'activityName': null,
+          'activityColorHex': null,
+          'startedAtEpochMs': lap.startedAtEpochMs,
+          'isPaused': false,
+          'accumulatedPauseMs': 0,
+          'revision': lap.revision,
           'updatedAtEpochMs': DateTime.now().toUtc().millisecondsSinceEpoch,
         });
       } else {
@@ -173,7 +160,7 @@ class WearableSyncService {
       switch (action.type.toUpperCase()) {
         case 'START':
           if (action.activityId != null && action.activityId!.isNotEmpty) {
-            await timerStateMachine.start(
+            await dayRecorder.label(
               action.activityId!,
               comment: action.comment ?? '',
             );
@@ -181,27 +168,15 @@ class WearableSyncService {
           break;
 
         case 'STOP':
-          if (timerStateMachine.activeTimer != null) {
-            await timerStateMachine.stop(finalComment: action.comment);
-          }
+          // Split is #16; until then `stop` labels the Lap with the most
+          // recent Record's Activity so the watch keeps working.
+          await dayRecorder.sameAsLast();
           break;
 
         case 'PAUSE':
-          if (timerStateMachine.isTracking) {
-            await timerStateMachine.pause();
-          }
-          break;
-
         case 'RESUME':
-          if (timerStateMachine.isPaused) {
-            await timerStateMachine.resume();
-          }
-          break;
-
         case 'UNDO':
-          if (timerStateMachine.activeTimer != null) {
-            await timerStateMachine.discard();
-          }
+          // Pause, resume and undo are retired on this surface.
           break;
       }
     } catch (e) {
@@ -212,7 +187,7 @@ class WearableSyncService {
   /// Closes streams and cleans up listeners.
   void dispose() {
     _isDisposed = true;
-    timerStateMachine.activeTimerNotifier.removeListener(_onActiveTimerChanged);
+    dayRecorder.lapListenable.removeListener(_onLapChanged);
     _watchActionController.close();
   }
 }

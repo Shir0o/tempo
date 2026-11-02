@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:uuid/uuid.dart';
 
 import '../core/export/csv_export_engine.dart';
+import '../core/state/day_recorder.dart';
 import '../core/time/timezone_id.dart';
 import '../data/database/tempo_database.dart';
 import '../data/models/models.dart';
@@ -19,6 +20,12 @@ class TempoMcpServer {
   final bool allowWrites;
   final CsvExportEngine? csvExportEngine;
   final String Function() zoneProvider;
+  final DayRecorder? _injectedRecorder;
+  bool _recorderInitialized = false;
+
+  late final DayRecorder _recorder =
+      _injectedRecorder ??
+      DayRecorder(database: database, getTimezoneId: zoneProvider);
 
   TempoMcpServer({
     required this.database,
@@ -26,8 +33,18 @@ class TempoMcpServer {
     this.allowWrites = false,
     this.csvExportEngine,
     String Function()? zoneProvider,
+    DayRecorder? dayRecorder,
   }) : sanitizer = sanitizer ?? PIISanitizer(),
-       zoneProvider = zoneProvider ?? localTimezoneId;
+       zoneProvider = zoneProvider ?? localTimezoneId,
+       _injectedRecorder = dayRecorder;
+
+  Future<DayRecorder> _readyRecorder() async {
+    if (!_recorderInitialized) {
+      await _recorder.initialize();
+      _recorderInitialized = true;
+    }
+    return _recorder;
+  }
 
   /// Processes a stream of JSON-RPC lines from standard input and yields
   /// formatted JSON-RPC responses.
@@ -341,8 +358,9 @@ class TempoMcpServer {
   // ==========================================
 
   Future<Map<String, dynamic>> _getActiveTimerTool() async {
-    final active = await database.getActiveTimer();
-    if (active == null) {
+    final recorder = await _readyRecorder();
+    final lap = recorder.lap;
+    if (lap == null) {
       return {
         'is_tracking': false,
         'activity_name': null,
@@ -355,28 +373,18 @@ class TempoMcpServer {
       };
     }
 
-    final activity = await database.getActivityById(active.activityId);
-    final nowUtc = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final durationMs = active.calculateDurationMs(nowUtc);
-
-    final allTags = await database.getAllTags();
-    final tagMap = {for (final t in allTags) t.id: t.name};
-    final tagNames = active.initialTagIds
-        .map((id) => tagMap[id] ?? id)
-        .toList();
-
     return {
-      'is_tracking': !active.isPaused,
-      'activity_name': activity?.name ?? 'Unknown',
-      'color_hex': activity?.colorHex ?? '#4CAF50',
+      'is_tracking': true,
+      'activity_name': null,
+      'color_hex': null,
       'started_at': DateTime.fromMillisecondsSinceEpoch(
-        active.startedAtEpochMs,
+        lap.startedAtEpochMs,
         isUtc: true,
       ).toIso8601String(),
-      'elapsed_seconds': durationMs ~/ 1000,
-      'is_paused': active.isPaused,
-      'comment': sanitizer.sanitize(active.currentComment),
-      'tags': tagNames,
+      'elapsed_seconds': recorder.currentElapsedMs ~/ 1000,
+      'is_paused': false,
+      'comment': '',
+      'tags': <String>[],
     };
   }
 
@@ -653,100 +661,48 @@ class TempoMcpServer {
     final activity = await _getOrCreateActivity(activityName);
     final tagIds = await _getOrCreateTagIds(tagNames);
 
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final currentTimer = await database.getActiveTimer();
-    final endTimezoneId = zoneProvider();
-    if (currentTimer != null) {
-      final duration = currentTimer.calculateDurationMs(now);
-      final refEnd =
-          (currentTimer.isPaused && currentTimer.pausedAtEpochMs != null)
-          ? currentTimer.pausedAtEpochMs!
-          : now;
-      final startTimezoneId = currentTimer.startTimezoneOr(endTimezoneId);
-      final record = Record(
-        id: const Uuid().v4(),
-        activityId: currentTimer.activityId,
-        startedAtEpochMs: currentTimer.startedAtEpochMs,
-        endedAtEpochMs: refEnd,
-        durationMs: duration,
-        comment: currentTimer.currentComment,
-        timezoneId: startTimezoneId,
-        endTimezoneId: endTimezoneId,
-        createdAtEpochMs: now,
-        updatedAtEpochMs: now,
-        tagIds: currentTimer.initialTagIds,
-      );
-      await database.insertRecord(record);
-      if (csvExportEngine != null) {
-        await csvExportEngine!.scheduleExport();
-      }
-    }
-
-    final newTimer = ActiveTimer(
-      id: 1,
-      activityId: activity.id,
-      startedAtEpochMs: now,
-      startedTimezoneId: endTimezoneId,
-      isPaused: false,
-      pausedAtEpochMs: null,
-      accumulatedPauseMs: 0,
-      currentComment: comment,
-      initialTagIds: tagIds,
-      lastHeartbeatEpochMs: now,
-      revision: (currentTimer != null) ? currentTimer.revision + 1 : 1,
+    final recorder = await _readyRecorder();
+    // `start_timer` now means "label the open Lap".
+    final record = await recorder.label(
+      activity.id,
+      comment: comment,
+      tags: tagIds,
     );
-
-    await database.setActiveTimer(newTimer);
+    if (csvExportEngine != null) {
+      await csvExportEngine!.scheduleExport();
+    }
 
     return {
       'success': true,
       'activity_name': activity.name,
       'started_at': DateTime.fromMillisecondsSinceEpoch(
-        newTimer.startedAtEpochMs,
+        record.endedAtEpochMs,
         isUtc: true,
       ).toIso8601String(),
-      'comment': newTimer.currentComment,
+      'comment': record.comment,
       'tags': tagNames,
     };
   }
 
   Future<Map<String, dynamic>> _stopTimerTool(Map<String, dynamic> args) async {
-    final currentTimer = await database.getActiveTimer();
-    if (currentTimer == null) {
+    // Split is #16; until then `stop_timer` labels the Lap with the most recent
+    // Record's Activity so existing automation keeps closing Records.
+    final previous = await database.getRecords(
+      limit: 1,
+      orderBy: 'ended_at_epoch_ms DESC, rowid DESC',
+    );
+    if (previous.isEmpty) {
       return {
         'success': false,
-        'message': 'No active timer is currently running.',
+        'message': 'No previous Record to label the open Lap with.',
       };
     }
 
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final duration = currentTimer.calculateDurationMs(now);
-    final refEnd =
-        (currentTimer.isPaused && currentTimer.pausedAtEpochMs != null)
-        ? currentTimer.pausedAtEpochMs!
-        : now;
-
-    final finalComment =
-        (args['comment'] as String?) ?? currentTimer.currentComment;
-    final endTimezoneId = zoneProvider();
-    final startTimezoneId = currentTimer.startTimezoneOr(endTimezoneId);
-    final record = Record(
-      id: const Uuid().v4(),
-      activityId: currentTimer.activityId,
-      startedAtEpochMs: currentTimer.startedAtEpochMs,
-      endedAtEpochMs: refEnd,
-      durationMs: duration,
-      comment: finalComment,
-      timezoneId: startTimezoneId,
-      endTimezoneId: endTimezoneId,
-      createdAtEpochMs: now,
-      updatedAtEpochMs: now,
-      tagIds: currentTimer.initialTagIds,
+    final recorder = await _readyRecorder();
+    final record = await recorder.label(
+      previous.first.activityId,
+      comment: args['comment'] as String? ?? '',
     );
-
-    await database.insertRecord(record);
-    await database.deleteActiveTimer();
-
     if (csvExportEngine != null) {
       await csvExportEngine!.scheduleExport();
     }

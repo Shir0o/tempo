@@ -3,30 +3,31 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
-import '../core/state/timer_state_machine.dart';
+import '../core/state/day_recorder.dart';
 import '../data/database/tempo_database.dart';
 import '../data/models/models.dart';
 
 /// Service handling the universal `tempo://` (and `timetracker://`) Deep Link Bus.
 ///
 /// Endpoints:
-/// - `tempo://start?activity=...&comment=...&tags=...&foreground=...`
-/// - `tempo://stop?comment=...`
-/// - `tempo://pause`
-/// - `tempo://resume`
-/// - `tempo://toggle?activity=...`
+/// - `tempo://start?activity=...&comment=...&tags=...` labels the open Lap.
+/// - `tempo://stop` is a temporary shim that labels the open Lap with the most
+///   recent Record's Activity until Split lands in #16.
+/// - `tempo://toggle?activity=...` labels the open Lap.
+///
+/// Pause and resume no longer exist.
 class DeepLinkService {
   static const String channelName = 'com.tempos.tracker/deeplink';
   static const Set<String> supportedSchemes = {'tempo', 'timetracker'};
 
-  final TimerStateMachine timerStateMachine;
+  final DayRecorder dayRecorder;
   final TempoDatabase database;
   final MethodChannel _channel;
   final int Function() _nowUtcMs;
   final String Function() _generateId;
 
   DeepLinkService({
-    required this.timerStateMachine,
+    required this.dayRecorder,
     required this.database,
     MethodChannel? channel,
     int Function()? nowUtcMs,
@@ -91,10 +92,6 @@ class DeepLinkService {
         return await _handleStart(uri);
       case 'stop':
         return await _handleStop(uri);
-      case 'pause':
-        return await _handlePause(uri);
-      case 'resume':
-        return await _handleResume(uri);
       case 'toggle':
         return await _handleToggle(uri);
       default:
@@ -129,68 +126,25 @@ class DeepLinkService {
 
     final tagIds = await _resolveTagIds(tagNames);
 
-    await timerStateMachine.start(
-      activity.id,
-      comment: comment,
-      tagIds: tagIds,
-    );
+    await dayRecorder.label(activity.id, comment: comment, tags: tagIds);
     return true;
   }
 
   Future<bool> _handleStop(Uri uri) async {
-    if (timerStateMachine.isIdle) {
-      return true;
-    }
-    final comment = uri.queryParameters['comment'];
-    await timerStateMachine.stop(finalComment: comment);
-    return true;
-  }
-
-  Future<bool> _handlePause(Uri uri) async {
-    if (timerStateMachine.isTracking) {
-      await timerStateMachine.pause();
-    }
-    return true;
-  }
-
-  Future<bool> _handleResume(Uri uri) async {
-    if (timerStateMachine.isPaused) {
-      await timerStateMachine.resume();
-    }
+    // Split is #16; until then `stop` keeps existing links working by labeling
+    // the Lap with the most recent Record's Activity.
+    await dayRecorder.sameAsLast();
     return true;
   }
 
   Future<bool> _handleToggle(Uri uri) async {
     final activityParam = uri.queryParameters['activity'];
 
-    if (timerStateMachine.isIdle) {
-      if (activityParam != null && activityParam.trim().isNotEmpty) {
-        final activity = await _findOrCreateActivity(activityParam.trim());
-        await timerStateMachine.start(activity.id);
-      } else {
-        final activities = await database.getAllActivities();
-        if (activities.isNotEmpty) {
-          final first = activities.firstWhere(
-            (a) => a.isPinned,
-            orElse: () => activities.first,
-          );
-          await timerStateMachine.start(first.id);
-        }
-      }
+    if (activityParam != null && activityParam.trim().isNotEmpty) {
+      final activity = await _findOrCreateActivity(activityParam.trim());
+      await dayRecorder.label(activity.id);
     } else {
-      // Active timer currently exists
-      if (activityParam != null && activityParam.trim().isNotEmpty) {
-        final target = await _findOrCreateActivity(activityParam.trim());
-        if (timerStateMachine.activeTimer?.activityId == target.id) {
-          await timerStateMachine.stop();
-        } else {
-          // Switch to new activity
-          await timerStateMachine.start(target.id);
-        }
-      } else {
-        // No activity specified -> stop
-        await timerStateMachine.stop();
-      }
+      await dayRecorder.sameAsLast();
     }
     return true;
   }

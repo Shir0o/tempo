@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:tempo/core/state/day_recorder.dart';
 import 'package:tempo/data/database/tempo_database.dart';
 import 'package:tempo/data/models/models.dart';
 import 'package:tempo/mcp/pii_sanitizer.dart';
@@ -178,7 +179,7 @@ void main() {
       }
     });
 
-    test('tools/call get_active_timer returns empty state when idle', () async {
+    test('tools/call get_active_timer returns the open Lap', () async {
       final req = jsonEncode({
         'jsonrpc': '2.0',
         'id': 30,
@@ -192,59 +193,50 @@ void main() {
       final payload = jsonDecode(
         json['result']['content'][0]['text'] as String,
       );
-      expect(payload['is_tracking'], isFalse);
-      expect(payload['activity_name'], isNull);
-      expect(payload['elapsed_seconds'], equals(0));
-    });
-
-    test('tools/call get_active_timer returns active tracking status with sanitized comment', () async {
-      final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-      final activity = Activity(
-        id: 'act-coding',
-        name: 'Coding',
-        colorHex: '#4CAF50',
-        createdAtEpochMs: now,
-        updatedAtEpochMs: now,
-      );
-      await db.insertActivity(activity);
-
-      final tag = Tag(
-        id: 'tag-deepwork',
-        name: 'DeepWork',
-        createdAtEpochMs: now,
-        updatedAtEpochMs: now,
-      );
-      await db.insertTag(tag);
-
-      final timer = ActiveTimer(
-        activityId: 'act-coding',
-        startedAtEpochMs: now - 50000,
-        lastHeartbeatEpochMs: now,
-        currentComment: 'Architecture review w/ Alice Smith',
-        initialTagIds: ['tag-deepwork'],
-      );
-      await db.setActiveTimer(timer);
-
-      final req = jsonEncode({
-        'jsonrpc': '2.0',
-        'id': 31,
-        'method': 'tools/call',
-        'params': {'name': 'get_active_timer', 'arguments': {}},
-      });
-      final res = await server.handleMessage(req);
-      final json = jsonDecode(res!) as Map<String, dynamic>;
-      expect(json['result']['isError'], isFalse);
-
-      final payload = jsonDecode(
-        json['result']['content'][0]['text'] as String,
-      );
       expect(payload['is_tracking'], isTrue);
-      expect(payload['activity_name'], equals('Coding'));
-      expect(payload['color_hex'], equals('#4CAF50'));
-      expect(payload['comment'], equals('Architecture review w/ [Contact-1]'));
-      expect(payload['tags'], equals(['DeepWork']));
-      expect(payload['elapsed_seconds'], greaterThanOrEqualTo(50));
+      expect(payload['activity_name'], isNull);
+      expect(payload['is_paused'], isFalse);
+      expect(payload['elapsed_seconds'], greaterThanOrEqualTo(0));
     });
+
+    test(
+      'tools/call get_active_timer reports the injected Lap clock',
+      () async {
+        final base = DateTime.now().toUtc().millisecondsSinceEpoch;
+        var clock = base;
+        final recorder = DayRecorder(
+          database: db,
+          nowUtcMs: () => clock,
+          getTimezoneId: () => 'UTC',
+        );
+        addTearDown(recorder.dispose);
+        await recorder.initialize();
+        clock += 50000;
+
+        final lapServer = TempoMcpServer(
+          database: db,
+          sanitizer: sanitizer,
+          dayRecorder: recorder,
+        );
+
+        final req = jsonEncode({
+          'jsonrpc': '2.0',
+          'id': 31,
+          'method': 'tools/call',
+          'params': {'name': 'get_active_timer', 'arguments': {}},
+        });
+        final res = await lapServer.handleMessage(req);
+        final json = jsonDecode(res!) as Map<String, dynamic>;
+        expect(json['result']['isError'], isFalse);
+
+        final payload = jsonDecode(
+          json['result']['content'][0]['text'] as String,
+        );
+        expect(payload['is_tracking'], isTrue);
+        expect(payload['activity_name'], isNull);
+        expect(payload['elapsed_seconds'], equals(50));
+      },
+    );
 
     test(
       'tools/call get_daily_summary aggregates total hours and breakdown',
@@ -508,13 +500,14 @@ void main() {
         expect(startPayload['success'], isTrue);
         expect(startPayload['activity_name'], equals('Writing'));
 
-        // Check active timer state
-        final active = await db.getActiveTimer();
-        expect(active, isNotNull);
-        expect(active!.currentComment, equals('Drafting specs'));
-        expect(active.startedTimezoneId, equals('Asia/Tokyo'));
+        // Check the Lap was labelled as Writing
+        final writingRecords = await db.getRecords();
+        expect(writingRecords.length, equals(1));
+        expect(writingRecords.first.activityId, isNotNull);
+        expect(writingRecords.first.comment, equals('Drafting specs'));
+        expect(writingRecords.first.timezoneId, equals('Asia/Tokyo'));
 
-        // 2. stop_timer
+        // 2. stop_timer (the placeholder labels the Lap with the last Activity)
         final stopReq = jsonEncode({
           'jsonrpc': '2.0',
           'id': 41,
@@ -533,9 +526,6 @@ void main() {
         expect(stopPayload['success'], isTrue);
         expect(stopPayload['activity_name'], equals('Writing'));
         expect(stopPayload['comment'], equals('Finished drafting'));
-
-        // Timer should now be stopped
-        expect(await db.getActiveTimer(), isNull);
 
         final stopped = (await db.getRecords()).firstWhere(
           (r) => r.comment == 'Finished drafting',

@@ -129,7 +129,7 @@ void main() {
       final db = await TempoDatabase.open(path: dbPath);
       addTearDown(db.close);
 
-      expect(TempoDatabase.databaseVersion, 2);
+      expect(TempoDatabase.databaseVersion, 3);
 
       final pst = await db.getRecordById('rec-pst');
       expect(pst!.timezoneId, 'America/Los_Angeles');
@@ -154,15 +154,23 @@ void main() {
     },
   );
 
-  test('upgrading adds a start zone to a running timer', () async {
-    await createV1Database();
+  test(
+    'upgrading closes a running timer and opens the Lap at its end',
+    () async {
+      await createV1Database();
 
-    final db = await TempoDatabase.open(path: dbPath);
-    addTearDown(db.close);
+      final db = await TempoDatabase.open(path: dbPath);
+      addTearDown(db.close);
 
-    final timer = await db.getActiveTimer();
-    expect(timer, isNotNull);
-    expect(timer!.startedAtEpochMs, 3000);
-    expect(timer.startedTimezoneId, isEmpty);
-  });
+      final lap = await db.getLap();
+      expect(lap, isNotNull);
+      expect(lap!.startedTimezoneId, isNotEmpty);
+
+      final records = await db.getRecords();
+      final closed = records.where((r) => r.activityId == 'act').toList();
+      expect(closed.length, equals(6));
+      final timerRecord = closed.firstWhere((r) => r.startedAtEpochMs == 3000);
+      expect(timerRecord.endedAtEpochMs, equals(lap.startedAtEpochMs));
+    },
+  );
 }

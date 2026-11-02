@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/export/csv_export_engine.dart';
-import '../../core/state/timer_state_machine.dart';
+import '../../core/state/day_recorder.dart';
 import '../../core/sync/google_drive_sync_service.dart';
 import '../../data/database/tempo_database.dart';
 import 'dashboard_view.dart';
@@ -11,14 +11,14 @@ import 'stats_view.dart';
 
 /// Root Application Widget for Tempo across Android mobile and desktop surfaces.
 class TempoApp extends StatefulWidget {
-  final TimerStateMachine timerStateMachine;
+  final DayRecorder dayRecorder;
   final TempoDatabase database;
   final GoogleDriveSyncService? syncService;
   final CsvExportEngine? exportEngine;
 
   const TempoApp({
     super.key,
-    required this.timerStateMachine,
+    required this.dayRecorder,
     required this.database,
     this.syncService,
     this.exportEngine,
@@ -76,7 +76,7 @@ class _TempoAppState extends State<TempoApp> {
   Widget _buildHomeShell() {
     final screens = [
       DashboardView(
-        timerStateMachine: widget.timerStateMachine,
+        dayRecorder: widget.dayRecorder,
         database: widget.database,
         onNavigateToStats: () => setState(() => _currentTabIndex = 1),
       ),
