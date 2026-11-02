@@ -144,3 +144,13 @@ Before introducing new features, enforce these gates:
 ## Tier
 
 Tier 1: The `Analyze & Test` CI check (`.github/workflows/ci.yml`) is required on `main`.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and tickets live in GitHub Issues (`gh` CLI), with native blocked-by dependencies. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
