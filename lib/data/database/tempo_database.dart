@@ -17,7 +17,7 @@ class TempoDatabase {
 
   Database get db => _db;
 
-  static const int databaseVersion = 4;
+  static const int databaseVersion = 5;
   static const String databaseFileName = 'tempo.db';
 
   // --- DDL Constants (schema v4) ---
@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS records (
     comment TEXT NOT NULL DEFAULT '',
     timezone_id TEXT NOT NULL,
     end_timezone_id TEXT NOT NULL DEFAULT '',
+    is_midnight_split INTEGER NOT NULL DEFAULT 0,
     created_at_epoch_ms INTEGER NOT NULL,
     updated_at_epoch_ms INTEGER NOT NULL
 );
@@ -135,6 +136,9 @@ CREATE TABLE IF NOT EXISTS tombstones (
           }
           if (oldVersion < 4) {
             await migrateV3ToV4(db);
+          }
+          if (oldVersion < 5) {
+            await migrateV4ToV5(db);
           }
         },
       ),

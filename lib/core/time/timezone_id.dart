@@ -121,6 +121,42 @@ DateTime wallClockAt(String timezoneId, int epochMs) {
   );
 }
 
+/// The first instant strictly after [afterEpochMs] at which the local calendar
+/// date in [timezoneId] changes: local midnight, or the first instant of the
+/// new day where a zone skips midnight entirely. DST shifts are handled by
+/// searching in absolute time, so a 23h or 25h day still has one boundary.
+int nextLocalMidnightUtcMs(String timezoneId, int afterEpochMs) {
+  final afterWall = wallClockAt(timezoneId, afterEpochMs);
+  final targetDate = DateTime.utc(
+    afterWall.year,
+    afterWall.month,
+    afterWall.day,
+  ).add(const Duration(days: 1));
+
+  // A local day is never longer than 25h; 30h plus rolling days covers zones
+  // that skip midnight during a DST change.
+  var lo = afterEpochMs;
+  var hi = afterEpochMs + const Duration(hours: 30).inMilliseconds;
+  while (_localDateAt(timezoneId, hi).isBefore(targetDate)) {
+    hi += const Duration(hours: 24).inMilliseconds;
+  }
+
+  while (hi - lo > 1) {
+    final mid = lo + (hi - lo) ~/ 2;
+    if (_localDateAt(timezoneId, mid).isBefore(targetDate)) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return hi;
+}
+
+DateTime _localDateAt(String timezoneId, int epochMs) {
+  final wall = wallClockAt(timezoneId, epochMs);
+  return DateTime.utc(wall.year, wall.month, wall.day);
+}
+
 /// The abbreviation in effect in [timezoneId] at [epochMs] (e.g. `PDT`), or
 /// the id itself when the zone cannot be resolved.
 String zoneAbbreviationAt(String timezoneId, int epochMs) {

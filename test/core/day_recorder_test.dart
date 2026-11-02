@@ -1,8 +1,33 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:tempo/core/state/day_recorder.dart';
+import 'package:tempo/core/time/timezone_id.dart';
 import 'package:tempo/data/database/tempo_database.dart';
 import 'package:tempo/data/models/models.dart';
+
+/// Epoch milliseconds for a wall-clock time in [zone].
+int wallMs(
+  String zone,
+  int year,
+  int month,
+  int day,
+  int hour, [
+  int minute = 0,
+]) {
+  const noon = 12;
+  return epochMsFromWallClock(
+    DateTime.utc(year, month, day, hour, minute),
+    zone,
+    referenceEpochMs: DateTime.utc(
+      year,
+      month,
+      day,
+      noon,
+    ).millisecondsSinceEpoch,
+  );
+}
+
+const int hourMs = 3600000;
 
 void main() {
   setUpAll(() {
@@ -282,5 +307,205 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(emissions.single!.startedAtEpochMs, equals(1030000));
+  });
+
+  group('MidnightSplit', () {
+    late int lapStart;
+
+    Future<void> startLapAt(String zone, int y, int mo, int d, int h) async {
+      zoneId = zone;
+      nowUtc = wallMs(zone, y, mo, d, h);
+      await recorder.initialize();
+      lapStart = recorder.lap!.startedAtEpochMs;
+    }
+
+    test('closes the Lap and reopens it at local midnight', () async {
+      await startLapAt('America/Los_Angeles', 2026, 6, 1, 22);
+
+      zoneId = 'America/Los_Angeles';
+      nowUtc = wallMs(zoneId, 2026, 6, 2, 1);
+      await recorder.applyMidnightSplits();
+
+      final midnight = wallMs(zoneId, 2026, 6, 2, 0);
+      final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+      expect(records, hasLength(1));
+      final split = records.single;
+      expect(split.activityId, isNull);
+      expect(split.isMidnightSplit, isTrue);
+      expect(split.startedAtEpochMs, lapStart);
+      expect(split.endedAtEpochMs, midnight);
+      expect(split.durationMs, 2 * hourMs);
+      expect(split.timezoneId, 'America/Los_Angeles');
+      expect(split.endTimezoneId, 'America/Los_Angeles');
+
+      expect(recorder.lap!.startedAtEpochMs, midnight);
+      expect(recorder.lap!.startedTimezoneId, 'America/Los_Angeles');
+      expect(recorder.lap!.revision, 2);
+    });
+
+    test(
+      'a label after midnight covers the whole span, one Record per Day',
+      () async {
+        await startLapAt('America/Los_Angeles', 2026, 6, 1, 22);
+
+        zoneId = 'America/Los_Angeles';
+        nowUtc = wallMs(zoneId, 2026, 6, 2, 1);
+        await recorder.applyMidnightSplits();
+
+        nowUtc = wallMs(zoneId, 2026, 6, 2, 2);
+        final closing = await recorder.label(
+          sleep.id,
+          comment: 'w/ Sam',
+          tags: [travelTag.id],
+        );
+
+        final midnight = wallMs(zoneId, 2026, 6, 2, 0);
+        final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+        expect(records, hasLength(2));
+
+        final firstDay = records.first;
+        expect(firstDay.activityId, sleep.id);
+        expect(firstDay.comment, 'w/ Sam');
+        expect(firstDay.tagIds, [travelTag.id]);
+        expect(firstDay.startedAtEpochMs, lapStart);
+        expect(firstDay.endedAtEpochMs, midnight);
+        expect(firstDay.durationMs, 2 * hourMs);
+
+        final secondDay = records.last;
+        expect(secondDay.id, closing.id);
+        expect(secondDay.activityId, sleep.id);
+        expect(secondDay.comment, 'w/ Sam');
+        expect(secondDay.tagIds, [travelTag.id]);
+        expect(secondDay.startedAtEpochMs, midnight);
+        expect(secondDay.endedAtEpochMs, nowUtc);
+        expect(secondDay.durationMs, 2 * hourMs);
+      },
+    );
+
+    test('undo restores the MidnightSplit half as Untracked', () async {
+      await startLapAt('America/Los_Angeles', 2026, 6, 1, 22);
+
+      zoneId = 'America/Los_Angeles';
+      nowUtc = wallMs(zoneId, 2026, 6, 2, 1);
+      await recorder.applyMidnightSplits();
+
+      nowUtc = wallMs(zoneId, 2026, 6, 2, 2);
+      await recorder.label(sleep.id, comment: 'w/ Sam');
+
+      expect(await recorder.undoLast(), isTrue);
+
+      final midnight = wallMs(zoneId, 2026, 6, 2, 0);
+      final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+      expect(records, hasLength(1));
+      expect(records.single.activityId, isNull);
+      expect(records.single.isMidnightSplit, isTrue);
+      expect(records.single.comment, isEmpty);
+      expect(records.single.startedAtEpochMs, lapStart);
+      expect(records.single.endedAtEpochMs, midnight);
+
+      expect(recorder.lap!.startedAtEpochMs, midnight);
+      expect(recorder.lap!.revision, 2);
+    });
+
+    test('a label does not absorb a Split the user made', () async {
+      await startLapAt('America/Los_Angeles', 2026, 6, 1, 22);
+
+      zoneId = 'America/Los_Angeles';
+      nowUtc = wallMs(zoneId, 2026, 6, 2, 1);
+      await recorder.applyMidnightSplits();
+
+      nowUtc = wallMs(zoneId, 2026, 6, 2, 1, 30);
+      await recorder.split();
+
+      nowUtc = wallMs(zoneId, 2026, 6, 2, 2);
+      await recorder.label(sleep.id);
+
+      final midnight = wallMs(zoneId, 2026, 6, 2, 0);
+      final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+      expect(records, hasLength(3));
+      expect(records[0].isMidnightSplit, isTrue);
+      expect(records[0].activityId, isNull);
+      expect(records[1].isMidnightSplit, isFalse);
+      expect(records[1].activityId, isNull);
+      expect(records[1].startedAtEpochMs, midnight);
+      expect(records[1].endedAtEpochMs, wallMs(zoneId, 2026, 6, 2, 1, 30));
+      expect(records[2].activityId, sleep.id);
+      expect(records[2].durationMs, 30 * 60 * 1000);
+    });
+
+    test('initialize applies every midnight missed while closed', () async {
+      await startLapAt('America/Los_Angeles', 2026, 6, 1, 22);
+
+      zoneId = 'America/Los_Angeles';
+      nowUtc = wallMs(zoneId, 2026, 6, 4, 9);
+
+      final reopened = DayRecorder(
+        database: db,
+        nowUtcMs: () => nowUtc,
+        generateId: () => 'rec-${++idCounter}',
+        getTimezoneId: () => zoneId,
+        autoSplitAtMidnight: false,
+      );
+      addTearDown(reopened.dispose);
+
+      await reopened.initialize();
+
+      final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+      expect(records, hasLength(3));
+      expect(records.map((r) => r.isMidnightSplit), everyElement(isTrue));
+      expect(records.map((r) => r.activityId), everyElement(isNull));
+      expect(records[0].durationMs, 2 * hourMs);
+      expect(records[1].durationMs, 24 * hourMs);
+      expect(records[2].durationMs, 24 * hourMs);
+      expect(records.last.endedAtEpochMs, wallMs(zoneId, 2026, 6, 4, 0));
+      expect(reopened.lap!.startedAtEpochMs, wallMs(zoneId, 2026, 6, 4, 0));
+    });
+
+    test('a DST day totals its real 23 hours', () async {
+      await startLapAt('America/Los_Angeles', 2026, 3, 7, 22);
+
+      zoneId = 'America/Los_Angeles';
+      nowUtc = wallMs(zoneId, 2026, 3, 9, 2);
+      await recorder.applyMidnightSplits();
+
+      final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+      expect(records, hasLength(2));
+      expect(records[0].durationMs, 2 * hourMs);
+      expect(records[1].durationMs, 23 * hourMs);
+      expect(recorder.lap!.startedAtEpochMs, wallMs(zoneId, 2026, 3, 9, 0));
+    });
+
+    test('a DST day totals its real 25 hours', () async {
+      await startLapAt('America/Los_Angeles', 2026, 10, 31, 22);
+
+      zoneId = 'America/Los_Angeles';
+      nowUtc = wallMs(zoneId, 2026, 11, 2, 2);
+      await recorder.applyMidnightSplits();
+
+      final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+      expect(records, hasLength(2));
+      expect(records[0].durationMs, 2 * hourMs);
+      expect(records[1].durationMs, 25 * hourMs);
+    });
+
+    test('midnight uses the zone in effect at that moment', () async {
+      await startLapAt('America/Los_Angeles', 2026, 6, 1, 20);
+
+      // The user is in Tokyo by the time the next midnight arrives.
+      zoneId = 'Asia/Tokyo';
+      nowUtc = wallMs(zoneId, 2026, 6, 3, 1);
+      await recorder.applyMidnightSplits();
+
+      final midnight = wallMs(zoneId, 2026, 6, 3, 0);
+      final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+      expect(records, hasLength(1));
+      final split = records.single;
+      expect(split.endedAtEpochMs, midnight);
+      expect(split.durationMs, 12 * hourMs);
+      expect(split.timezoneId, 'America/Los_Angeles');
+      expect(split.endTimezoneId, 'Asia/Tokyo');
+      expect(recorder.lap!.startedAtEpochMs, midnight);
+      expect(recorder.lap!.startedTimezoneId, 'Asia/Tokyo');
+    });
   });
 }

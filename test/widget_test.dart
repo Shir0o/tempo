@@ -30,7 +30,7 @@ void main() {
       ),
     );
 
-    final dayRecorder = DayRecorder(database: db);
+    final dayRecorder = DayRecorder(database: db, autoSplitAtMidnight: false);
     await dayRecorder.initialize();
 
     await tester.pumpWidget(TempoApp(dayRecorder: dayRecorder, database: db));

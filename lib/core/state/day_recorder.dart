@@ -21,6 +21,11 @@ class DayRecorder {
   final String Function() _generateId;
   final FutureOr<String> Function() _getTimezoneId;
   final Duration undoGraceWindow;
+
+  /// Whether the recorder closes and reopens the Lap at every local midnight
+  /// while it stays running. Tests that only drive the clock can turn this off;
+  /// [initialize] still applies every missed split.
+  final bool autoSplitAtMidnight;
   final Future<void> Function(Record record)? onRecordCommitted;
   CsvExportEngine? csvExportEngine;
 
@@ -30,6 +35,8 @@ class DayRecorder {
 
   Future<void>? _lock;
   bool _isInitialized = false;
+  bool _isDisposed = false;
+  Timer? _midnightTimer;
   _UndoSnapshot? _lastOperation;
 
   DayRecorder({
@@ -38,6 +45,7 @@ class DayRecorder {
     String Function()? generateId,
     FutureOr<String> Function()? getTimezoneId,
     this.undoGraceWindow = defaultUndoGraceWindow,
+    this.autoSplitAtMidnight = true,
     this.onRecordCommitted,
     this.csvExportEngine,
   }) : _db = database,
@@ -66,8 +74,16 @@ class DayRecorder {
     csvExportEngine = engine;
   }
 
-  /// Loads the persisted Lap, opening one at now if none exists yet.
+  /// Loads the persisted Lap, opening one at now if none exists yet, and
+  /// applies every MidnightSplit missed while the app was not running.
   Future<Lap> initialize() => _synchronized(() => _initializeLocked());
+
+  /// Closes the Lap at every local midnight that has passed since it started
+  /// and reopens it at the last one. Runs automatically at midnight while the
+  /// app is open and on [initialize]; call it when the app returns to the
+  /// foreground after a possible midnight.
+  Future<void> applyMidnightSplits() =>
+      _synchronized(() => _applyMidnightSplitsLocked());
 
   /// Closes the open Lap as a labelled Record ending now and opens a new Lap at
   /// the same instant. Returns the Record that was just written.
@@ -122,16 +138,21 @@ class DayRecorder {
     }
 
     await _db.db.transaction((txn) async {
-      await txn.delete('records', where: 'id = ?', whereArgs: [undo.record.id]);
-      await txn.insert(
-        'tombstones',
-        Tombstone(
-          entityId: undo.record.id,
-          entityType: 'record',
-          deletedAtEpochMs: now,
-        ).toMap(),
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      for (final record in undo.writtenRecords) {
+        await txn.delete('records', where: 'id = ?', whereArgs: [record.id]);
+        await txn.insert(
+          'tombstones',
+          Tombstone(
+            entityId: record.id,
+            entityType: 'record',
+            deletedAtEpochMs: now,
+          ).toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+      for (final record in undo.previousRecords) {
+        await _updateRecordInTxn(txn, record);
+      }
       await txn.insert(
         'lap',
         undo.previousLap.toMap(),
@@ -141,6 +162,7 @@ class DayRecorder {
 
     _updateLap(undo.previousLap);
     await _requestExport();
+    await _armMidnightTimer();
     return true;
   });
 
@@ -169,7 +191,11 @@ class DayRecorder {
     }
     _updateLap(current);
     _isInitialized = true;
-    return current;
+
+    // The app may have been closed across one or more midnights.
+    await _applyMidnightSplitsLocked();
+    await _armMidnightTimer();
+    return _lapNotifier.value!;
   }
 
   Future<void> _ensureInitializedLocked() async {
@@ -191,24 +217,72 @@ class DayRecorder {
       }
     }
 
+    await _applyMidnightSplitsLocked();
+
     final now = _nowUtcMs();
     final current = _lapNotifier.value!;
     final endTimezoneId = await _getTimezoneId();
-    final durationMs = now - current.startedAtEpochMs;
+    final startTimezoneId = current.startTimezoneOr(endTimezoneId);
 
-    final record = Record(
+    // A label covers the whole unlabeled span, including the MidnightSplit
+    // halves already written since the last label. A deliberate Split is a
+    // boundary the user chose, so it is never absorbed.
+    final absorbed = activityId == null
+        ? const <Record>[]
+        : await _trailingMidnightSplits(current.startedAtEpochMs);
+
+    final written = <Record>[];
+    var cursor = current.startedAtEpochMs;
+    var cursorTimezoneId = startTimezoneId;
+    while (true) {
+      final boundary = nextLocalMidnightUtcMs(endTimezoneId, cursor);
+      if (boundary >= now) break;
+      written.add(
+        Record(
+          id: _generateId(),
+          activityId: activityId,
+          startedAtEpochMs: cursor,
+          endedAtEpochMs: boundary,
+          durationMs: boundary - cursor,
+          comment: comment,
+          timezoneId: cursorTimezoneId,
+          endTimezoneId: endTimezoneId,
+          isMidnightSplit: true,
+          createdAtEpochMs: now,
+          updatedAtEpochMs: now,
+          tagIds: List.unmodifiable(tags),
+        ),
+      );
+      cursor = boundary;
+      cursorTimezoneId = endTimezoneId;
+    }
+
+    final durationMs = now - cursor;
+    final closing = Record(
       id: _generateId(),
       activityId: activityId,
-      startedAtEpochMs: current.startedAtEpochMs,
+      startedAtEpochMs: cursor,
       endedAtEpochMs: now,
       durationMs: durationMs < 0 ? 0 : durationMs,
       comment: comment,
-      timezoneId: current.startTimezoneOr(endTimezoneId),
+      timezoneId: cursorTimezoneId,
       endTimezoneId: endTimezoneId,
       createdAtEpochMs: now,
       updatedAtEpochMs: now,
       tagIds: List.unmodifiable(tags),
     );
+    written.add(closing);
+
+    final labelled = [
+      for (final record in absorbed)
+        record
+            .withActivity(activityId)
+            .copyWith(
+              comment: comment,
+              tagIds: List.unmodifiable(tags),
+              updatedAtEpochMs: now,
+            ),
+    ];
 
     final nextLap = Lap(
       startedAtEpochMs: now,
@@ -217,16 +291,11 @@ class DayRecorder {
     );
 
     await _db.db.transaction((txn) async {
-      await txn.insert(
-        'records',
-        record.toMap(),
-        conflictAlgorithm: ConflictAlgorithm.abort,
-      );
-      for (final tagId in record.tagIds) {
-        await txn.insert('record_tags', {
-          'record_id': record.id,
-          'tag_id': tagId,
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      for (final record in labelled) {
+        await _updateRecordInTxn(txn, record);
+      }
+      for (final record in written) {
+        await _insertRecordInTxn(txn, record);
       }
       await txn.insert(
         'lap',
@@ -236,13 +305,168 @@ class DayRecorder {
     });
 
     _lastOperation = _UndoSnapshot(
-      record: record,
+      writtenRecords: written,
+      previousRecords: absorbed,
       previousLap: current,
       armedAtEpochMs: now,
     );
     _updateLap(nextLap);
-    await _notifyRecordCommitted(record);
-    return record;
+    for (final record in labelled) {
+      await _notifyRecordCommitted(record);
+    }
+    for (final record in written) {
+      await _notifyRecordCommitted(record);
+    }
+    await _armMidnightTimer();
+    return closing;
+  }
+
+  /// Closes the open Lap at each local midnight it has crossed and reopens it
+  /// at the last one, writing one Untracked Record per Day.
+  Future<void> _applyMidnightSplitsLocked() async {
+    await _ensureInitializedLocked();
+    final current = _lapNotifier.value!;
+    final now = _nowUtcMs();
+    if (now <= current.startedAtEpochMs) return;
+
+    // On resume the best available reading of "the zone the user was in at
+    // that midnight" is the device's current zone; while running, this is the
+    // zone at the instant the timer fires.
+    final zoneAtMidnight = await _getTimezoneId();
+    var cursor = current.startedAtEpochMs;
+    var cursorTimezoneId = current.startTimezoneOr(zoneAtMidnight);
+    var revision = current.revision;
+    final created = <Record>[];
+
+    while (true) {
+      final boundary = nextLocalMidnightUtcMs(zoneAtMidnight, cursor);
+      if (boundary > now) break;
+      created.add(
+        Record(
+          id: _generateId(),
+          activityId: null,
+          startedAtEpochMs: cursor,
+          endedAtEpochMs: boundary,
+          durationMs: boundary - cursor,
+          timezoneId: cursorTimezoneId,
+          endTimezoneId: zoneAtMidnight,
+          isMidnightSplit: true,
+          createdAtEpochMs: now,
+          updatedAtEpochMs: now,
+        ),
+      );
+      cursor = boundary;
+      cursorTimezoneId = zoneAtMidnight;
+      revision += 1;
+    }
+    if (created.isEmpty) return;
+
+    final nextLap = Lap(
+      startedAtEpochMs: cursor,
+      startedTimezoneId: cursorTimezoneId,
+      revision: revision,
+    );
+    await _db.db.transaction((txn) async {
+      for (final record in created) {
+        await _insertRecordInTxn(txn, record);
+      }
+      await txn.insert(
+        'lap',
+        nextLap.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    });
+
+    // The Lap moved, so a label still inside its undo window can no longer be
+    // reversed without creating an overlap.
+    _lastOperation = null;
+    _updateLap(nextLap);
+    for (final record in created) {
+      await _notifyRecordCommitted(record);
+    }
+    await _armMidnightTimer();
+  }
+
+  /// The contiguous MidnightSplit Records ending exactly at [lapStartEpochMs],
+  /// oldest first. They are the earlier Days of the same unlabeled span.
+  Future<List<Record>> _trailingMidnightSplits(int lapStartEpochMs) async {
+    final absorbed = <Record>[];
+    var cursor = lapStartEpochMs;
+    while (true) {
+      final rows = await _db.db.query(
+        'records',
+        where:
+            'ended_at_epoch_ms = ? AND activity_id IS NULL '
+            'AND is_midnight_split = 1',
+        whereArgs: [cursor],
+        limit: 1,
+      );
+      if (rows.isEmpty) break;
+      final record = Record.fromMap(rows.first);
+      if (record.startedAtEpochMs >= cursor) break;
+      absorbed.insert(0, record);
+      cursor = record.startedAtEpochMs;
+    }
+    return absorbed;
+  }
+
+  Future<void> _insertRecordInTxn(Transaction txn, Record record) async {
+    await txn.insert(
+      'records',
+      record.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.abort,
+    );
+    for (final tagId in record.tagIds) {
+      await txn.insert('record_tags', {
+        'record_id': record.id,
+        'tag_id': tagId,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+  }
+
+  Future<void> _updateRecordInTxn(Transaction txn, Record record) async {
+    await txn.update(
+      'records',
+      record.toMap(),
+      where: 'id = ?',
+      whereArgs: [record.id],
+    );
+    await txn.delete(
+      'record_tags',
+      where: 'record_id = ?',
+      whereArgs: [record.id],
+    );
+    for (final tagId in record.tagIds) {
+      await txn.insert('record_tags', {
+        'record_id': record.id,
+        'tag_id': tagId,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+  }
+
+  /// Arms a one-shot timer for the next local midnight so an open app splits
+  /// the Lap exactly at 00:00 in the zone it is in at that moment.
+  Future<void> _armMidnightTimer() async {
+    _midnightTimer?.cancel();
+    _midnightTimer = null;
+    if (!autoSplitAtMidnight || _isDisposed) return;
+
+    final now = _nowUtcMs();
+    final zoneNow = await _getTimezoneId();
+    final boundary = nextLocalMidnightUtcMs(zoneNow, now);
+    final delayMs = boundary - now;
+    if (delayMs <= 0) return;
+
+    _midnightTimer = Timer(Duration(milliseconds: delayMs), () async {
+      try {
+        await applyMidnightSplits();
+      } catch (_) {
+        // A failed split must not leave the recorder without a timer; the next
+        // write or resume tries again.
+      } finally {
+        await _armMidnightTimer();
+      }
+    });
   }
 
   void _updateLap(Lap? lap) {
@@ -290,6 +514,9 @@ class DayRecorder {
 
   /// Closes the Lap stream and notifier. Does not close the injected database.
   void dispose() {
+    _isDisposed = true;
+    _midnightTimer?.cancel();
+    _midnightTimer = null;
     _lapStreamController.close();
     _lapNotifier.dispose();
   }
@@ -297,12 +524,18 @@ class DayRecorder {
 
 /// The state needed to reverse one label or split.
 class _UndoSnapshot {
-  final Record record;
+  /// Records this operation wrote, in chronological order.
+  final List<Record> writtenRecords;
+
+  /// Earlier MidnightSplit Records the label absorbed, in their prior state.
+  final List<Record> previousRecords;
+
   final Lap previousLap;
   final int armedAtEpochMs;
 
   const _UndoSnapshot({
-    required this.record,
+    required this.writtenRecords,
+    required this.previousRecords,
     required this.previousLap,
     required this.armedAtEpochMs,
   });
