@@ -8,8 +8,7 @@ import '../data/models/activity.dart';
 
 /// Represents an action received from the Wear OS companion watch.
 class WatchAction {
-  /// "LABEL", "SPLIT", or the retired "START", "STOP", "PAUSE", "RESUME",
-  /// "UNDO" names older watch builds still send.
+  /// "LABEL" labels the open Lap; "SPLIT" closes it as an Untracked Record.
   final String type;
   final String? activityId;
   final int timestampEpochMs;
@@ -161,10 +160,6 @@ class WearableSyncService {
   }
 
   /// Sends the open Lap snapshot to the watch.
-  ///
-  /// The channel method name is unchanged so the existing Wear OS companion
-  /// keeps working. The payload now carries the Lap (start instant and zone);
-  /// the retired timer keys stay for older watch builds.
   Future<void> _onLapChanged() async {
     if (_isDisposed) return;
 
@@ -172,20 +167,11 @@ class WearableSyncService {
     final now = _nowUtcMs();
 
     try {
-      await channel.invokeMethod('syncActiveTimer', {
+      await channel.invokeMethod('syncLap', {
         'lapStartedAtEpochMs': lap?.startedAtEpochMs ?? 0,
         'lapStartedTimezoneId': lap?.startedTimezoneId ?? '',
         'revision': lap?.revision ?? 0,
         'updatedAtEpochMs': now,
-        // Legacy timer keys, derived from the Lap: it is the only span and it
-        // always runs.
-        'isRunning': lap != null,
-        'activityId': null,
-        'activityName': null,
-        'activityColorHex': null,
-        'startedAtEpochMs': lap?.startedAtEpochMs ?? 0,
-        'isPaused': false,
-        'accumulatedPauseMs': 0,
       });
     } catch (_) {
       // Platform channel or watch unreachable; offline buffer will sync upon reconnection
@@ -210,7 +196,6 @@ class WearableSyncService {
     try {
       switch (action.type.toUpperCase()) {
         case 'LABEL':
-        case 'START':
           if (action.activityId != null && action.activityId!.isNotEmpty) {
             await dayRecorder.label(
               action.activityId!,
@@ -220,14 +205,7 @@ class WearableSyncService {
           break;
 
         case 'SPLIT':
-        case 'STOP':
           await dayRecorder.split();
-          break;
-
-        case 'PAUSE':
-        case 'RESUME':
-        case 'UNDO':
-          // Pause, resume and undo are retired on this surface.
           break;
       }
     } catch (e) {

@@ -4,7 +4,6 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import android.util.Log
@@ -14,21 +13,12 @@ class TempoQuickSettingsTileService : TileService() {
     companion object {
         private const val TAG = "TempoQSTileService"
         const val PREFS_NAME = "tempo_tile_prefs"
-        const val KEY_IS_RUNNING = "is_running"
-        const val KEY_ACTIVITY_NAME = "activity_name"
-        const val KEY_STARTED_AT = "started_at_ms"
+        const val KEY_LAP_STARTED_AT = "lap_started_at_ms"
 
-        fun updateTileState(
-            context: Context,
-            isRunning: Boolean,
-            activityName: String?,
-            startedAtMs: Long
-        ) {
+        fun updateTileState(context: Context, startedAtMs: Long) {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             prefs.edit().apply {
-                putBoolean(KEY_IS_RUNNING, isRunning)
-                putString(KEY_ACTIVITY_NAME, activityName ?: "")
-                putLong(KEY_STARTED_AT, startedAtMs)
+                putLong(KEY_LAP_STARTED_AT, startedAtMs)
                 apply()
             }
 
@@ -50,51 +40,22 @@ class TempoQuickSettingsTileService : TileService() {
 
     override fun onClick() {
         super.onClick()
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val isRunning = prefs.getBoolean(KEY_IS_RUNNING, false)
 
-        val tile = qsTile ?: return
-
-        if (isRunning) {
-            // Stop timer
-            tile.state = Tile.STATE_INACTIVE
-            tile.subtitle = "Stopped"
-            tile.updateTile()
-
-            val intent = Intent(TempoBroadcastReceiver.ACTION_STOP_TEMPO).apply {
-                setPackage(packageName)
-            }
-            sendBroadcast(intent)
-        } else {
-            // Start or toggle timer
-            tile.state = Tile.STATE_ACTIVE
-            tile.subtitle = "Starting..."
-            tile.updateTile()
-
-            val intent = Intent(TempoBroadcastReceiver.ACTION_START_TEMPO).apply {
-                setPackage(packageName)
-                putExtra(TempoBroadcastReceiver.EXTRA_ACTIVITY, "General")
-            }
-            sendBroadcast(intent)
+        val intent = Intent(TempoBroadcastReceiver.ACTION_START_TEMPO).apply {
+            setPackage(packageName)
+            putExtra(TempoBroadcastReceiver.EXTRA_ACTIVITY, "General")
         }
+        sendBroadcast(intent)
     }
 
     private fun updateTileUI() {
         val tile = qsTile ?: return
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val isRunning = prefs.getBoolean(KEY_IS_RUNNING, false)
-        val activityName = prefs.getString(KEY_ACTIVITY_NAME, "") ?: ""
+        val startedAt = prefs.getLong(KEY_LAP_STARTED_AT, 0L)
 
-        if (isRunning) {
-            tile.state = Tile.STATE_ACTIVE
-            tile.label = if (activityName.isNotEmpty()) activityName else "Tempo"
-            tile.subtitle = "Tracking..."
-        } else {
-            tile.state = Tile.STATE_INACTIVE
-            tile.label = "Tempo"
-            tile.subtitle = "Tap to start"
-        }
-
+        tile.state = if (startedAt > 0L) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
+        tile.label = "Tempo"
+        tile.subtitle = "Tap to label the Lap"
         tile.updateTile()
     }
 }

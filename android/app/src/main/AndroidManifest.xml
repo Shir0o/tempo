@@ -40,11 +40,7 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="app.tempo.action.START_TIMER" />
-                <action android:name="app.tempo.action.STOP_TIMER" />
-                <action android:name="app.tempo.action.TOGGLE_TIMER" />
                 <action android:name="app.timetracker.action.START_TIMER" />
-                <action android:name="app.timetracker.action.STOP_TIMER" />
-                <action android:name="app.timetracker.action.TOGGLE_TIMER" />
             </intent-filter>
         </receiver>
 

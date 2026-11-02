@@ -12,12 +12,8 @@ class TempoBroadcastReceiver : BroadcastReceiver() {
         private const val TAG = "TempoBroadcastReceiver"
 
         const val ACTION_START_TEMPO = "app.tempo.action.START_TIMER"
-        const val ACTION_STOP_TEMPO = "app.tempo.action.STOP_TIMER"
-        const val ACTION_TOGGLE_TEMPO = "app.tempo.action.TOGGLE_TIMER"
 
         const val ACTION_START_LEGACY = "app.timetracker.action.START_TIMER"
-        const val ACTION_STOP_LEGACY = "app.timetracker.action.STOP_TIMER"
-        const val ACTION_TOGGLE_LEGACY = "app.timetracker.action.TOGGLE_TIMER"
 
         const val EXTRA_ACTIVITY = "activity"
         const val EXTRA_COMMENT = "comment"
@@ -51,20 +47,6 @@ class TempoBroadcastReceiver : BroadcastReceiver() {
                 }
                 if (tagsExtra.isNotEmpty()) {
                     uriBuilder.appendQueryParameter("tags", tagsExtra)
-                }
-            }
-            ACTION_STOP_TEMPO, ACTION_STOP_LEGACY -> {
-                // The Android intent keeps its name; it now marks a deliberate
-                // boundary by closing the Lap as an Untracked Record.
-                uriBuilder.authority("split")
-                if (comment.isNotEmpty()) {
-                    uriBuilder.appendQueryParameter("comment", comment)
-                }
-            }
-            ACTION_TOGGLE_TEMPO, ACTION_TOGGLE_LEGACY -> {
-                uriBuilder.authority("toggle")
-                if (activity.isNotEmpty()) {
-                    uriBuilder.appendQueryParameter("activity", activity)
                 }
             }
             else -> {

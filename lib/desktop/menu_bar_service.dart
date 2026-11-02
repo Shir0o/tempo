@@ -43,7 +43,6 @@ class MenuBarService {
   bool includeBrackets = true;
   Timer? _tickerTimer;
 
-  VoidCallback? onToggleQuickMenu;
   VoidCallback? onOpenFullWindow;
 
   final ValueNotifier<String> _titleNotifier = ValueNotifier<String>('[⏱️]');
@@ -54,7 +53,6 @@ class MenuBarService {
     int Function()? nowUtcMs,
     StatusDisplayMode initialMode = StatusDisplayMode.full,
     this.includeBrackets = true,
-    this.onToggleQuickMenu,
     this.onOpenFullWindow,
   }) : _channel = channel ?? const MethodChannel(channelName),
        _nowUtcMs =
@@ -109,7 +107,7 @@ class MenuBarService {
   /// Pure formatter for the menu bar title string.
   ///
   /// The menu bar always shows the open Lap, which is unlabelled, so the title
-  /// is only an elapsed-time readout. There is no pause or stop state.
+  /// is only an elapsed-time readout.
   ///
   /// Examples:
   /// - Idle: `[⏱️]`
@@ -154,12 +152,8 @@ class MenuBarService {
         case 'onQuickMenuAction':
           final args = call.arguments;
           final action = (args is Map) ? args['action'] as String? : null;
-          if (action == 'toggle') {
-            if (onToggleQuickMenu != null) {
-              onToggleQuickMenu!();
-            } else {
-              await _labelSameAsLast();
-            }
+          if (action == 'labelSameAsLast') {
+            await _labelSameAsLast();
           } else if (action == 'openFullWindow') {
             onOpenFullWindow?.call();
           }
@@ -169,7 +163,7 @@ class MenuBarService {
   }
 
   Future<void> _labelSameAsLast() async {
-    // The menu bar only labels the Lap; it never starts, stops, or pauses it.
+    // The menu bar only labels the open Lap.
     await dayRecorder.sameAsLast();
   }
 

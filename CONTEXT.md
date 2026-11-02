@@ -19,8 +19,7 @@ A labeled, closed span of a Day for one Activity, containing a start timestamp, 
 _Avoid_: TimeEntry, log, session, event
 
 **Lap**:
-The single open, unlabeled span running from the end of the last Record to now. It always runs — it cannot be paused or stopped. Labeling it closes it as a Record and opens a new Lap.
-_Replaces_: ActiveTimer (code still uses `active_timer` until migrated)
+The single open, unlabeled span running from the end of the last Record to now. It always runs; labeling it closes it as a Record and opens a new Lap.
 _Avoid_: Timer, stopwatch, running record, session
 
 **Untracked Record**:

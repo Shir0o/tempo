@@ -12,8 +12,8 @@ import org.json.JSONArray
 
 /**
  * WearableSyncListenerService:
- * - Listens for DataItem changes from the phone on /tempo/active_timer, which
- *   now carries the open Lap (start instant and zone), and /tempo/activities.
+ * - Listens for DataItem changes from the phone on /tempo/lap, which carries
+ *   the open Lap (start instant and zone), and /tempo/activities.
  * - Flushes buffered offline actions upon peer connection (onPeerConnected).
  * - Dispatches updates to Complication and Tile providers.
  */
@@ -21,7 +21,7 @@ class WearableSyncListenerService : WearableListenerService() {
 
     companion object {
         private const val TAG = "WearableSyncListener"
-        private const val PATH_ACTIVE_TIMER = "/tempo/active_timer"
+        private const val PATH_LAP = "/tempo/lap"
         private const val PATH_ACTIVITIES = "/tempo/activities"
     }
 
@@ -34,7 +34,7 @@ class WearableSyncListenerService : WearableListenerService() {
                 val path = uri.path ?: continue
 
                 when (path) {
-                    PATH_ACTIVE_TIMER -> {
+                    PATH_LAP -> {
                         val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
                         Log.d(TAG, "Received Lap update from phone: start=${dataMap.getLong("lapStartedAtEpochMs", 0L)}")
                         repository.updateFromPhone(dataMap)

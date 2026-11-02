@@ -1,5 +1,5 @@
 /// The single open, unlabeled span running from the end of the last Record to
-/// now. It always runs — it cannot be paused or stopped.
+/// now. It always runs.
 class Lap {
   final int id;
   final int startedAtEpochMs;

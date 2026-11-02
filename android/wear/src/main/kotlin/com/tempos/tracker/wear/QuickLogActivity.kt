@@ -61,9 +61,6 @@ class QuickLogActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_LABEL_ACTIVITY_ID = "EXTRA_LABEL_ACTIVITY_ID"
-
-        /** Retired tile builds sent the same id under this name. */
-        private const val LEGACY_EXTRA_START_ACTIVITY_ID = "EXTRA_START_ACTIVITY_ID"
     }
 
     private var isAmbientState = mutableStateOf(false)
@@ -92,7 +89,6 @@ class QuickLogActivity : ComponentActivity() {
 
         // A tile slot names its Activity: label the Lap, confirm, and exit.
         val labelId = intent?.getStringExtra(EXTRA_LABEL_ACTIVITY_ID)
-            ?: intent?.getStringExtra(LEGACY_EXTRA_START_ACTIVITY_ID)
         if (!labelId.isNullOrEmpty()) {
             val activity = repository.activities.value.find { it.id == labelId }
                 ?: WearActivity(id = labelId, name = labelId)
