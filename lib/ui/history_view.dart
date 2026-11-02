@@ -424,7 +424,7 @@ class _HistoryViewState extends State<HistoryView> {
                           comment: commentController.text.trim(),
                           startedAtEpochMs: startMs,
                           endedAtEpochMs: endMs,
-                          durationMs: endMs - startMs,
+                          durationMs: endMs > startMs ? endMs - startMs : 0,
                           updatedAtEpochMs: DateTime.now()
                               .toUtc()
                               .millisecondsSinceEpoch,

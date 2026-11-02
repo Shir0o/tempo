@@ -345,9 +345,7 @@ class TimerStateMachine {
         ? current.pausedAtEpochMs!
         : now;
     final endTimezoneId = await _getTimezoneId();
-    final startTimezoneId = current.startedTimezoneId.isEmpty
-        ? endTimezoneId
-        : current.startedTimezoneId;
+    final startTimezoneId = current.startTimezoneOr(endTimezoneId);
 
     final record = Record(
       id: _generateId(),
@@ -421,9 +419,7 @@ class TimerStateMachine {
       final referenceEnd = (current.isPaused && current.pausedAtEpochMs != null)
           ? current.pausedAtEpochMs!
           : now;
-      final startTimezoneId = current.startedTimezoneId.isEmpty
-          ? zoneId
-          : current.startedTimezoneId;
+      final startTimezoneId = current.startTimezoneOr(zoneId);
 
       stoppedRecord = Record(
         id: _generateId(),
@@ -534,9 +530,7 @@ class TimerStateMachine {
           referenceEnd - current.startedAtEpochMs - current.accumulatedPauseMs;
       final duration = rawDuration < 0 ? 0 : rawDuration;
       final endTimezoneId = await _getTimezoneId();
-      final startTimezoneId = current.startedTimezoneId.isEmpty
-          ? endTimezoneId
-          : current.startedTimezoneId;
+      final startTimezoneId = current.startTimezoneOr(endTimezoneId);
 
       final record = Record(
         id: _generateId(),

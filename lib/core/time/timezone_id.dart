@@ -12,7 +12,10 @@ String localTimezoneId() {
     final i = target.indexOf('zoneinfo/');
     if (i >= 0) return target.substring(i + 'zoneinfo/'.length);
   } catch (_) {}
-  return DateTime.now().timeZoneName;
+  final fallback = DateTime.now().timeZoneName;
+  // Platforms without the symlink (e.g. Android) report an abbreviation;
+  // upgrade it to the IANA zone when the mapping is unambiguous.
+  return ianaZoneForAbbreviation(fallback) ?? fallback;
 }
 
 /// Canonical IANA zone for each legacy abbreviation. Ambiguous abbreviations
@@ -105,11 +108,13 @@ Duration? utcOffsetAt(String timezoneId, int epochMs) {
 }
 
 /// The wall-clock time in [timezoneId] at [epochMs], encoded as a UTC
-/// [DateTime] whose fields are the local fields. Falls back to the device's
-/// local time when the zone cannot be resolved.
+/// [DateTime] whose fields are the local fields. Unknown zones fall back to a
+/// deterministic UTC reading rather than the device's current zone.
 DateTime wallClockAt(String timezoneId, int epochMs) {
   final offset = utcOffsetAt(timezoneId, epochMs);
-  if (offset == null) return DateTime.fromMillisecondsSinceEpoch(epochMs);
+  if (offset == null) {
+    return DateTime.fromMillisecondsSinceEpoch(epochMs, isUtc: true);
+  }
   return DateTime.fromMillisecondsSinceEpoch(
     epochMs + offset.inMilliseconds,
     isUtc: true,
@@ -128,13 +133,21 @@ String zoneAbbreviationAt(String timezoneId, int epochMs) {
 }
 
 /// Converts a wall-clock [time] back to a UTC epoch millisecond instant in
-/// [timezoneId]. [referenceEpochMs] picks which side of a DST change to use.
+/// [timezoneId]. [referenceEpochMs] seeds the offset lookup; the instant is
+/// then re-checked so an edit across a DST change lands on the right side.
 int epochMsFromWallClock(
   DateTime time,
   String timezoneId, {
   required int referenceEpochMs,
 }) {
-  final offset = utcOffsetAt(timezoneId, referenceEpochMs);
-  if (offset == null) return time.millisecondsSinceEpoch;
-  return time.millisecondsSinceEpoch - offset.inMilliseconds;
+  final wallMs = time.millisecondsSinceEpoch;
+  final referenceOffset = utcOffsetAt(timezoneId, referenceEpochMs);
+  if (referenceOffset == null) return wallMs;
+
+  var candidate = wallMs - referenceOffset.inMilliseconds;
+  final offsetAtCandidate = utcOffsetAt(timezoneId, candidate);
+  if (offsetAtCandidate != null && offsetAtCandidate != referenceOffset) {
+    candidate = wallMs - offsetAtCandidate.inMilliseconds;
+  }
+  return candidate;
 }

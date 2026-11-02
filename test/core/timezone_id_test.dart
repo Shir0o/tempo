@@ -48,6 +48,12 @@ void main() {
       );
     });
 
+    test('unknown zones fall back to a deterministic UTC reading', () {
+      final wall = wallClockAt('Not/AZone', noonUtc);
+      expect(wall.hour, 12);
+      expect(wall.isUtc, isTrue);
+    });
+
     test('epochMsFromWallClock undoes wallClockAt', () {
       final wall = wallClockAt('America/Los_Angeles', noonUtc);
       expect(
@@ -57,6 +63,21 @@ void main() {
           referenceEpochMs: noonUtc,
         ),
         noonUtc,
+      );
+    });
+
+    test('an edit across a DST change lands on the right side', () {
+      // 2026-03-08 02:00 PST springs forward to 03:00 PDT (10:00 UTC).
+      final beforeJump = DateTime.utc(2026, 3, 8, 9); // 01:00 PST
+      final wallAfterJump = DateTime.utc(2026, 3, 8, 5); // 05:00 PDT
+
+      expect(
+        epochMsFromWallClock(
+          wallAfterJump,
+          'America/Los_Angeles',
+          referenceEpochMs: beforeJump.millisecondsSinceEpoch,
+        ),
+        DateTime.utc(2026, 3, 8, 12).millisecondsSinceEpoch,
       );
     });
   });

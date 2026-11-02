@@ -662,9 +662,7 @@ class TempoMcpServer {
           (currentTimer.isPaused && currentTimer.pausedAtEpochMs != null)
           ? currentTimer.pausedAtEpochMs!
           : now;
-      final startTimezoneId = currentTimer.startedTimezoneId.isEmpty
-          ? endTimezoneId
-          : currentTimer.startedTimezoneId;
+      final startTimezoneId = currentTimer.startTimezoneOr(endTimezoneId);
       final record = Record(
         id: const Uuid().v4(),
         activityId: currentTimer.activityId,
@@ -731,9 +729,7 @@ class TempoMcpServer {
     final finalComment =
         (args['comment'] as String?) ?? currentTimer.currentComment;
     final endTimezoneId = zoneProvider();
-    final startTimezoneId = currentTimer.startedTimezoneId.isEmpty
-        ? endTimezoneId
-        : currentTimer.startedTimezoneId;
+    final startTimezoneId = currentTimer.startTimezoneOr(endTimezoneId);
     final record = Record(
       id: const Uuid().v4(),
       activityId: currentTimer.activityId,

@@ -20,7 +20,7 @@ class TempoDatabase {
   static const int databaseVersion = 2;
   static const String databaseFileName = 'tempo.db';
 
-  // --- DDL Constants matching specs/03-local-sqlite-schema-and-state-machine.md exactly ---
+  // --- DDL Constants (schema v2) ---
 
   static const String createActivitiesTable = '''
 CREATE TABLE IF NOT EXISTS activities (

@@ -82,6 +82,11 @@ class ActiveTimer {
     );
   }
 
+  /// The zone this timer actually started in, falling back to [fallback]
+  /// for timers that predate start-zone capture (pre-v2 rows).
+  String startTimezoneOr(String fallback) =>
+      startedTimezoneId.isEmpty ? fallback : startedTimezoneId;
+
   /// Evaluates elapsed duration in milliseconds based on UTC epoch arithmetic.
   /// Matches specification section 3.1:
   /// elapsedMs = (is_paused ? paused_at : nowUtc) - started_at - accumulated_pause
