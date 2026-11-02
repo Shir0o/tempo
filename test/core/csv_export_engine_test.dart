@@ -596,7 +596,8 @@ void main() {
         startedAtEpochMs: 1758109597000,
         endedAtEpochMs: 1758113197000,
         durationMs: 3600000,
-        timezoneId: 'UTC',
+        // Unresolvable zone so formatting falls through to the throwing converter.
+        timezoneId: 'Unknown/Zone',
         createdAtEpochMs: 1758113197000,
         updatedAtEpochMs: 1758113197000,
       );
