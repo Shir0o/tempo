@@ -19,11 +19,13 @@ void main() {
     late DeepLinkService deepLinkService;
     late int mockTime;
     late int idCounter;
+    late List<String> errors;
 
     setUp(() async {
       db = await TempoDatabase.openInMemory();
       mockTime = 1000000000;
       idCounter = 0;
+      errors = [];
 
       await db.insertActivity(
         const Activity(
@@ -67,6 +69,7 @@ void main() {
         database: db,
         nowUtcMs: () => mockTime,
         generateId: () => 'gen-${++idCounter}',
+        onError: errors.add,
       );
     });
 
@@ -94,27 +97,48 @@ void main() {
         expect(dayRecorder.lap!.startedAtEpochMs, equals(1000060000));
       });
 
-      test(
-        'creates new activity and new tags when they do not exist',
-        () async {
-          final success = await deepLinkService.handleUrl(
-            'tempo://start?activity=Guitar%20Practice&comment=Fingerpicking&tags=Music,Hobby',
-          );
+      test('creates new tags when they do not exist', () async {
+        final success = await deepLinkService.handleUrl(
+          'tempo://start?activity=Coding&comment=Fingerpicking&tags=Music,Hobby',
+        );
 
-          expect(success, isTrue);
-          final records = await db.getRecords();
-          expect(records.length, equals(1));
+        expect(success, isTrue);
+        final records = await db.getRecords();
+        expect(records.length, equals(1));
 
-          final activity = await db.getActivityById(records.first.activityId!);
-          expect(activity, isNotNull);
-          expect(activity!.name, equals('Guitar Practice'));
+        final activity = await db.getActivityById(records.first.activityId!);
+        expect(activity, isNotNull);
+        expect(activity!.name, equals('Coding'));
 
-          final tags = await db.getAllTags();
-          expect(tags.any((t) => t.name == 'Music'), isTrue);
-          expect(tags.any((t) => t.name == 'Hobby'), isTrue);
-          expect(records.first.tagIds.length, equals(2));
-        },
-      );
+        final tags = await db.getAllTags();
+        expect(tags.any((t) => t.name == 'Music'), isTrue);
+        expect(tags.any((t) => t.name == 'Hobby'), isTrue);
+        expect(records.first.tagIds.length, equals(2));
+      });
+
+      test('refuses an unknown Activity without changing the Lap', () async {
+        mockTime += 60000;
+        final activitiesBefore = await db.getAllActivities(
+          includeArchived: true,
+        );
+
+        final lapStart = dayRecorder.lap!.startedAtEpochMs;
+        final recordsBefore = await db.getRecords();
+
+        final success = await deepLinkService.handleUrl(
+          'tempo://start?activity=Guitar%20Practice',
+        );
+
+        expect(success, isFalse);
+        expect(deepLinkService.lastError, contains('Guitar Practice'));
+        expect(errors.single, contains('Guitar Practice'));
+        expect(await db.getRecords(), hasLength(recordsBefore.length));
+        expect(dayRecorder.lap!.startedAtEpochMs, equals(lapStart));
+        expect(
+          await db.getAllActivities(includeArchived: true),
+          hasLength(activitiesBefore.length),
+        );
+      });
 
       test('supports activity UUID lookup directly', () async {
         final success = await deepLinkService.handleUrl(
@@ -241,6 +265,24 @@ void main() {
       });
 
       test(
+        'refuses an unknown Activity instead of falling back to the last one',
+        () async {
+          await deepLinkService.handleUrl('tempo://start?activity=Coding');
+          mockTime += 30000;
+          final lapStart = dayRecorder.lap!.startedAtEpochMs;
+
+          final success = await deepLinkService.handleUrl(
+            'tempo://toggle?activity=Guitar',
+          );
+
+          expect(success, isFalse);
+          expect(deepLinkService.lastError, contains('Guitar'));
+          expect(dayRecorder.lap!.startedAtEpochMs, equals(lapStart));
+          expect(await db.getRecords(), hasLength(1));
+        },
+      );
+
+      test(
         'labels the open Lap with the last Activity without a parameter',
         () async {
           await deepLinkService.handleUrl('tempo://start?activity=Coding');
@@ -287,6 +329,16 @@ void main() {
       );
 
       test('decodes Unicode and emoji in parameters', () async {
+        await db.insertActivity(
+          const Activity(
+            id: 'act-research',
+            name: 'Research 🚀',
+            colorHex: '#4CAF50',
+            createdAtEpochMs: 1000000000,
+            updatedAtEpochMs: 1000000000,
+          ),
+        );
+
         final success = await deepLinkService.handleUrl(
           'tempo://start?activity=Research%20%F0%9F%9A%80&comment=%E2%9C%A8%20Testing',
         );

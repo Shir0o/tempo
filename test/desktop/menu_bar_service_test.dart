@@ -35,71 +35,58 @@ void main() {
       );
     });
 
-    test(
-      'active tracking states across full, compact, minimal with brackets',
-      () {
-        // 1 hour 24 minutes (84 minutes = 5040 seconds)
-        const elapsed = Duration(hours: 1, minutes: 24);
-
-        expect(
-          MenuBarService.formatTitle(
-            mode: StatusDisplayMode.full,
-            isIdle: false,
-            isPaused: false,
-            activityName: 'Coding',
-            elapsed: elapsed,
-            brackets: true,
-          ),
-          equals('[🟢 01:24 Coding]'),
-        );
-
-        expect(
-          MenuBarService.formatTitle(
-            mode: StatusDisplayMode.compact,
-            isIdle: false,
-            isPaused: false,
-            activityName: 'Coding',
-            elapsed: elapsed,
-            brackets: true,
-          ),
-          equals('[🟢 01:24]'),
-        );
-
-        expect(
-          MenuBarService.formatTitle(
-            mode: StatusDisplayMode.minimal,
-            isIdle: false,
-            isPaused: false,
-            activityName: 'Coding',
-            elapsed: elapsed,
-            brackets: true,
-          ),
-          equals('[🟢]'),
-        );
-      },
-    );
-
-    test('active tracking states without brackets', () {
+    test('open Lap states across full, compact, minimal with brackets', () {
+      // 1 hour 24 minutes (84 minutes = 5040 seconds)
       const elapsed = Duration(hours: 1, minutes: 24);
 
       expect(
         MenuBarService.formatTitle(
           mode: StatusDisplayMode.full,
           isIdle: false,
-          isPaused: false,
-          activityName: 'Coding',
           elapsed: elapsed,
-          brackets: false,
+          brackets: true,
         ),
-        equals('🟢 01:24 Coding'),
+        equals('[🟢 01:24]'),
       );
 
       expect(
         MenuBarService.formatTitle(
           mode: StatusDisplayMode.compact,
           isIdle: false,
-          isPaused: false,
-          activityName: 'Coding',
+          elapsed: elapsed,
+          brackets: true,
+        ),
+        equals('[🟢 01:24]'),
+      );
+
+      expect(
+        MenuBarService.formatTitle(
+          mode: StatusDisplayMode.minimal,
+          isIdle: false,
+          elapsed: elapsed,
+          brackets: true,
+        ),
+        equals('[🟢]'),
+      );
+    });
+
+    test('open Lap states without brackets', () {
+      const elapsed = Duration(hours: 1, minutes: 24);
+
+      expect(
+        MenuBarService.formatTitle(
+          mode: StatusDisplayMode.full,
+          isIdle: false,
+          elapsed: elapsed,
+          brackets: false,
+        ),
+        equals('🟢 01:24'),
+      );
+
+      expect(
+        MenuBarService.formatTitle(
+          mode: StatusDisplayMode.compact,
+          isIdle: false,
           elapsed: elapsed,
           brackets: false,
         ),
@@ -110,92 +97,10 @@ void main() {
         MenuBarService.formatTitle(
           mode: StatusDisplayMode.minimal,
           isIdle: false,
-          isPaused: false,
-          activityName: 'Coding',
           elapsed: elapsed,
           brackets: false,
         ),
         equals('🟢'),
-      );
-    });
-
-    test('paused states across full, compact, minimal with brackets', () {
-      const elapsed = Duration(hours: 1, minutes: 24);
-
-      expect(
-        MenuBarService.formatTitle(
-          mode: StatusDisplayMode.full,
-          isIdle: false,
-          isPaused: true,
-          activityName: 'Coding',
-          elapsed: elapsed,
-          brackets: true,
-        ),
-        equals('[⏸️ 01:24 Coding]'),
-      );
-
-      expect(
-        MenuBarService.formatTitle(
-          mode: StatusDisplayMode.compact,
-          isIdle: false,
-          isPaused: true,
-          activityName: 'Coding',
-          elapsed: elapsed,
-          brackets: true,
-        ),
-        equals('[⏸️ 01:24]'),
-      );
-
-      expect(
-        MenuBarService.formatTitle(
-          mode: StatusDisplayMode.minimal,
-          isIdle: false,
-          isPaused: true,
-          activityName: 'Coding',
-          elapsed: elapsed,
-          brackets: true,
-        ),
-        equals('[⏸️]'),
-      );
-    });
-
-    test('paused states without brackets', () {
-      const elapsed = Duration(hours: 1, minutes: 24);
-
-      expect(
-        MenuBarService.formatTitle(
-          mode: StatusDisplayMode.full,
-          isIdle: false,
-          isPaused: true,
-          activityName: 'Coding',
-          elapsed: elapsed,
-          brackets: false,
-        ),
-        equals('⏸️ 01:24 Coding'),
-      );
-
-      expect(
-        MenuBarService.formatTitle(
-          mode: StatusDisplayMode.compact,
-          isIdle: false,
-          isPaused: true,
-          activityName: 'Coding',
-          elapsed: elapsed,
-          brackets: false,
-        ),
-        equals('⏸️ 01:24'),
-      );
-
-      expect(
-        MenuBarService.formatTitle(
-          mode: StatusDisplayMode.minimal,
-          isIdle: false,
-          isPaused: true,
-          activityName: 'Coding',
-          elapsed: elapsed,
-          brackets: false,
-        ),
-        equals('⏸️'),
       );
     });
 
@@ -306,7 +211,6 @@ void main() {
     test('shows the Lap elapsed time and resets after a label', () async {
       final service = MenuBarService(
         dayRecorder: dayRecorder,
-        database: db,
         nowUtcMs: () => mockTime,
       );
 
@@ -330,7 +234,6 @@ void main() {
     test('switches display modes dynamically', () async {
       final service = MenuBarService(
         dayRecorder: dayRecorder,
-        database: db,
         nowUtcMs: () => mockTime,
       );
 
@@ -355,7 +258,6 @@ void main() {
     test('dispatches updateStatusItem method channel calls', () async {
       final service = MenuBarService(
         dayRecorder: dayRecorder,
-        database: db,
         nowUtcMs: () => mockTime,
       );
 

@@ -133,7 +133,7 @@ class AppDelegate: FlutterAppDelegate {
 
   private func showContextMenu() {
     let menu = NSMenu()
-    let toggleItem = NSMenuItem(title: "Toggle Timer", action: #selector(menuToggleTimer), keyEquivalent: "t")
+    let toggleItem = NSMenuItem(title: "Label Same as Last", action: #selector(menuToggleTimer), keyEquivalent: "t")
     toggleItem.target = self
     menu.addItem(toggleItem)
 

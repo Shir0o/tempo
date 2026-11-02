@@ -54,7 +54,9 @@ class TempoBroadcastReceiver : BroadcastReceiver() {
                 }
             }
             ACTION_STOP_TEMPO, ACTION_STOP_LEGACY -> {
-                uriBuilder.authority("stop")
+                // The Android intent keeps its name; it now marks a deliberate
+                // boundary by closing the Lap as an Untracked Record.
+                uriBuilder.authority("split")
                 if (comment.isNotEmpty()) {
                     uriBuilder.appendQueryParameter("comment", comment)
                 }

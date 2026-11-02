@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../core/state/day_recorder.dart';
-import '../data/database/tempo_database.dart';
 
 /// Display format modes for the macOS menu bar status item.
 enum StatusDisplayMode {
@@ -37,7 +36,6 @@ class MenuBarService {
   static const String channelName = 'com.tempos.tracker/menubar';
 
   final DayRecorder dayRecorder;
-  final TempoDatabase database;
   final MethodChannel _channel;
   final int Function() _nowUtcMs;
 
@@ -52,7 +50,6 @@ class MenuBarService {
 
   MenuBarService({
     required this.dayRecorder,
-    required this.database,
     MethodChannel? channel,
     int Function()? nowUtcMs,
     StatusDisplayMode initialMode = StatusDisplayMode.full,
@@ -111,21 +108,18 @@ class MenuBarService {
 
   /// Pure formatter for the menu bar title string.
   ///
+  /// The menu bar always shows the open Lap, which is unlabelled, so the title
+  /// is only an elapsed-time readout. There is no pause or stop state.
+  ///
   /// Examples:
   /// - Idle: `[⏱️]`
-  /// - Active Tracking:
-  ///   - Full: `[🟢 01:24 Coding]`
+  /// - Open Lap:
+  ///   - Full: `[🟢 01:24]`
   ///   - Compact: `[🟢 01:24]`
   ///   - Minimal: `[🟢]`
-  /// - Paused:
-  ///   - Full: `[⏸️ 01:24 Coding]`
-  ///   - Compact: `[⏸️ 01:24]`
-  ///   - Minimal: `[⏸️]`
   static String formatTitle({
     required StatusDisplayMode mode,
     required bool isIdle,
-    bool isPaused = false,
-    String? activityName,
     Duration elapsed = Duration.zero,
     bool brackets = true,
   }) {
@@ -133,17 +127,12 @@ class MenuBarService {
       return brackets ? '[⏱️]' : '⏱️';
     }
 
-    final indicator = isPaused ? '⏸️' : '🟢';
+    const indicator = '🟢';
     final timeStr = formatDurationHHMM(elapsed);
-    final nameStr = activityName != null && activityName.isNotEmpty
-        ? ' $activityName'
-        : '';
 
     String content;
     switch (mode) {
       case StatusDisplayMode.full:
-        content = '$indicator $timeStr$nameStr';
-        break;
       case StatusDisplayMode.compact:
         content = '$indicator $timeStr';
         break;
@@ -169,7 +158,7 @@ class MenuBarService {
             if (onToggleQuickMenu != null) {
               onToggleQuickMenu!();
             } else {
-              await _defaultToggle();
+              await _labelSameAsLast();
             }
           } else if (action == 'openFullWindow') {
             onOpenFullWindow?.call();
@@ -179,16 +168,9 @@ class MenuBarService {
     });
   }
 
-  Future<void> _defaultToggle() async {
-    // `start` now means "label the open Lap".
-    final activities = await database.getAllActivities();
-    if (activities.isNotEmpty) {
-      final pinned = activities.firstWhere(
-        (a) => a.isPinned,
-        orElse: () => activities.first,
-      );
-      await dayRecorder.label(pinned.id);
-    }
+  Future<void> _labelSameAsLast() async {
+    // The menu bar only labels the Lap; it never starts, stops, or pauses it.
+    await dayRecorder.sameAsLast();
   }
 
   Future<void> _onLapChanged() async {
