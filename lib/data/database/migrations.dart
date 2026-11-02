@@ -48,6 +48,160 @@ Future<void> migrateV1ToV2(DatabaseExecutor db) async {
   }
 }
 
+/// Version 4: Records may be Untracked (`activity_id IS NULL`).
+///
+/// SQLite cannot drop the NOT NULL constraint in place, so the Records table
+/// is rebuilt. `record_tags` is snapshotted first because dropping the parent
+/// table with foreign keys enabled cascades to its children. Gaps between
+/// existing Records are then filled with Untracked Records from the earliest
+/// Record onward; pre-existing overlaps are left untouched so no data is lost.
+Future<void> migrateV3ToV4(DatabaseExecutor db) async {
+  final nowUtc = DateTime.now().toUtc().millisecondsSinceEpoch;
+
+  await db.execute('''
+CREATE TEMP TABLE record_tags_backup AS SELECT * FROM record_tags;
+''');
+  await db.execute('DROP TABLE record_tags;');
+  await db.execute('''
+CREATE TABLE records_v4 (
+    id TEXT PRIMARY KEY NOT NULL,
+    activity_id TEXT REFERENCES activities(id) ON DELETE CASCADE,
+    started_at_epoch_ms INTEGER NOT NULL,
+    ended_at_epoch_ms INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    comment TEXT NOT NULL DEFAULT '',
+    timezone_id TEXT NOT NULL,
+    end_timezone_id TEXT NOT NULL DEFAULT '',
+    created_at_epoch_ms INTEGER NOT NULL,
+    updated_at_epoch_ms INTEGER NOT NULL
+);
+''');
+  await db.execute('''
+INSERT INTO records_v4 (
+    id, activity_id, started_at_epoch_ms, ended_at_epoch_ms, duration_ms,
+    comment, timezone_id, end_timezone_id, created_at_epoch_ms,
+    updated_at_epoch_ms
+)
+SELECT
+    id, activity_id, started_at_epoch_ms, ended_at_epoch_ms, duration_ms,
+    comment, timezone_id, end_timezone_id, created_at_epoch_ms,
+    updated_at_epoch_ms
+FROM records;
+''');
+  await db.execute('DROP TABLE records;');
+  await db.execute('ALTER TABLE records_v4 RENAME TO records;');
+  await db.execute('''
+CREATE TABLE record_tags (
+    record_id TEXT NOT NULL REFERENCES records(id) ON DELETE CASCADE,
+    tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (record_id, tag_id)
+);
+''');
+  final backupCount = await db.rawQuery(
+    'SELECT COUNT(*) AS count FROM record_tags_backup',
+  );
+  if ((backupCount.first['count'] as int) > 0) {
+    await db.execute('''
+INSERT OR IGNORE INTO record_tags (record_id, tag_id)
+SELECT record_id, tag_id FROM record_tags_backup;
+''');
+  }
+  await db.execute('DROP TABLE record_tags_backup;');
+  await db.execute(
+    'CREATE INDEX IF NOT EXISTS idx_records_started ON records(started_at_epoch_ms);',
+  );
+  await db.execute(
+    'CREATE INDEX IF NOT EXISTS idx_records_activity ON records(activity_id);',
+  );
+  await db.execute(
+    'CREATE INDEX IF NOT EXISTS idx_records_updated ON records(updated_at_epoch_ms);',
+  );
+
+  await _fillRecordGapsWithUntracked(db, nowUtc);
+}
+
+/// Inserts an Untracked Record for every uncovered span between existing
+/// Records, walking forward from the earliest Record. Overlaps are skipped
+/// rather than corrected: the cursor only advances past time already covered.
+Future<void> _fillRecordGapsWithUntracked(
+  DatabaseExecutor db,
+  int nowUtc,
+) async {
+  final rows = await db.query(
+    'records',
+    columns: [
+      'started_at_epoch_ms',
+      'ended_at_epoch_ms',
+      'timezone_id',
+      'end_timezone_id',
+    ],
+    orderBy: 'started_at_epoch_ms ASC, ended_at_epoch_ms ASC',
+  );
+  if (rows.isEmpty) return;
+
+  final lapRows = await db.query(
+    'lap',
+    columns: ['started_at_epoch_ms', 'started_timezone_id'],
+    where: 'id = 1',
+    limit: 1,
+  );
+  final lapStartEpochMs = lapRows.isEmpty
+      ? null
+      : lapRows.first['started_at_epoch_ms'] as int;
+  final lapTimezoneId = lapRows.isEmpty
+      ? ''
+      : lapRows.first['started_timezone_id'] as String? ?? '';
+
+  var cursorEpochMs = rows.first['started_at_epoch_ms'] as int;
+  var cursorTimezoneId =
+      (rows.first['end_timezone_id'] as String?)?.isNotEmpty == true
+      ? rows.first['end_timezone_id'] as String
+      : rows.first['timezone_id'] as String;
+
+  Future<void> addGap(int endEpochMs, String endTimezoneId) async {
+    if (endEpochMs <= cursorEpochMs) return;
+    await db.insert('records', {
+      'id': const Uuid().v4(),
+      'activity_id': null,
+      'started_at_epoch_ms': cursorEpochMs,
+      'ended_at_epoch_ms': endEpochMs,
+      'duration_ms': endEpochMs - cursorEpochMs,
+      'comment': '',
+      'timezone_id': cursorTimezoneId,
+      'end_timezone_id': endTimezoneId,
+      'created_at_epoch_ms': nowUtc,
+      'updated_at_epoch_ms': nowUtc,
+    });
+    cursorEpochMs = endEpochMs;
+    cursorTimezoneId = endTimezoneId;
+  }
+
+  for (final row in rows) {
+    final startedAtEpochMs = row['started_at_epoch_ms'] as int;
+    final endedAtEpochMs = row['ended_at_epoch_ms'] as int;
+    final startTimezoneId = row['timezone_id'] as String;
+    final rawEndTimezoneId = row['end_timezone_id'] as String?;
+    final endTimezoneId = rawEndTimezoneId == null || rawEndTimezoneId.isEmpty
+        ? startTimezoneId
+        : rawEndTimezoneId;
+
+    if (startedAtEpochMs > cursorEpochMs) {
+      await addGap(startedAtEpochMs, startTimezoneId);
+    }
+    if (endedAtEpochMs > cursorEpochMs) {
+      cursorEpochMs = endedAtEpochMs;
+      cursorTimezoneId = endTimezoneId;
+    }
+  }
+
+  if (lapStartEpochMs != null) {
+    await addGap(
+      lapStartEpochMs,
+      lapTimezoneId.isEmpty ? cursorTimezoneId : lapTimezoneId,
+    );
+  }
+}
+
 /// Version 3: the always-running Lap replaces the active timer.
 ///
 /// A running timer is closed as a Record ending at migration time (its pause

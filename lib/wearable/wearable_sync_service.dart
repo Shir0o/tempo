@@ -168,9 +168,7 @@ class WearableSyncService {
           break;
 
         case 'STOP':
-          // Split is #16; until then `stop` labels the Lap with the most
-          // recent Record's Activity so the watch keeps working.
-          await dayRecorder.sameAsLast();
+          await dayRecorder.split();
           break;
 
         case 'PAUSE':

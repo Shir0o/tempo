@@ -507,7 +507,7 @@ void main() {
         expect(writingRecords.first.comment, equals('Drafting specs'));
         expect(writingRecords.first.timezoneId, equals('Asia/Tokyo'));
 
-        // 2. stop_timer (the placeholder labels the Lap with the last Activity)
+        // 2. stop_timer splits the Lap into an Untracked Record
         final stopReq = jsonEncode({
           'jsonrpc': '2.0',
           'id': 41,
@@ -524,11 +524,11 @@ void main() {
           stopJson['result']['content'][0]['text'] as String,
         );
         expect(stopPayload['success'], isTrue);
-        expect(stopPayload['activity_name'], equals('Writing'));
-        expect(stopPayload['comment'], equals('Finished drafting'));
+        expect(stopPayload['activity_name'], isNull);
+        expect(stopPayload['comment'], equals(''));
 
         final stopped = (await db.getRecords()).firstWhere(
-          (r) => r.comment == 'Finished drafting',
+          (r) => r.activityId == null,
         );
         expect(stopped.timezoneId, equals('Asia/Tokyo'));
         expect(stopped.endTimezoneId, equals('Asia/Tokyo'));

@@ -91,7 +91,9 @@ class _DashboardViewState extends State<DashboardView> {
       final map = <String, int>{};
       for (final r in todayRecords) {
         totalMs += r.durationMs;
-        map[r.activityId] = (map[r.activityId] ?? 0) + r.durationMs;
+        final activityId = r.activityId;
+        if (activityId == null) continue;
+        map[activityId] = (map[activityId] ?? 0) + r.durationMs;
       }
 
       if (mounted) {

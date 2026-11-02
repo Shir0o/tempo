@@ -10,7 +10,9 @@ bool _listEquals<T>(List<T>? a, List<T>? b) {
 
 class Record {
   final String id;
-  final String activityId;
+
+  /// The Record's Activity, or null for an Untracked Record.
+  final String? activityId;
   final int startedAtEpochMs;
   final int endedAtEpochMs;
   final int durationMs;
@@ -40,6 +42,9 @@ class Record {
     required this.updatedAtEpochMs,
     this.tagIds = const [],
   }) : endTimezoneId = endTimezoneId ?? timezoneId;
+
+  /// Whether this Record still needs an Activity.
+  bool get isUntracked => activityId == null;
 
   /// True elapsed time from UTC epochs. Never derived from wall-clock times,
   /// so a 6h flight across zones is always 6h.
@@ -72,7 +77,7 @@ class Record {
     final storedEndZone = map['end_timezone_id'] as String?;
     return Record(
       id: map['id'] as String,
-      activityId: map['activity_id'] as String,
+      activityId: map['activity_id'] as String?,
       startedAtEpochMs: map['started_at_epoch_ms'] as int,
       endedAtEpochMs: map['ended_at_epoch_ms'] as int,
       durationMs: map['duration_ms'] as int,
@@ -111,6 +116,22 @@ class Record {
     createdAtEpochMs: createdAtEpochMs ?? this.createdAtEpochMs,
     updatedAtEpochMs: updatedAtEpochMs ?? this.updatedAtEpochMs,
     tagIds: tagIds ?? this.tagIds,
+  );
+
+  /// Returns a copy whose Activity is [activityId], which may be null to turn
+  /// the Record back into an Untracked Record.
+  Record withActivity(String? activityId) => Record(
+    id: id,
+    activityId: activityId,
+    startedAtEpochMs: startedAtEpochMs,
+    endedAtEpochMs: endedAtEpochMs,
+    durationMs: durationMs,
+    comment: comment,
+    timezoneId: timezoneId,
+    endTimezoneId: endTimezoneId,
+    createdAtEpochMs: createdAtEpochMs,
+    updatedAtEpochMs: updatedAtEpochMs,
+    tagIds: tagIds,
   );
 
   @override

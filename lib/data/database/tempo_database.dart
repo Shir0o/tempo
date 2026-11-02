@@ -17,10 +17,10 @@ class TempoDatabase {
 
   Database get db => _db;
 
-  static const int databaseVersion = 3;
+  static const int databaseVersion = 4;
   static const String databaseFileName = 'tempo.db';
 
-  // --- DDL Constants (schema v3) ---
+  // --- DDL Constants (schema v4) ---
 
   static const String createActivitiesTable = '''
 CREATE TABLE IF NOT EXISTS activities (
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS tags (
   static const String createRecordsTable = '''
 CREATE TABLE IF NOT EXISTS records (
     id TEXT PRIMARY KEY NOT NULL,
-    activity_id TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+    activity_id TEXT REFERENCES activities(id) ON DELETE CASCADE,
     started_at_epoch_ms INTEGER NOT NULL,
     ended_at_epoch_ms INTEGER NOT NULL,
     duration_ms INTEGER NOT NULL,
@@ -132,6 +132,9 @@ CREATE TABLE IF NOT EXISTS tombstones (
           }
           if (oldVersion < 3) {
             await migrateV2ToV3(db);
+          }
+          if (oldVersion < 4) {
+            await migrateV3ToV4(db);
           }
         },
       ),
@@ -368,6 +371,7 @@ CREATE TABLE IF NOT EXISTS tombstones (
     int? startedAfter,
     int? startedBefore,
     String? activityId,
+    bool trackedOnly = false,
     int? limit,
     int? offset,
     String? orderBy,
@@ -386,6 +390,9 @@ CREATE TABLE IF NOT EXISTS tombstones (
     if (activityId != null) {
       whereClauses.add('activity_id = ?');
       whereArgs.add(activityId);
+    }
+    if (trackedOnly) {
+      whereClauses.add('activity_id IS NOT NULL');
     }
 
     final where = whereClauses.isEmpty ? null : whereClauses.join(' AND ');

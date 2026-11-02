@@ -783,4 +783,52 @@ void main() {
       expect(content, contains('"Lunch"'));
     });
   });
+
+  group('Untracked Records', () {
+    test('are omitted until labelled, then appear on the next write', () async {
+      final engine = CsvExportEngine(
+        database: db,
+        targetFile: targetFile,
+        epochToDateTime: fixedEpochToDateTime,
+      );
+      addTearDown(engine.dispose);
+
+      int mockTime = 1760000000000;
+      final recorder = DayRecorder(
+        database: db,
+        nowUtcMs: () => mockTime,
+        generateId: () => 'rec-untracked',
+        getTimezoneId: () => 'UTC',
+        csvExportEngine: engine,
+      );
+      addTearDown(recorder.dispose);
+
+      await db.insertRecord(
+        Record(
+          id: 'rec-untracked',
+          activityId: null,
+          startedAtEpochMs: 1759000000000,
+          endedAtEpochMs: 1759003600000,
+          durationMs: 3600000,
+          timezoneId: 'UTC',
+          endTimezoneId: 'UTC',
+          createdAtEpochMs: 1759000000000,
+          updatedAtEpochMs: 1759000000000,
+        ),
+      );
+
+      await engine.exportImmediately();
+      final before = await targetFile.readAsString();
+      expect(before, equals('${CsvExportEngine.csvHeader}\n'));
+
+      await recorder.relabel('rec-untracked', testActivityCoding.id);
+      expect(engine.isExportScheduled, isTrue);
+
+      await engine.exportImmediately();
+      final after = await targetFile.readAsString();
+      expect(after, contains('"Coding"'));
+      expect(after, contains('1:0:0,60'));
+      expect(after.split('\n').where((line) => line.isNotEmpty).length, 2);
+    });
+  });
 }

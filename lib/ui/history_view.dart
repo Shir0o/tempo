@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/state/day_recorder.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
 import '../core/time/timezone_id.dart';
@@ -10,8 +11,13 @@ import 'helpers/ui_helpers.dart';
 /// record editing, tag assignment, timestamp adjustment, and deletion.
 class HistoryView extends StatefulWidget {
   final TempoDatabase database;
+  final DayRecorder dayRecorder;
 
-  const HistoryView({super.key, required this.database});
+  const HistoryView({
+    super.key,
+    required this.database,
+    required this.dayRecorder,
+  });
 
   @override
   State<HistoryView> createState() => _HistoryViewState();
@@ -65,6 +71,93 @@ class _HistoryViewState extends State<HistoryView> {
       (grouped[key] ??= []).add(r);
     }
     return grouped;
+  }
+
+  Future<void> _openLabelUntrackedDialog(Record record) async {
+    final activities =
+        _activitiesMap.values.where((activity) => !activity.isArchived).toList()
+          ..sort((a, b) {
+            if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
+            return a.name.compareTo(b.name);
+          });
+    final timeRange = UiHelpers.formatZonedTimeRange(record);
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1C1C24),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'What was it?',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      timeRange,
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 12,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 20),
+                  children: [
+                    for (final activity in activities)
+                      ListTile(
+                        leading: Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            color: UiHelpers.parseHexColor(activity.colorHex),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        title: Text(
+                          activity.name,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                          ),
+                        ),
+                        onTap: () async {
+                          Navigator.of(ctx).pop();
+                          await widget.dayRecorder.relabel(
+                            record.id,
+                            activity.id,
+                          );
+                          if (mounted) await _loadData();
+                        },
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _openEditRecordDialog(Record record) async {
@@ -567,113 +660,150 @@ class _HistoryViewState extends State<HistoryView> {
   }
 
   Widget _buildRecordTile(Record record) {
-    final activity = _activitiesMap[record.activityId];
-    final color = UiHelpers.parseHexColor(activity?.colorHex);
-    final icon = UiHelpers.getIconData(activity?.iconName);
+    final isUntracked = record.isUntracked;
+    final activity = isUntracked ? null : _activitiesMap[record.activityId];
+    final color = isUntracked
+        ? const Color(0xFF9E9E9E)
+        : UiHelpers.parseHexColor(activity?.colorHex);
+    final icon = isUntracked
+        ? Icons.help_outline
+        : UiHelpers.getIconData(activity?.iconName);
     final timeRange = UiHelpers.formatZonedTimeRange(record);
     final durationStr = UiHelpers.formatDurationHuman(record.elapsedMs);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1A22),
+        color: isUntracked ? const Color(0xFF202027) : const Color(0xFF1A1A22),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () => _openEditRecordDialog(record),
+          onTap: () => isUntracked
+              ? _openLabelUntrackedDialog(record)
+              : _openEditRecordDialog(record),
           borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                // Color strip + Icon
-                Container(
-                  width: 4,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: color,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(icon, color: color, size: 16),
-                ),
-                const SizedBox(width: 12),
-                // Name + Time Range + Comment
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        activity?.name ?? 'Unknown Activity',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        timeRange,
-                        style: const TextStyle(
-                          color: Colors.white38,
-                          fontSize: 11,
-                          fontFamily: 'monospace',
-                        ),
-                      ),
-                      if (record.comment.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          record.comment,
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
-                            fontStyle: FontStyle.italic,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                // Duration Badge
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.05),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    durationStr,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      fontFamily: 'monospace',
+          child: CustomPaint(
+            painter: isUntracked ? const _HatchPainter() : null,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  // Color strip + Icon
+                  Container(
+                    width: 4,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: color,
+                      borderRadius: BorderRadius.circular(2),
                     ),
                   ),
-                ),
-              ],
+                  const SizedBox(width: 10),
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(icon, color: color, size: 16),
+                  ),
+                  const SizedBox(width: 12),
+                  // Name + Time Range + Comment
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          activity?.name ?? 'Untracked',
+                          style: TextStyle(
+                            color: isUntracked ? Colors.white60 : Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            fontStyle: isUntracked
+                                ? FontStyle.italic
+                                : FontStyle.normal,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          timeRange,
+                          style: const TextStyle(
+                            color: Colors.white38,
+                            fontSize: 11,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                        if (record.comment.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            record.comment,
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                              fontStyle: FontStyle.italic,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // Duration Badge
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.05),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      durationStr,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
       ),
     );
   }
+}
+
+/// Diagonal hatching that marks a Record as still needing an Activity.
+class _HatchPainter extends CustomPainter {
+  const _HatchPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.05)
+      ..strokeWidth = 1;
+    const gap = 7.0;
+    for (var x = -size.height; x < size.width; x += gap) {
+      canvas.drawLine(
+        Offset(x, size.height),
+        Offset(x + size.height, 0),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _HatchPainter oldDelegate) => false;
 }

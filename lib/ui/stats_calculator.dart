@@ -158,9 +158,11 @@ class StatsCalculator {
 
     for (final r in periodRecords) {
       totalDurationMs += r.durationMs;
-      durationByActivity[r.activityId] =
-          (durationByActivity[r.activityId] ?? 0) + r.durationMs;
-      countByActivity[r.activityId] = (countByActivity[r.activityId] ?? 0) + 1;
+      final activityId = r.activityId;
+      if (activityId == null) continue;
+      durationByActivity[activityId] =
+          (durationByActivity[activityId] ?? 0) + r.durationMs;
+      countByActivity[activityId] = (countByActivity[activityId] ?? 0) + 1;
     }
 
     final breakdowns = <ActivityStat>[];

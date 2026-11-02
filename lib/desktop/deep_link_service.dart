@@ -11,8 +11,8 @@ import '../data/models/models.dart';
 ///
 /// Endpoints:
 /// - `tempo://start?activity=...&comment=...&tags=...` labels the open Lap.
-/// - `tempo://stop` is a temporary shim that labels the open Lap with the most
-///   recent Record's Activity until Split lands in #16.
+/// - `tempo://stop` and `tempo://split` close the open Lap as an Untracked
+///   Record without labelling it.
 /// - `tempo://toggle?activity=...` labels the open Lap.
 ///
 /// Pause and resume no longer exist.
@@ -91,7 +91,9 @@ class DeepLinkService {
       case 'start':
         return await _handleStart(uri);
       case 'stop':
-        return await _handleStop(uri);
+        return await _handleSplit();
+      case 'split':
+        return await _handleSplit();
       case 'toggle':
         return await _handleToggle(uri);
       default:
@@ -130,10 +132,8 @@ class DeepLinkService {
     return true;
   }
 
-  Future<bool> _handleStop(Uri uri) async {
-    // Split is #16; until then `stop` keeps existing links working by labeling
-    // the Lap with the most recent Record's Activity.
-    await dayRecorder.sameAsLast();
+  Future<bool> _handleSplit() async {
+    await dayRecorder.split();
     return true;
   }
 
