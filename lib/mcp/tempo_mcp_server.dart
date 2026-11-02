@@ -12,20 +12,32 @@ import 'pii_sanitizer.dart';
 /// Local Model Context Protocol (MCP) Server for Tempo.
 ///
 /// Implements JSON-RPC 2.0 protocol over stdio for external AI assistants.
-/// Provides rich analytical tools (active timer, daily summary, historical query,
-/// trends) and guarded write tools (start, stop, manual add) gated behind `--allow-writes`.
+/// Read tools describe Days plainly: a Day's timeline, time per Activity over a
+/// range, Untracked Records, and comparisons between Days. Write tools (label
+/// the Lap, split the Lap, move a Boundary) are gated behind `--allow-writes`.
 class TempoMcpServer {
+  static const Set<String> _writeToolNames = {
+    'label_lap',
+    'split_lap',
+    'move_boundary',
+  };
+
   final TempoDatabase database;
   final PIISanitizer sanitizer;
   final bool allowWrites;
   final CsvExportEngine? csvExportEngine;
   final String Function() zoneProvider;
+  final int Function() nowUtcMs;
   final DayRecorder? _injectedRecorder;
   bool _recorderInitialized = false;
 
   late final DayRecorder _recorder =
       _injectedRecorder ??
-      DayRecorder(database: database, getTimezoneId: zoneProvider);
+      DayRecorder(
+        database: database,
+        nowUtcMs: nowUtcMs,
+        getTimezoneId: zoneProvider,
+      );
 
   TempoMcpServer({
     required this.database,
@@ -33,9 +45,12 @@ class TempoMcpServer {
     this.allowWrites = false,
     this.csvExportEngine,
     String Function()? zoneProvider,
+    int Function()? nowUtcMs,
     DayRecorder? dayRecorder,
   }) : sanitizer = sanitizer ?? PIISanitizer(),
        zoneProvider = zoneProvider ?? localTimezoneId,
+       nowUtcMs =
+           nowUtcMs ?? (() => DateTime.now().toUtc().millisecondsSinceEpoch),
        _injectedRecorder = dayRecorder;
 
   Future<DayRecorder> _readyRecorder() async {
@@ -149,26 +164,111 @@ class TempoMcpServer {
   String _handleToolsList(dynamic id) {
     final tools = <Map<String, dynamic>>[
       {
-        'name': 'get_active_timer',
-        'description': 'Returns the status of the currently ticking timer, elapsed seconds, activity, comment, and tags.',
-        'inputSchema': {'type': 'object', 'properties': {}},
-      },
-      {
-        'name': 'get_daily_summary',
-        'description': 'Aggregates total tracked time, record count, and category breakdown for a single day.',
+        'name': 'get_day_timeline',
+        'description':
+            "Lists one Day's Records in order, each with the wall-clock times "
+            'and IANA zones it started and ended in, plus the Day length, '
+            'Untracked Records and the open Lap.',
         'inputSchema': {
           'type': 'object',
           'properties': {
             'date': {
               'type': 'string',
-              'description': 'Target date in YYYY-MM-DD format (UTC). Defaults to current day.',
+              'description': 'The Day to describe, in YYYY-MM-DD format. Defaults to today.',
+            },
+            'timezone': {
+              'type': 'string',
+              'description':
+                  'IANA zone whose local midnight bounds the Day (e.g. '
+                  '"America/Los_Angeles"). Defaults to this device\'s zone.',
             },
           },
         },
       },
       {
+        'name': 'get_time_per_activity',
+        'description':
+            'Totals time per Activity over an inclusive date range, with the '
+            'count and length of Untracked Records.',
+        'inputSchema': {
+          'type': 'object',
+          'properties': {
+            'start_date': {
+              'type': 'string',
+              'description': 'Inclusive first Day (YYYY-MM-DD).',
+            },
+            'end_date': {
+              'type': 'string',
+              'description': 'Inclusive last Day (YYYY-MM-DD).',
+            },
+            'timezone': {
+              'type': 'string',
+              'description':
+                  'IANA zone used for the Day boundaries. Defaults to this '
+                  "device's zone.",
+            },
+          },
+          'required': ['start_date', 'end_date'],
+        },
+      },
+      {
+        'name': 'get_untracked_records',
+        'description':
+            'Lists Untracked Records (time with no Activity yet) over an '
+            'inclusive date range, with their count and total length.',
+        'inputSchema': {
+          'type': 'object',
+          'properties': {
+            'start_date': {
+              'type': 'string',
+              'description': 'Inclusive first Day (YYYY-MM-DD).',
+            },
+            'end_date': {
+              'type': 'string',
+              'description': 'Inclusive last Day (YYYY-MM-DD).',
+            },
+            'timezone': {
+              'type': 'string',
+              'description':
+                  'IANA zone used for the Day boundaries. Defaults to this '
+                  "device's zone.",
+            },
+          },
+          'required': ['start_date', 'end_date'],
+        },
+      },
+      {
+        'name': 'compare_days',
+        'description':
+            'Compares several Days side by side: each Day length, time per '
+            'Activity, Untracked Records, and the change in each Activity\'s '
+            'time between the first and last Day.',
+        'inputSchema': {
+          'type': 'object',
+          'properties': {
+            'dates': {
+              'type': 'array',
+              'items': {'type': 'string'},
+              'description':
+                  'Two or more Days to compare, in YYYY-MM-DD format. They are '
+                  'reported in date order.',
+            },
+            'timezone': {
+              'type': 'string',
+              'description':
+                  'IANA zone used for the Day boundaries. Defaults to this '
+                  "device's zone.",
+            },
+          },
+          'required': ['dates'],
+        },
+      },
+      {
         'name': 'query_records',
-        'description': 'Searches historical time records with date range, activity name, and tag filters with sanitized comments.',
+        'description':
+            'Searches Records by date range, Activity, or tag, returning start '
+            'and end times in the zones they happened in with sanitized '
+            'comments.',
         'inputSchema': {
           'type': 'object',
           'properties': {
@@ -182,7 +282,7 @@ class TempoMcpServer {
             },
             'activity_name': {
               'type': 'string',
-              'description': 'Optional activity name filter.',
+              'description': 'Optional Activity name filter.',
             },
             'tag': {
               'type': 'string',
@@ -190,24 +290,16 @@ class TempoMcpServer {
             },
             'limit': {
               'type': 'integer',
-              'description': 'Max records to return (default: 50, max: 200).',
+              'description': 'Max Records to return (default: 50, max: 200).',
+            },
+            'timezone': {
+              'type': 'string',
+              'description':
+                  'IANA zone used for the date range boundaries. Defaults to '
+                  "this device's zone.",
             },
           },
           'required': ['start_date', 'end_date'],
-        },
-      },
-      {
-        'name': 'analyze_trends',
-        'description': 'Calculates multi-week habit consistency, time-of-day hourly histogram (00:00-23:00), and habit streaks.',
-        'inputSchema': {
-          'type': 'object',
-          'properties': {
-            'lookback_weeks': {
-              'type': 'integer',
-              'description':
-                  'Number of historical weeks to analyze (default: 4).',
-            },
-          },
         },
       },
     ];
@@ -215,68 +307,59 @@ class TempoMcpServer {
     if (allowWrites) {
       tools.addAll([
         {
-          'name': 'start_timer',
+          'name': 'label_lap',
           'description':
-              'Starts the active timer for an activity (guarded write tool).',
+              'Labels the open Lap with an Activity, closing it as a Record '
+              'ending now and opening a new Lap. Requires --allow-writes.',
           'inputSchema': {
             'type': 'object',
             'properties': {
               'activity_name': {
                 'type': 'string',
-                'description': 'Name of the activity to track.',
+                'description': 'Name of the Activity that filled the Lap.',
               },
               'comment': {
                 'type': 'string',
-                'description': 'Optional comment for this session.',
+                'description': 'Optional comment for this Record.',
               },
               'tags': {
                 'type': 'array',
                 'items': {'type': 'string'},
-                'description': 'Optional list of tag names.',
+                'description': 'Optional tag names.',
               },
             },
             'required': ['activity_name'],
           },
         },
         {
-          'name': 'stop_timer',
-          'description': 'Splits the open Lap into an untracked Record and opens a new Lap (guarded write tool).',
-          'inputSchema': {
-            'type': 'object',
-            'properties': {
-              'comment': {
-                'type': 'string',
-                'description': 'Ignored; kept for backward compatibility.',
-              },
-            },
-          },
+          'name': 'split_lap',
+          'description':
+              'Closes the open Lap as an Untracked Record and opens a new Lap '
+              'at the same instant. Requires --allow-writes.',
+          'inputSchema': {'type': 'object', 'properties': {}},
         },
         {
-          'name': 'add_manual_record',
-          'description': 'Manually logs a past completed time session (guarded write tool).',
+          'name': 'move_boundary',
+          'description':
+              'Moves the Boundary at the end of a Record to a new instant, '
+              'resizing that Record and the one after it together. Refused '
+              'when the instant would push past a neighbour. Requires '
+              '--allow-writes.',
           'inputSchema': {
             'type': 'object',
             'properties': {
-              'activity_name': {
+              'record_id': {
                 'type': 'string',
-                'description': 'Name of the activity.',
+                'description': 'Id of the Record whose end Boundary moves.',
               },
-              'start_time': {
+              'new_instant': {
                 'type': 'string',
-                'description': 'Start timestamp in ISO 8601 format.',
-              },
-              'end_time': {
-                'type': 'string',
-                'description': 'End timestamp in ISO 8601 format.',
-              },
-              'comment': {'type': 'string', 'description': 'Optional comment.'},
-              'tags': {
-                'type': 'array',
-                'items': {'type': 'string'},
-                'description': 'Optional list of tag names.',
+                'description':
+                    'New Boundary as an ISO 8601 instant with an explicit '
+                    'offset, e.g. "2026-10-30T09:30:00Z".',
               },
             },
-            'required': ['activity_name', 'start_time', 'end_time'],
+            'required': ['record_id', 'new_instant'],
           },
         },
       ]);
@@ -304,45 +387,45 @@ class TempoMcpServer {
     }
 
     // Enforce mutation guard for write tools
-    if (toolName == 'start_timer' ||
-        toolName == 'stop_timer' ||
-        toolName == 'add_manual_record') {
-      if (!allowWrites) {
-        return _errorToolResponse(
-          id,
-          'Mutation tool "$toolName" is disabled. The MCP server is running in read-only mode. Launch with --allow-writes to enable write operations.',
-        );
-      }
+    if (_writeToolNames.contains(toolName) && !allowWrites) {
+      return _errorToolResponse(
+        id,
+        'Mutation tool "$toolName" is disabled. The MCP server is running in read-only mode. Launch with --allow-writes to enable write operations.',
+      );
     }
 
     try {
       switch (toolName) {
-        case 'get_active_timer':
-          final result = await _getActiveTimerTool();
+        case 'get_day_timeline':
+          final result = await _getDayTimelineTool(args);
           return _successToolResponse(id, result);
 
-        case 'get_daily_summary':
-          final result = await _getDailySummaryTool(args);
+        case 'get_time_per_activity':
+          final result = await _getTimePerActivityTool(args);
+          return _successToolResponse(id, result);
+
+        case 'get_untracked_records':
+          final result = await _getUntrackedRecordsTool(args);
+          return _successToolResponse(id, result);
+
+        case 'compare_days':
+          final result = await _compareDaysTool(args);
           return _successToolResponse(id, result);
 
         case 'query_records':
           final result = await _queryRecordsTool(args);
           return _successToolResponse(id, result);
 
-        case 'analyze_trends':
-          final result = await _analyzeTrendsTool(args);
+        case 'label_lap':
+          final result = await _labelLapTool(args);
           return _successToolResponse(id, result);
 
-        case 'start_timer':
-          final result = await _startTimerTool(args);
+        case 'split_lap':
+          final result = await _splitLapTool();
           return _successToolResponse(id, result);
 
-        case 'stop_timer':
-          final result = await _stopTimerTool(args);
-          return _successToolResponse(id, result);
-
-        case 'add_manual_record':
-          final result = await _addManualRecordTool(args);
+        case 'move_boundary':
+          final result = await _moveBoundaryTool(args);
           return _successToolResponse(id, result);
 
         default:
@@ -354,112 +437,241 @@ class TempoMcpServer {
   }
 
   // ==========================================
-  // Analytical Tool Implementations
+  // Read Tools
   // ==========================================
 
-  Future<Map<String, dynamic>> _getActiveTimerTool() async {
-    final recorder = await _readyRecorder();
-    final lap = recorder.lap;
-    if (lap == null) {
-      return {
-        'is_tracking': false,
-        'activity_name': null,
-        'color_hex': null,
-        'started_at': null,
-        'elapsed_seconds': 0,
-        'is_paused': false,
-        'comment': '',
-        'tags': <String>[],
-      };
-    }
+  Future<Map<String, dynamic>> _getDayTimelineTool(
+    Map<String, dynamic> args,
+  ) async {
+    final zone = _zoneArg(args);
+    final date = _optionalDate(args['date']) ?? _todayInZone(zone);
+    final window = _dayWindow(date, zone);
+
+    final records = await _recordsOverlapping(window.startMs, window.endMs);
+    final activities = await _activityMap();
+    final tags = await _tagMap();
+    final lap = await database.getLap();
+    final openLap = _describeLap(lap, window.startMs, window.endMs, zone);
+
+    final untracked = records.where((r) => r.isUntracked);
+    final labelledMs = _labelledOverlapMs(
+      records,
+      window.startMs,
+      window.endMs,
+    );
+    final untrackedMs = _untrackedOverlapMs(
+      untracked,
+      window.startMs,
+      window.endMs,
+    );
 
     return {
-      'is_tracking': true,
-      'activity_name': null,
-      'color_hex': null,
-      'started_at': DateTime.fromMillisecondsSinceEpoch(
-        lap.startedAtEpochMs,
-        isUtc: true,
-      ).toIso8601String(),
-      'elapsed_seconds': recorder.currentElapsedMs ~/ 1000,
-      'is_paused': false,
-      'comment': '',
-      'tags': <String>[],
+      'date': date,
+      'timezone': zone,
+      'started_at': _isoUtc(window.startMs),
+      'ended_at': _isoUtc(window.endMs),
+      'day_length_seconds': (window.endMs - window.startMs) ~/ 1000,
+      'labelled_seconds': labelledMs ~/ 1000,
+      'untracked_records': {
+        'count': untracked.length,
+        'duration_seconds': untrackedMs ~/ 1000,
+      },
+      'open_lap': openLap,
+      'records': _describeRecords(records, activities, tags),
     };
   }
 
-  Future<Map<String, dynamic>> _getDailySummaryTool(
+  Future<Map<String, dynamic>> _getTimePerActivityTool(
     Map<String, dynamic> args,
   ) async {
-    final dateStr =
-        (args['date'] as String?)?.trim() ??
-        DateTime.now().toUtc().toIso8601String().substring(0, 10);
+    final zone = _zoneArg(args);
+    final startDate = _requiredDate(args, 'start_date');
+    final endDate = _requiredDate(args, 'end_date');
+    final window = _rangeWindow(startDate, endDate, zone);
 
-    final parsed = DateTime.parse('${dateStr}T00:00:00Z');
-    final startMs = parsed.millisecondsSinceEpoch;
-    final endMs = DateTime.parse('${dateStr}T23:59:59.999Z')
-        .millisecondsSinceEpoch;
+    final records = await _recordsOverlapping(window.startMs, window.endMs);
+    final activities = await _activityMap();
+    final lap = await database.getLap();
+    final perActivity = <String, _ActivityTotal>{};
 
-    final records = await database.getRecords(
-      startedAfter: startMs,
-      startedBefore: endMs,
-    );
-
-    var totalDurationMs = 0;
-    final activityDurations = <String, int>{};
-
-    for (final r in records) {
-      totalDurationMs += r.durationMs;
-      final activityId = r.activityId;
-      if (activityId == null) continue;
-      activityDurations[activityId] =
-          (activityDurations[activityId] ?? 0) + r.durationMs;
+    for (final record in records) {
+      if (record.isUntracked) continue;
+      final overlapMs = _overlapMs(
+        record.startedAtEpochMs,
+        record.endedAtEpochMs,
+        window.startMs,
+        window.endMs,
+      );
+      if (overlapMs <= 0) continue;
+      final name = _activityName(record, activities);
+      final total = perActivity.putIfAbsent(name, () => _ActivityTotal());
+      total.durationMs += overlapMs;
+      total.recordCount += 1;
     }
 
-    final activities = await database.getAllActivities(includeArchived: true);
-    final activityMap = {for (final a in activities) a.id: a};
+    final totals = perActivity.entries.toList()
+      ..sort((a, b) => b.value.durationMs.compareTo(a.value.durationMs));
 
-    final breakdown = <Map<String, dynamic>>[];
-    for (final entry in activityDurations.entries) {
-      final activityName = activityMap[entry.key]?.name ?? entry.key;
-      final hours = entry.value / 3600000.0;
-      final pct = totalDurationMs > 0
-          ? (entry.value / totalDurationMs) * 100.0
-          : 0.0;
-      breakdown.add({
-        'activity': activityName,
-        'hours': double.parse(hours.toStringAsFixed(2)),
-        'percentage': double.parse(pct.toStringAsFixed(1)),
+    final untracked = records.where((r) => r.isUntracked).toList();
+    final openLap = _describeLap(lap, window.startMs, window.endMs, zone);
+
+    return {
+      'start_date': startDate,
+      'end_date': endDate,
+      'timezone': zone,
+      'started_at': _isoUtc(window.startMs),
+      'ended_at': _isoUtc(window.endMs),
+      'labelled_seconds':
+          _labelledOverlapMs(records, window.startMs, window.endMs) ~/ 1000,
+      'untracked_records': {
+        'count': untracked.length,
+        'duration_seconds':
+            _untrackedOverlapMs(untracked, window.startMs, window.endMs) ~/
+            1000,
+      },
+      'open_lap_seconds': (openLap?['elapsed_seconds_in_window'] as int?) ?? 0,
+      'time_per_activity': [
+        for (final entry in totals)
+          {
+            'activity': entry.key,
+            'duration_ms': entry.value.durationMs,
+            'duration_seconds': entry.value.durationMs ~/ 1000,
+            'record_count': entry.value.recordCount,
+          },
+      ],
+    };
+  }
+
+  Future<Map<String, dynamic>> _getUntrackedRecordsTool(
+    Map<String, dynamic> args,
+  ) async {
+    final zone = _zoneArg(args);
+    final startDate = _requiredDate(args, 'start_date');
+    final endDate = _requiredDate(args, 'end_date');
+    final window = _rangeWindow(startDate, endDate, zone);
+
+    final records = await _recordsOverlapping(window.startMs, window.endMs);
+    final untracked = records.where((r) => r.isUntracked).toList();
+    final activities = await _activityMap();
+    final tags = await _tagMap();
+    final lap = await database.getLap();
+    final openLap = _describeLap(lap, window.startMs, window.endMs, zone);
+
+    return {
+      'start_date': startDate,
+      'end_date': endDate,
+      'timezone': zone,
+      'started_at': _isoUtc(window.startMs),
+      'ended_at': _isoUtc(window.endMs),
+      'count': untracked.length,
+      'total_duration_seconds':
+          _untrackedOverlapMs(untracked, window.startMs, window.endMs) ~/ 1000,
+      'open_lap': openLap,
+      'records': _describeRecords(untracked, activities, tags),
+    };
+  }
+
+  Future<Map<String, dynamic>> _compareDaysTool(
+    Map<String, dynamic> args,
+  ) async {
+    final zone = _zoneArg(args);
+    final rawDates = args['dates'];
+    if (rawDates is! List || rawDates.length < 2) {
+      throw ArgumentError('dates must list at least two Days (YYYY-MM-DD).');
+    }
+    if (rawDates.length > 14) {
+      throw ArgumentError('dates can compare at most fourteen Days.');
+    }
+    final dates = rawDates.map((value) {
+      final date = _optionalDate(value);
+      if (date == null) {
+        throw ArgumentError('Every entry in dates must be YYYY-MM-DD.');
+      }
+      return date;
+    }).toList()..sort();
+
+    final activities = await _activityMap();
+    final lap = await database.getLap();
+    final days = <Map<String, dynamic>>[];
+    final perActivityByDate = <String, Map<String, int>>{};
+
+    for (final date in dates) {
+      final window = _dayWindow(date, zone);
+      final records = await _recordsOverlapping(window.startMs, window.endMs);
+      final perActivity = <String, int>{};
+      for (final record in records) {
+        if (record.isUntracked) continue;
+        final overlapMs = _overlapMs(
+          record.startedAtEpochMs,
+          record.endedAtEpochMs,
+          window.startMs,
+          window.endMs,
+        );
+        if (overlapMs <= 0) continue;
+        final name = _activityName(record, activities);
+        perActivity[name] = (perActivity[name] ?? 0) + overlapMs;
+      }
+      for (final entry in perActivity.entries) {
+        (perActivityByDate[entry.key] ??= {})[date] = entry.value;
+      }
+
+      final untracked = records.where((r) => r.isUntracked).toList();
+      final openLap = _describeLap(lap, window.startMs, window.endMs, zone);
+
+      days.add({
+        'date': date,
+        'day_length_seconds': (window.endMs - window.startMs) ~/ 1000,
+        'labelled_seconds':
+            _labelledOverlapMs(records, window.startMs, window.endMs) ~/ 1000,
+        'untracked_records': {
+          'count': untracked.length,
+          'duration_seconds':
+              _untrackedOverlapMs(untracked, window.startMs, window.endMs) ~/
+              1000,
+        },
+        'open_lap_seconds':
+            (openLap?['elapsed_seconds_in_window'] as int?) ?? 0,
+        'time_per_activity': {
+          for (final entry in perActivity.entries)
+            entry.key: entry.value ~/ 1000,
+        },
       });
     }
 
-    breakdown.sort(
-      (a, b) => (b['hours'] as double).compareTo(a['hours'] as double),
-    );
-
-    final totalHours = totalDurationMs / 3600000.0;
+    final firstDate = dates.first;
+    final lastDate = dates.last;
+    final entries = perActivityByDate.entries.toList()
+      ..sort((a, b) {
+        final totalA = a.value.values.fold<int>(0, (sum, ms) => sum + ms);
+        final totalB = b.value.values.fold<int>(0, (sum, ms) => sum + ms);
+        return totalB.compareTo(totalA);
+      });
 
     return {
-      'date': dateStr,
-      'total_duration_hours': double.parse(totalHours.toStringAsFixed(2)),
-      'total_records_count': records.length,
-      'breakdown': breakdown,
+      'timezone': zone,
+      'days': days,
+      'differences': [
+        for (final entry in entries)
+          {
+            'activity': entry.key,
+            'from_date': firstDate,
+            'to_date': lastDate,
+            'difference_seconds':
+                ((entry.value[lastDate] ?? 0) -
+                    (entry.value[firstDate] ?? 0)) ~/
+                1000,
+          },
+      ],
     };
   }
 
   Future<List<Map<String, dynamic>>> _queryRecordsTool(
     Map<String, dynamic> args,
   ) async {
-    final startDateStr = args['start_date'] as String?;
-    final endDateStr = args['end_date'] as String?;
-    if (startDateStr == null || endDateStr == null) {
-      throw ArgumentError('start_date and end_date are required');
-    }
-
-    final startMs = DateTime.parse('${startDateStr}T00:00:00Z')
-        .millisecondsSinceEpoch;
-    final endMs = DateTime.parse('${endDateStr}T23:59:59.999Z')
-        .millisecondsSinceEpoch;
+    final zone = _zoneArg(args);
+    final startDate = _requiredDate(args, 'start_date');
+    final endDate = _requiredDate(args, 'end_date');
+    final window = _rangeWindow(startDate, endDate, zone);
     final limit = (args['limit'] as int? ?? 50).clamp(1, 200);
 
     final activityFilter = args['activity_name'] as String?;
@@ -468,7 +680,8 @@ class TempoMcpServer {
     final allActivities = await database.getAllActivities(
       includeArchived: true,
     );
-    final activityMap = {for (final a in allActivities) a.id: a};
+    final activities = {for (final a in allActivities) a.id: a.name};
+    final tags = await _tagMap();
 
     String? activityIdFilter;
     if (activityFilter != null && activityFilter.trim().isNotEmpty) {
@@ -481,12 +694,9 @@ class TempoMcpServer {
       activityIdFilter = match.id;
     }
 
-    final allTags = await database.getAllTags();
-    final tagMap = {for (final t in allTags) t.id: t.name};
-
     String? tagIdFilter;
     if (tagFilter != null && tagFilter.trim().isNotEmpty) {
-      final match = allTags.firstWhereOrNull(
+      final match = (await database.getAllTags()).firstWhereOrNull(
         (t) => t.name.toLowerCase() == tagFilter.trim().toLowerCase(),
       );
       if (match == null) {
@@ -495,170 +705,28 @@ class TempoMcpServer {
       tagIdFilter = match.id;
     }
 
-    final records = await database.getRecords(
-      startedAfter: startMs,
-      startedBefore: endMs,
-      activityId: activityIdFilter,
-    );
+    final records = await _recordsOverlapping(window.startMs, window.endMs);
+    final filtered = records
+        .where(
+          (r) =>
+              (activityIdFilter == null || r.activityId == activityIdFilter) &&
+              (tagIdFilter == null || r.tagIds.contains(tagIdFilter)),
+        )
+        .take(limit)
+        .toList();
 
-    final filtered = tagIdFilter != null
-        ? records.where((r) => r.tagIds.contains(tagIdFilter)).toList()
-        : records;
-
-    final limited = filtered.take(limit).toList();
-
-    return limited.map((r) {
-      final activityId = r.activityId;
-      final actName = activityId == null
-          ? 'Untracked'
-          : activityMap[activityId]?.name ?? activityId;
-      final tagNames = r.tagIds.map((tid) => tagMap[tid] ?? tid).toList();
-      return {
-        'id': r.id,
-        'activity_name': actName,
-        'started_at': DateTime.fromMillisecondsSinceEpoch(
-          r.startedAtEpochMs,
-          isUtc: true,
-        ).toIso8601String(),
-        'ended_at': DateTime.fromMillisecondsSinceEpoch(
-          r.endedAtEpochMs,
-          isUtc: true,
-        ).toIso8601String(),
-        'duration_seconds': r.durationMs ~/ 1000,
-        'comment': sanitizer.sanitize(r.comment),
-        'tags': tagNames,
-      };
-    }).toList();
-  }
-
-  Future<Map<String, dynamic>> _analyzeTrendsTool(
-    Map<String, dynamic> args,
-  ) async {
-    final lookbackWeeks = (args['lookback_weeks'] as int? ?? 4).clamp(1, 52);
-    final nowUtc = DateTime.now().toUtc();
-    final startMs =
-        nowUtc.millisecondsSinceEpoch - (lookbackWeeks * 7 * 24 * 3600 * 1000);
-
-    final records = await database.getRecords(startedAfter: startMs);
-    final allActivities = await database.getAllActivities(
-      includeArchived: true,
-    );
-    final activityMap = {for (final a in allActivities) a.id: a};
-
-    // 1. Weekly averages
-    final activityTotals = <String, int>{};
-    for (final r in records) {
-      final activityId = r.activityId;
-      if (activityId == null) continue;
-      activityTotals[activityId] =
-          (activityTotals[activityId] ?? 0) + r.durationMs;
-    }
-    final weeklyAverages = <String, double>{};
-    for (final entry in activityTotals.entries) {
-      final actName = activityMap[entry.key]?.name ?? entry.key;
-      final avgHours = (entry.value / 3600000.0) / lookbackWeeks;
-      weeklyAverages[actName] = double.parse(avgHours.toStringAsFixed(2));
-    }
-
-    // 2. Time-of-day hourly distribution (00:00 - 23:00)
-    final timeOfDayDistribution = <String, double>{};
-    for (var h = 0; h < 24; h++) {
-      final key = '${h.toString().padLeft(2, '0')}:00';
-      timeOfDayDistribution[key] = 0.0;
-    }
-    for (final r in records) {
-      final dt = DateTime.fromMillisecondsSinceEpoch(
-        r.startedAtEpochMs,
-        isUtc: true,
-      );
-      final key = '${dt.hour.toString().padLeft(2, '0')}:00';
-      final hours = r.durationMs / 3600000.0;
-      timeOfDayDistribution[key] = double.parse(
-        ((timeOfDayDistribution[key] ?? 0.0) + hours).toStringAsFixed(2),
-      );
-    }
-
-    // 3. Habit streaks (pinned habits)
-    final pinnedActivities = allActivities.where((a) => a.isPinned).toList();
-    final habitStreaks = <Map<String, dynamic>>[];
-
-    for (final act in pinnedActivities) {
-      final actRecords = await database.getRecords(activityId: act.id);
-      final days =
-          actRecords
-              .map(
-                (r) => DateTime.fromMillisecondsSinceEpoch(
-                  r.startedAtEpochMs,
-                  isUtc: true,
-                ).toIso8601String().substring(0, 10),
-              )
-              .toSet()
-              .toList()
-            ..sort();
-
-      var maxStreak = 0;
-      var currentStreak = 0;
-
-      if (days.isNotEmpty) {
-        var tempStreak = 1;
-        maxStreak = 1;
-        for (var i = 1; i < days.length; i++) {
-          final prevDate = DateTime.parse('${days[i - 1]}T00:00:00Z');
-          final currDate = DateTime.parse('${days[i]}T00:00:00Z');
-          if (currDate.difference(prevDate).inDays == 1) {
-            tempStreak++;
-            if (tempStreak > maxStreak) {
-              maxStreak = tempStreak;
-            }
-          } else {
-            tempStreak = 1;
-          }
-        }
-
-        final todayStr = nowUtc.toIso8601String().substring(0, 10);
-        final yesterdayStr = nowUtc
-            .subtract(const Duration(days: 1))
-            .toIso8601String()
-            .substring(0, 10);
-
-        if (days.contains(todayStr) || days.contains(yesterdayStr)) {
-          var checkDay = days.contains(todayStr)
-              ? nowUtc
-              : nowUtc.subtract(const Duration(days: 1));
-          while (days.contains(checkDay.toIso8601String().substring(0, 10))) {
-            currentStreak++;
-            checkDay = checkDay.subtract(const Duration(days: 1));
-          }
-        }
-      }
-
-      habitStreaks.add({
-        'activity': act.name,
-        'current_streak_days': currentStreak,
-        'max_streak_days': maxStreak,
-      });
-    }
-
-    return {
-      'lookback_weeks': lookbackWeeks,
-      'weekly_averages': weeklyAverages,
-      'time_of_day_distribution': timeOfDayDistribution,
-      'habit_streaks': habitStreaks,
-    };
+    return _describeRecords(filtered, activities, tags);
   }
 
   // ==========================================
-  // Guarded Write Tools
+  // Write Tools
   // ==========================================
 
-  Future<Map<String, dynamic>> _startTimerTool(
-    Map<String, dynamic> args,
-  ) async {
-    final activityName = args['activity_name'] as String?;
-    if (activityName == null || activityName.trim().isEmpty) {
-      throw ArgumentError('activity_name is required');
+  Future<Map<String, dynamic>> _labelLapTool(Map<String, dynamic> args) async {
+    final activityName = (args['activity_name'] as String?)?.trim();
+    if (activityName == null || activityName.isEmpty) {
+      throw ArgumentError('activity_name is required.');
     }
-
     final comment = args['comment'] as String? ?? '';
     final rawTags = args['tags'];
     final tagNames = rawTags is List
@@ -669,7 +737,6 @@ class TempoMcpServer {
     final tagIds = await _getOrCreateTagIds(tagNames);
 
     final recorder = await _readyRecorder();
-    // `start_timer` now means "label the open Lap".
     final record = await recorder.label(
       activity.id,
       comment: comment,
@@ -679,101 +746,290 @@ class TempoMcpServer {
       await csvExportEngine!.scheduleExport();
     }
 
-    return {
-      'success': true,
-      'activity_name': activity.name,
-      'started_at': DateTime.fromMillisecondsSinceEpoch(
-        record.endedAtEpochMs,
-        isUtc: true,
-      ).toIso8601String(),
-      'comment': record.comment,
-      'tags': tagNames,
-    };
+    return {'success': true, 'record': await _describeRecord(record)};
   }
 
-  Future<Map<String, dynamic>> _stopTimerTool(Map<String, dynamic> args) async {
-    // `stop_timer` keeps existing automation working by splitting the open Lap
-    // into an Untracked Record, which can be labelled later.
+  Future<Map<String, dynamic>> _splitLapTool() async {
     final recorder = await _readyRecorder();
     final record = await recorder.split();
     if (csvExportEngine != null) {
       await csvExportEngine!.scheduleExport();
     }
 
-    return {
-      'success': true,
-      'record_id': record.id,
-      'activity_name': null,
-      'duration_seconds': record.durationMs ~/ 1000,
-      'comment': '',
-    };
+    return {'success': true, 'record': await _describeRecord(record)};
   }
 
-  Future<Map<String, dynamic>> _addManualRecordTool(
+  Future<Map<String, dynamic>> _moveBoundaryTool(
     Map<String, dynamic> args,
   ) async {
-    final activityName = args['activity_name'] as String?;
-    final startTimeStr = args['start_time'] as String?;
-    final endTimeStr = args['end_time'] as String?;
-
-    if (activityName == null || startTimeStr == null || endTimeStr == null) {
+    final recordId = (args['record_id'] as String?)?.trim();
+    if (recordId == null || recordId.isEmpty) {
+      throw ArgumentError('record_id is required.');
+    }
+    final rawInstant = (args['new_instant'] as String?)?.trim();
+    if (rawInstant == null || rawInstant.isEmpty) {
       throw ArgumentError(
-        'activity_name, start_time, and end_time are required',
+        'new_instant is required (ISO 8601 with an offset, e.g. '
+        '2026-10-30T09:30:00Z).',
+      );
+    }
+    if (!RegExp(r'(Z|[+-]\d{2}:\d{2})$').hasMatch(rawInstant)) {
+      throw ArgumentError(
+        'new_instant must be an ISO 8601 instant with an explicit offset, '
+        'e.g. 2026-10-30T09:30:00Z.',
       );
     }
 
-    final startDt = DateTime.parse(startTimeStr).toUtc();
-    final endDt = DateTime.parse(endTimeStr).toUtc();
-    if (endDt.isBefore(startDt)) {
-      throw ArgumentError(
-        'end_time must be greater than or equal to start_time',
-      );
-    }
+    final newInstantMs = DateTime.parse(rawInstant)
+        .toUtc()
+        .millisecondsSinceEpoch;
 
-    final startMs = startDt.millisecondsSinceEpoch;
-    final endMs = endDt.millisecondsSinceEpoch;
-    final durationMs = endMs - startMs;
-
-    final comment = args['comment'] as String? ?? '';
-    final rawTags = args['tags'];
-    final tagNames = rawTags is List
-        ? rawTags.map((e) => e.toString()).toList()
-        : <String>[];
-
-    final activity = await _getOrCreateActivity(activityName);
-    final tagIds = await _getOrCreateTagIds(tagNames);
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final zoneId = zoneProvider();
-
-    final record = Record(
-      id: const Uuid().v4(),
-      activityId: activity.id,
-      startedAtEpochMs: startMs,
-      endedAtEpochMs: endMs,
-      durationMs: durationMs,
-      comment: comment,
-      timezoneId: zoneId,
-      endTimezoneId: zoneId,
-      createdAtEpochMs: now,
-      updatedAtEpochMs: now,
-      tagIds: tagIds,
-    );
-
-    await database.insertRecord(record);
+    final recorder = await _readyRecorder();
+    final record = await recorder.moveBoundary(recordId, newInstantMs);
     if (csvExportEngine != null) {
       await csvExportEngine!.scheduleExport();
     }
 
+    return {'success': true, 'record': await _describeRecord(record)};
+  }
+
+  // ==========================================
+  // Day and Range Helpers
+  // ==========================================
+
+  String _zoneArg(Map<String, dynamic> args) {
+    final raw = (args['timezone'] as String?)?.trim();
+    final zone = (raw == null || raw.isEmpty) ? zoneProvider() : raw;
+    if (utcOffsetAt(zone, nowUtcMs()) == null) {
+      throw ArgumentError(
+        'Unknown timezone "$zone". Use an IANA zone id such as '
+        'America/Los_Angeles.',
+      );
+    }
+    return zone;
+  }
+
+  String _requiredDate(Map<String, dynamic> args, String key) {
+    final date = _optionalDate(args[key]);
+    if (date == null) {
+      throw ArgumentError('$key is required in YYYY-MM-DD format.');
+    }
+    return date;
+  }
+
+  String? _optionalDate(Object? value) {
+    if (value == null) return null;
+    if (value is! String) {
+      throw ArgumentError('Date must be a YYYY-MM-DD string.');
+    }
+    final raw = value.trim();
+    if (raw.isEmpty) return null;
+    final match = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(raw);
+    if (match == null) {
+      throw ArgumentError('Date "$raw" must be in YYYY-MM-DD format.');
+    }
+    final parsed = DateTime.utc(
+      int.parse(match.group(1)!),
+      int.parse(match.group(2)!),
+      int.parse(match.group(3)!),
+    );
+    if (parsed.year != int.parse(match.group(1)!) ||
+        parsed.month != int.parse(match.group(2)!) ||
+        parsed.day != int.parse(match.group(3)!)) {
+      throw ArgumentError('Date "$raw" is not a real calendar date.');
+    }
+    return raw;
+  }
+
+  String _todayInZone(String zone) {
+    final wall = wallClockAt(zone, nowUtcMs());
+    return '${wall.year.toString().padLeft(4, '0')}-'
+        '${wall.month.toString().padLeft(2, '0')}-'
+        '${wall.day.toString().padLeft(2, '0')}';
+  }
+
+  ({int startMs, int endMs}) _dayWindow(String date, String zone) {
+    final day = DateTime.parse('${date}T00:00:00Z');
+    final noonInstant = epochMsFromWallClock(
+      DateTime.utc(day.year, day.month, day.day, 12),
+      zone,
+      referenceEpochMs: day.millisecondsSinceEpoch,
+    );
+    final startMs = _localDayStartUtcMs(zone, noonInstant);
+    return (startMs: startMs, endMs: nextLocalMidnightUtcMs(zone, startMs));
+  }
+
+  ({int startMs, int endMs}) _rangeWindow(
+    String startDate,
+    String endDate,
+    String zone,
+  ) {
+    final startMs = _dayWindow(startDate, zone).startMs;
+    final endMs = _dayWindow(endDate, zone).endMs;
+    if (endMs <= startMs) {
+      throw ArgumentError('end_date must not be before start_date.');
+    }
+    return (startMs: startMs, endMs: endMs);
+  }
+
+  /// The first instant of the local Day containing [epochMs] in [zone].
+  int _localDayStartUtcMs(String zone, int epochMs) {
+    final target = _wallDate(wallClockAt(zone, epochMs));
+    var probe = epochMs - const Duration(hours: 30).inMilliseconds;
+    var guard = 0;
+    while (!_wallDate(wallClockAt(zone, probe)).isBefore(target) &&
+        guard++ < 4) {
+      probe -= const Duration(hours: 30).inMilliseconds;
+    }
+    return nextLocalMidnightUtcMs(zone, probe);
+  }
+
+  DateTime _wallDate(DateTime wall) =>
+      DateTime.utc(wall.year, wall.month, wall.day);
+
+  Future<List<Record>> _recordsOverlapping(int startMs, int endMs) async {
+    final records = await database.getRecords(
+      startedAfter: startMs - const Duration(hours: 30).inMilliseconds,
+      startedBefore: endMs - 1,
+      orderBy: 'started_at_epoch_ms ASC',
+    );
+    return records
+        .where((r) => r.endedAtEpochMs > startMs && r.startedAtEpochMs < endMs)
+        .toList();
+  }
+
+  int _labelledOverlapMs(Iterable<Record> records, int startMs, int endMs) =>
+      records
+          .where((r) => !r.isUntracked)
+          .fold<int>(
+            0,
+            (sum, r) =>
+                sum +
+                _overlapMs(
+                  r.startedAtEpochMs,
+                  r.endedAtEpochMs,
+                  startMs,
+                  endMs,
+                ),
+          );
+
+  int _untrackedOverlapMs(Iterable<Record> records, int startMs, int endMs) =>
+      records
+          .where((r) => r.isUntracked)
+          .fold<int>(
+            0,
+            (sum, r) =>
+                sum +
+                _overlapMs(
+                  r.startedAtEpochMs,
+                  r.endedAtEpochMs,
+                  startMs,
+                  endMs,
+                ),
+          );
+
+  int _overlapMs(int startA, int endA, int startB, int endB) {
+    final start = startA > startB ? startA : startB;
+    final end = endA < endB ? endA : endB;
+    return end > start ? end - start : 0;
+  }
+
+  Map<String, dynamic>? _describeLap(
+    Lap? lap,
+    int windowStartMs,
+    int windowEndMs,
+    String fallbackZone,
+  ) {
+    if (lap == null || lap.startedAtEpochMs >= windowEndMs) return null;
+    final zone = lap.startTimezoneOr(fallbackZone);
+    final now = nowUtcMs();
+    final openUntil = now < windowEndMs ? now : windowEndMs;
+    final overlapStart = lap.startedAtEpochMs > windowStartMs
+        ? lap.startedAtEpochMs
+        : windowStartMs;
+    final elapsedInWindowMs = openUntil - overlapStart;
     return {
-      'success': true,
-      'record_id': record.id,
-      'activity_name': activity.name,
-      'duration_seconds': durationMs ~/ 1000,
+      'started_at': _isoUtc(lap.startedAtEpochMs),
+      'started_at_local': _formatWall(wallClockAt(zone, lap.startedAtEpochMs)),
+      'start_timezone': zone,
+      'elapsed_seconds': lap.elapsedMs(now) ~/ 1000,
+      'elapsed_seconds_in_window': elapsedInWindowMs < 0
+          ? 0
+          : elapsedInWindowMs ~/ 1000,
     };
   }
 
   // ==========================================
-  // Helper Methods
+  // Record Description
+  // ==========================================
+
+  Future<Map<String, String>> _activityMap() async {
+    final activities = await database.getAllActivities(includeArchived: true);
+    return {for (final a in activities) a.id: a.name};
+  }
+
+  Future<Map<String, String>> _tagMap() async {
+    final tags = await database.getAllTags();
+    return {for (final t in tags) t.id: t.name};
+  }
+
+  String _activityName(Record record, Map<String, String> activities) {
+    final activityId = record.activityId;
+    if (activityId == null) return 'Untracked';
+    return activities[activityId] ?? activityId;
+  }
+
+  Future<Map<String, dynamic>> _describeRecord(Record record) async {
+    final activities = await _activityMap();
+    final tags = await _tagMap();
+    return _describeRecords([record], activities, tags).first;
+  }
+
+  List<Map<String, dynamic>> _describeRecords(
+    List<Record> records,
+    Map<String, String> activities,
+    Map<String, String> tags,
+  ) {
+    return records.map((record) {
+      final startWall = wallClockAt(record.timezoneId, record.startedAtEpochMs);
+      final endWall = wallClockAt(record.endTimezoneId, record.endedAtEpochMs);
+      return {
+        'id': record.id,
+        'activity': record.isUntracked
+            ? null
+            : _activityName(record, activities),
+        'is_untracked': record.isUntracked,
+        'started_at': _isoUtc(record.startedAtEpochMs),
+        'ended_at': _isoUtc(record.endedAtEpochMs),
+        'started_at_local': _formatWall(startWall),
+        'ended_at_local': _formatWall(endWall),
+        'start_timezone': record.timezoneId,
+        'end_timezone': record.endTimezoneId,
+        'crosses_timezones': record.crossesTimezones,
+        'duration_ms': record.elapsedMs,
+        'duration_seconds': record.elapsedMs ~/ 1000,
+        'comment': sanitizer.sanitize(record.comment),
+        'tags': record.tagIds.map((id) => tags[id] ?? id).toList(),
+      };
+    }).toList();
+  }
+
+  String _isoUtc(int epochMs) => DateTime.fromMillisecondsSinceEpoch(
+    epochMs,
+    isUtc: true,
+  ).toIso8601String();
+
+  /// Wall-clock time without a zone suffix, because the zone travels beside it
+  /// in its own field.
+  String _formatWall(DateTime wall) {
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${wall.year.toString().padLeft(4, '0')}-${two(wall.month)}-'
+        '${two(wall.day)}T${two(wall.hour)}:${two(wall.minute)}:'
+        '${two(wall.second)}';
+  }
+
+  // ==========================================
+  // Shared Helpers
   // ==========================================
 
   Future<Activity> _getOrCreateActivity(String name) async {
@@ -848,6 +1104,11 @@ class TempoMcpServer {
       },
     });
   }
+}
+
+class _ActivityTotal {
+  int durationMs = 0;
+  int recordCount = 0;
 }
 
 extension _IterableFirstWhereOrNull<T> on Iterable<T> {

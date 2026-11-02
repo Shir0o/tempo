@@ -3,10 +3,51 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:tempo/core/state/day_recorder.dart';
+import 'package:tempo/core/time/timezone_id.dart';
 import 'package:tempo/data/database/tempo_database.dart';
 import 'package:tempo/data/models/models.dart';
 import 'package:tempo/mcp/pii_sanitizer.dart';
 import 'package:tempo/mcp/tempo_mcp_server.dart';
+
+const String laZone = 'America/Los_Angeles';
+const String nyZone = 'America/New_York';
+const int hourMs = 3600000;
+
+/// Epoch milliseconds for a wall-clock time in [zone].
+int wallMs(
+  String zone,
+  int year,
+  int month,
+  int day,
+  int hour, [
+  int minute = 0,
+]) {
+  return epochMsFromWallClock(
+    DateTime.utc(year, month, day, hour, minute),
+    zone,
+    referenceEpochMs: DateTime.utc(year, month, day, 12).millisecondsSinceEpoch,
+  );
+}
+
+Future<Map<String, dynamic>> callTool(
+  TempoMcpServer server,
+  String name, [
+  Map<String, dynamic> arguments = const {},
+]) async {
+  final response = await server.handleMessage(
+    jsonEncode({
+      'jsonrpc': '2.0',
+      'id': 1,
+      'method': 'tools/call',
+      'params': {'name': name, 'arguments': arguments},
+    }),
+  );
+  final json = jsonDecode(response!) as Map<String, dynamic>;
+  return json['result'] as Map<String, dynamic>;
+}
+
+Map<String, dynamic> payloadOf(Map<String, dynamic> result) =>
+    jsonDecode(result['content'][0]['text'] as String) as Map<String, dynamic>;
 
 void main() {
   sqfliteFfiInit();
@@ -16,6 +57,55 @@ void main() {
     late TempoMcpServer server;
     late PIISanitizer sanitizer;
 
+    const sleep = Activity(
+      id: 'act-sleep',
+      name: 'Sleep',
+      colorHex: '#5C6BC0',
+      createdAtEpochMs: 0,
+      updatedAtEpochMs: 0,
+    );
+    const meals = Activity(
+      id: 'act-meals',
+      name: 'Meals',
+      colorHex: '#FFB300',
+      createdAtEpochMs: 0,
+      updatedAtEpochMs: 0,
+    );
+    const transit = Activity(
+      id: 'act-transit',
+      name: 'Transit',
+      colorHex: '#26A69A',
+      createdAtEpochMs: 0,
+      updatedAtEpochMs: 0,
+    );
+
+    Future<void> insertRecord({
+      required String id,
+      required String? activityId,
+      required int startMs,
+      required int endMs,
+      String zone = laZone,
+      String? endZone,
+      String comment = '',
+      List<String> tagIds = const [],
+    }) {
+      return db.insertRecord(
+        Record(
+          id: id,
+          activityId: activityId,
+          startedAtEpochMs: startMs,
+          endedAtEpochMs: endMs,
+          durationMs: endMs - startMs,
+          comment: comment,
+          timezoneId: zone,
+          endTimezoneId: endZone,
+          createdAtEpochMs: startMs,
+          updatedAtEpochMs: startMs,
+          tagIds: tagIds,
+        ),
+      );
+    }
+
     setUp(() async {
       db = await TempoDatabase.openInMemory(factory: databaseFactoryFfi);
       sanitizer = PIISanitizer();
@@ -23,6 +113,57 @@ void main() {
         database: db,
         sanitizer: sanitizer,
         allowWrites: false,
+      );
+
+      await db.insertActivity(sleep);
+      await db.insertActivity(meals);
+      await db.insertActivity(transit);
+
+      // 2026-10-29 in Los Angeles: Sleep 00:00-07:00, Meals 12:00-13:00,
+      // and Untracked 20:00-21:00.
+      final sleepStart = wallMs(laZone, 2026, 10, 29, 0);
+      await insertRecord(
+        id: 'r-29-sleep',
+        activityId: sleep.id,
+        startMs: sleepStart,
+        endMs: wallMs(laZone, 2026, 10, 29, 7),
+      );
+      await insertRecord(
+        id: 'r-29-meals',
+        activityId: meals.id,
+        startMs: wallMs(laZone, 2026, 10, 29, 12),
+        endMs: wallMs(laZone, 2026, 10, 29, 13),
+      );
+      await insertRecord(
+        id: 'r-29-untracked',
+        activityId: null,
+        startMs: wallMs(laZone, 2026, 10, 29, 20),
+        endMs: wallMs(laZone, 2026, 10, 29, 21),
+      );
+
+      // 2026-10-30 in Los Angeles: Sleep 00:00-07:00, then a six-hour Transit
+      // that lands in New York, then an Untracked hour in New York.
+      final transitStart = wallMs(laZone, 2026, 10, 30, 9);
+      final transitEnd = transitStart + (6 * hourMs);
+      await insertRecord(
+        id: 'r-30-sleep',
+        activityId: sleep.id,
+        startMs: wallMs(laZone, 2026, 10, 30, 0),
+        endMs: wallMs(laZone, 2026, 10, 30, 7),
+      );
+      await insertRecord(
+        id: 'r-30-transit',
+        activityId: transit.id,
+        startMs: transitStart,
+        endMs: transitEnd,
+        endZone: nyZone,
+      );
+      await insertRecord(
+        id: 'r-30-untracked',
+        activityId: null,
+        startMs: transitEnd,
+        endMs: transitEnd + hourMs,
+        zone: nyZone,
       );
     });
 
@@ -33,550 +174,492 @@ void main() {
     test(
       'handles JSON-RPC protocol handshake: initialize, ping, notifications',
       () async {
-        // 1. initialize
-        final initReq = jsonEncode({
-          'jsonrpc': '2.0',
-          'id': 1,
-          'method': 'initialize',
-          'params': {
-            'protocolVersion': '2024-11-05',
-            'capabilities': {},
-            'clientInfo': {'name': 'test-client', 'version': '1.0.0'},
-          },
-        });
-        final initRes = await server.handleMessage(initReq);
-        expect(initRes, isNotNull);
+        final initRes = await server.handleMessage(
+          jsonEncode({
+            'jsonrpc': '2.0',
+            'id': 1,
+            'method': 'initialize',
+            'params': {
+              'protocolVersion': '2024-11-05',
+              'capabilities': {},
+              'clientInfo': {'name': 'test-client', 'version': '1.0.0'},
+            },
+          }),
+        );
         final initJson = jsonDecode(initRes!) as Map<String, dynamic>;
         expect(initJson['jsonrpc'], equals('2.0'));
         expect(initJson['id'], equals(1));
         expect(initJson['result']['serverInfo']['name'], equals('tempo-mcp'));
         expect(initJson['result']['capabilities'], contains('tools'));
 
-        // 2. notifications/initialized (notification -> returns null)
-        final notifReq = jsonEncode({
-          'jsonrpc': '2.0',
-          'method': 'notifications/initialized',
-        });
-        final notifRes = await server.handleMessage(notifReq);
+        final notifRes = await server.handleMessage(
+          jsonEncode({'jsonrpc': '2.0', 'method': 'notifications/initialized'}),
+        );
         expect(notifRes, isNull);
 
-        // 3. ping
-        final pingReq = jsonEncode({
-          'jsonrpc': '2.0',
-          'id': 2,
-          'method': 'ping',
-        });
-        final pingRes = await server.handleMessage(pingReq);
-        expect(pingRes, isNotNull);
+        final pingRes = await server.handleMessage(
+          jsonEncode({'jsonrpc': '2.0', 'id': 2, 'method': 'ping'}),
+        );
         final pingJson = jsonDecode(pingRes!) as Map<String, dynamic>;
         expect(pingJson['id'], equals(2));
         expect(pingJson['result'], equals({}));
       },
     );
 
-    test('returns parse error on invalid JSON and method not found on unknown method', () async {
-      final parseErr = await server.handleMessage('invalid json {');
-      expect(parseErr, isNotNull);
-      final parseJson = jsonDecode(parseErr!) as Map<String, dynamic>;
+    test('returns parse error on invalid JSON and method not found', () async {
+      final parseRes = await server.handleMessage('invalid json {');
+      final parseJson = jsonDecode(parseRes!) as Map<String, dynamic>;
       expect(parseJson['error']['code'], equals(-32700));
 
-      final unknownMethodReq = jsonEncode({
-        'jsonrpc': '2.0',
-        'id': 99,
-        'method': 'unknown/method',
-      });
-      final unknownRes = await server.handleMessage(unknownMethodReq);
-      expect(unknownRes, isNotNull);
+      final unknownRes = await server.handleMessage(
+        jsonEncode({'jsonrpc': '2.0', 'id': 99, 'method': 'unknown/method'}),
+      );
       final unknownJson = jsonDecode(unknownRes!) as Map<String, dynamic>;
       expect(unknownJson['error']['code'], equals(-32601));
     });
 
     test(
-      'tools/list lists only read tools when allowWrites is false',
+      'tools/list returns only plain read tools when allowWrites is false',
       () async {
-        final req = jsonEncode({
-          'jsonrpc': '2.0',
-          'id': 10,
-          'method': 'tools/list',
-        });
-        final res = await server.handleMessage(req);
+        final res = await server.handleMessage(
+          jsonEncode({'jsonrpc': '2.0', 'id': 10, 'method': 'tools/list'}),
+        );
         final json = jsonDecode(res!) as Map<String, dynamic>;
         final tools = json['result']['tools'] as List;
+        final names = tools.map((t) => t['name'] as String).toList();
 
-        final toolNames = tools.map((t) => t['name'] as String).toList();
         expect(
-          toolNames,
-          containsAll([
-            'get_active_timer',
-            'get_daily_summary',
+          names,
+          equals([
+            'get_day_timeline',
+            'get_time_per_activity',
+            'get_untracked_records',
+            'compare_days',
             'query_records',
-            'analyze_trends',
           ]),
         );
-        expect(toolNames, isNot(contains('start_timer')));
-        expect(toolNames, isNot(contains('stop_timer')));
-        expect(toolNames, isNot(contains('add_manual_record')));
+        expect(names, isNot(contains('label_lap')));
+        expect(names, isNot(contains('split_lap')));
+        expect(names, isNot(contains('move_boundary')));
+
+        final evaluative = RegExp(
+          r'productiv|focus|goal|streak|habit|score',
+          caseSensitive: false,
+        );
+        for (final tool in tools) {
+          final text = '${tool['name']} ${tool['description']}';
+          expect(evaluative.hasMatch(text), isFalse, reason: text);
+        }
       },
     );
 
     test(
-      'tools/list includes mutation tools when allowWrites is true',
+      'tools/list includes the write tools when allowWrites is true',
       () async {
         final writeServer = TempoMcpServer(
           database: db,
           sanitizer: sanitizer,
           allowWrites: true,
         );
-
-        final req = jsonEncode({
-          'jsonrpc': '2.0',
-          'id': 11,
-          'method': 'tools/list',
-        });
-        final res = await writeServer.handleMessage(req);
-        final json = jsonDecode(res!) as Map<String, dynamic>;
-        final tools = json['result']['tools'] as List;
-
-        final toolNames = tools.map((t) => t['name'] as String).toList();
-        expect(
-          toolNames,
-          containsAll([
-            'get_active_timer',
-            'get_daily_summary',
-            'query_records',
-            'analyze_trends',
-            'start_timer',
-            'stop_timer',
-            'add_manual_record',
-          ]),
+        final res = await writeServer.handleMessage(
+          jsonEncode({'jsonrpc': '2.0', 'id': 11, 'method': 'tools/list'}),
         );
+        final json = jsonDecode(res!) as Map<String, dynamic>;
+        final names = (json['result']['tools'] as List)
+            .map((t) => t['name'] as String)
+            .toList();
+
+        expect(names, containsAll(['label_lap', 'split_lap', 'move_boundary']));
       },
     );
 
-    test('tools/call enforces read-only gate on mutation tools when allowWrites is false', () async {
-      for (final mutationTool in [
-        'start_timer',
-        'stop_timer',
-        'add_manual_record',
-      ]) {
-        final req = jsonEncode({
-          'jsonrpc': '2.0',
-          'id': 20,
-          'method': 'tools/call',
-          'params': {
-            'name': mutationTool,
-            'arguments': {'activity_name': 'Coding'},
-          },
+    test('write tools are refused when allowWrites is false', () async {
+      for (final writeTool in ['label_lap', 'split_lap', 'move_boundary']) {
+        final result = await callTool(server, writeTool, {
+          'activity_name': 'Reading',
         });
-        final res = await server.handleMessage(req);
-        final json = jsonDecode(res!) as Map<String, dynamic>;
-        expect(json['result']['isError'], isTrue);
-        final errorText = json['result']['content'][0]['text'] as String;
-        expect(
-          errorText,
-          contains('Mutation tool "$mutationTool" is disabled'),
-        );
+        expect(result['isError'], isTrue);
+        final errorText = result['content'][0]['text'] as String;
+        expect(errorText, contains('Mutation tool "$writeTool" is disabled'));
       }
     });
 
-    test('tools/call get_active_timer returns the open Lap', () async {
-      final req = jsonEncode({
-        'jsonrpc': '2.0',
-        'id': 30,
-        'method': 'tools/call',
-        'params': {'name': 'get_active_timer', 'arguments': {}},
-      });
-      final res = await server.handleMessage(req);
-      final json = jsonDecode(res!) as Map<String, dynamic>;
-      expect(json['result']['isError'], isFalse);
-
-      final payload = jsonDecode(
-        json['result']['content'][0]['text'] as String,
-      );
-      expect(payload['is_tracking'], isTrue);
-      expect(payload['activity_name'], isNull);
-      expect(payload['is_paused'], isFalse);
-      expect(payload['elapsed_seconds'], greaterThanOrEqualTo(0));
-    });
-
     test(
-      'tools/call get_active_timer reports the injected Lap clock',
+      "get_day_timeline describes a Day with each Record's lived zones",
       () async {
-        final base = DateTime.now().toUtc().millisecondsSinceEpoch;
-        var clock = base;
-        final recorder = DayRecorder(
-          database: db,
-          nowUtcMs: () => clock,
-          getTimezoneId: () => 'UTC',
-        );
-        addTearDown(recorder.dispose);
-        await recorder.initialize();
-        clock += 50000;
-
-        final lapServer = TempoMcpServer(
-          database: db,
-          sanitizer: sanitizer,
-          dayRecorder: recorder,
-        );
-
-        final req = jsonEncode({
-          'jsonrpc': '2.0',
-          'id': 31,
-          'method': 'tools/call',
-          'params': {'name': 'get_active_timer', 'arguments': {}},
+        final result = await callTool(server, 'get_day_timeline', {
+          'date': '2026-10-30',
+          'timezone': laZone,
         });
-        final res = await lapServer.handleMessage(req);
-        final json = jsonDecode(res!) as Map<String, dynamic>;
-        expect(json['result']['isError'], isFalse);
+        expect(result['isError'], isFalse);
+        final payload = payloadOf(result);
 
-        final payload = jsonDecode(
-          json['result']['content'][0]['text'] as String,
+        expect(payload['date'], equals('2026-10-30'));
+        expect(payload['timezone'], equals(laZone));
+        expect(payload['day_length_seconds'], equals(86400));
+        expect(payload['labelled_seconds'], equals((7 + 6) * 3600));
+        expect(
+          payload['untracked_records'],
+          equals({'count': 1, 'duration_seconds': 3600}),
         );
-        expect(payload['is_tracking'], isTrue);
-        expect(payload['activity_name'], isNull);
-        expect(payload['elapsed_seconds'], equals(50));
+        expect(payload['open_lap'], isNull);
+
+        final records = payload['records'] as List;
+        expect(records.length, equals(3));
+
+        final sleepRecord = records.firstWhere((r) => r['id'] == 'r-30-sleep');
+        expect(sleepRecord['activity'], equals('Sleep'));
+        expect(sleepRecord['is_untracked'], isFalse);
+        expect(sleepRecord['started_at_local'], equals('2026-10-30T00:00:00'));
+        expect(sleepRecord['ended_at_local'], equals('2026-10-30T07:00:00'));
+        expect(sleepRecord['start_timezone'], equals(laZone));
+        expect(sleepRecord['end_timezone'], equals(laZone));
+        expect(sleepRecord['duration_seconds'], equals(7 * 3600));
+
+        final transitRecord = records.firstWhere(
+          (r) => r['id'] == 'r-30-transit',
+        );
+        expect(transitRecord['activity'], equals('Transit'));
+        expect(
+          transitRecord['started_at_local'],
+          equals('2026-10-30T09:00:00'),
+        );
+        expect(transitRecord['ended_at_local'], equals('2026-10-30T18:00:00'));
+        expect(transitRecord['start_timezone'], equals(laZone));
+        expect(transitRecord['end_timezone'], equals(nyZone));
+        expect(transitRecord['crosses_timezones'], isTrue);
+        // Duration comes from UTC epochs, not the wall-clock difference.
+        expect(transitRecord['duration_seconds'], equals(6 * 3600));
+
+        final untrackedRecord = records.firstWhere(
+          (r) => r['id'] == 'r-30-untracked',
+        );
+        expect(untrackedRecord['activity'], isNull);
+        expect(untrackedRecord['is_untracked'], isTrue);
+        expect(untrackedRecord['start_timezone'], equals(nyZone));
+        expect(untrackedRecord['end_timezone'], equals(nyZone));
+        expect(untrackedRecord['duration_seconds'], equals(3600));
       },
     );
 
-    test(
-      'tools/call get_daily_summary aggregates total hours and breakdown',
-      () async {
-        final dateStr = '2026-10-30';
-        final baseDay = DateTime.parse('${dateStr}T10:00:00Z')
-            .millisecondsSinceEpoch;
-
-        final actCoding = Activity(
-          id: 'act-c',
-          name: 'Coding',
-          createdAtEpochMs: baseDay,
-          updatedAtEpochMs: baseDay,
-        );
-        final actWorkout = Activity(
-          id: 'act-w',
-          name: 'Workout',
-          createdAtEpochMs: baseDay,
-          updatedAtEpochMs: baseDay,
-        );
-        await db.insertActivity(actCoding);
-        await db.insertActivity(actWorkout);
-
-        // Record 1: 3 hours coding
-        await db.insertRecord(
-          Record(
-            id: 'rec-1',
-            activityId: 'act-c',
-            startedAtEpochMs: baseDay,
-            endedAtEpochMs: baseDay + (3 * 3600 * 1000),
-            durationMs: 3 * 3600 * 1000,
-            timezoneId: 'UTC',
-            createdAtEpochMs: baseDay,
-            updatedAtEpochMs: baseDay,
-          ),
-        );
-
-        // Record 2: 1 hour workout
-        await db.insertRecord(
-          Record(
-            id: 'rec-2',
-            activityId: 'act-w',
-            startedAtEpochMs: baseDay + (4 * 3600 * 1000),
-            endedAtEpochMs: baseDay + (5 * 3600 * 1000),
-            durationMs: 1 * 3600 * 1000,
-            timezoneId: 'UTC',
-            createdAtEpochMs: baseDay,
-            updatedAtEpochMs: baseDay,
-          ),
-        );
-
-        final req = jsonEncode({
-          'jsonrpc': '2.0',
-          'id': 32,
-          'method': 'tools/call',
-          'params': {
-            'name': 'get_daily_summary',
-            'arguments': {'date': dateStr},
-          },
-        });
-        final res = await server.handleMessage(req);
-        final json = jsonDecode(res!) as Map<String, dynamic>;
-        final payload = jsonDecode(
-          json['result']['content'][0]['text'] as String,
-        );
-
-        expect(payload['date'], equals(dateStr));
-        expect(payload['total_duration_hours'], equals(4.0));
-        expect(payload['total_records_count'], equals(2));
-
-        final breakdown = payload['breakdown'] as List;
-        expect(breakdown.length, equals(2));
-        expect(breakdown[0]['activity'], equals('Coding'));
-        expect(breakdown[0]['hours'], equals(3.0));
-        expect(breakdown[0]['percentage'], equals(75.0));
-        expect(breakdown[1]['activity'], equals('Workout'));
-        expect(breakdown[1]['hours'], equals(1.0));
-        expect(breakdown[1]['percentage'], equals(25.0));
-      },
-    );
-
-    test('tools/call query_records searches records with sanitized comments and tag filters', () async {
-      final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-      final act = Activity(
-        id: 'act-m',
-        name: 'Meeting',
-        createdAtEpochMs: now,
-        updatedAtEpochMs: now,
+    test('get_day_timeline includes the open Lap in its start zone', () async {
+      var clock = DateTime.utc(2026, 11, 5, 10).millisecondsSinceEpoch;
+      const zone = 'UTC';
+      final recorder = DayRecorder(
+        database: db,
+        nowUtcMs: () => clock,
+        getTimezoneId: () => zone,
+        autoSplitAtMidnight: false,
       );
-      await db.insertActivity(act);
+      addTearDown(recorder.dispose);
+      await recorder.initialize();
 
-      final tagContact = Tag(
-        id: 't-c',
-        name: 'Contact',
-        createdAtEpochMs: now,
-        updatedAtEpochMs: now,
+      final lapServer = TempoMcpServer(
+        database: db,
+        sanitizer: sanitizer,
+        zoneProvider: () => zone,
+        nowUtcMs: () => clock,
+        dayRecorder: recorder,
       );
-      await db.insertTag(tagContact);
+      clock += 90000;
 
-      final baseTime = DateTime.parse('2026-10-15T12:00:00Z')
-          .millisecondsSinceEpoch;
-      await db.insertRecord(
-        Record(
-          id: 'r-1',
-          activityId: 'act-m',
-          startedAtEpochMs: baseTime,
-          endedAtEpochMs: baseTime + 1800000,
-          durationMs: 1800000,
-          comment: '1:1 w/ Bob Jones (reach at bob@corp.com)',
-          timezoneId: 'UTC',
-          createdAtEpochMs: baseTime,
-          updatedAtEpochMs: baseTime,
-          tagIds: ['t-c'],
-        ),
+      final payload = payloadOf(
+        await callTool(lapServer, 'get_day_timeline', {
+          'date': '2026-11-05',
+          'timezone': zone,
+        }),
       );
 
-      final req = jsonEncode({
-        'jsonrpc': '2.0',
-        'id': 33,
-        'method': 'tools/call',
-        'params': {
-          'name': 'query_records',
-          'arguments': {
-            'start_date': '2026-10-01',
-            'end_date': '2026-10-31',
-            'activity_name': 'Meeting',
-            'tag': 'Contact',
-            'limit': 10,
-          },
-        },
-      });
-      final res = await server.handleMessage(req);
-      final json = jsonDecode(res!) as Map<String, dynamic>;
-      final records =
-          jsonDecode(json['result']['content'][0]['text'] as String) as List;
-
-      expect(records.length, equals(1));
-      final r0 = records[0] as Map<String, dynamic>;
-      expect(r0['activity_name'], equals('Meeting'));
-      expect(r0['comment'], equals('1:1 w/ [Contact-1] (reach at [EMAIL])'));
-      expect(r0['tags'], equals(['Contact']));
-      expect(r0['duration_seconds'], equals(1800));
-    });
-
-    test('tools/call analyze_trends outputs weekly averages, histogram, and habit streaks', () async {
-      final now = DateTime.now().toUtc();
-      final nowMs = now.millisecondsSinceEpoch;
-
-      final actPinned = Activity(
-        id: 'act-pin',
-        name: 'Meditation',
-        isPinned: true,
-        createdAtEpochMs: nowMs,
-        updatedAtEpochMs: nowMs,
-      );
-      await db.insertActivity(actPinned);
-
-      // Log records for yesterday and today (2-day streak) at 14:00 UTC
-      final todayAt14 = DateTime.utc(
-        now.year,
-        now.month,
-        now.day,
-        14,
-      ).millisecondsSinceEpoch;
-      final yesterdayAt14 = DateTime.utc(
-        now.year,
-        now.month,
-        now.day - 1,
-        14,
-      ).millisecondsSinceEpoch;
-
-      await db.insertRecord(
-        Record(
-          id: 'r-med-1',
-          activityId: 'act-pin',
-          startedAtEpochMs: yesterdayAt14,
-          endedAtEpochMs: yesterdayAt14 + 1800000,
-          durationMs: 1800000, // 0.5 hours
-          timezoneId: 'UTC',
-          createdAtEpochMs: yesterdayAt14,
-          updatedAtEpochMs: yesterdayAt14,
-        ),
-      );
-
-      await db.insertRecord(
-        Record(
-          id: 'r-med-2',
-          activityId: 'act-pin',
-          startedAtEpochMs: todayAt14,
-          endedAtEpochMs: todayAt14 + 1800000,
-          durationMs: 1800000, // 0.5 hours
-          timezoneId: 'UTC',
-          createdAtEpochMs: todayAt14,
-          updatedAtEpochMs: todayAt14,
-        ),
-      );
-
-      final req = jsonEncode({
-        'jsonrpc': '2.0',
-        'id': 34,
-        'method': 'tools/call',
-        'params': {
-          'name': 'analyze_trends',
-          'arguments': {'lookback_weeks': 4},
-        },
-      });
-      final res = await server.handleMessage(req);
-      final json = jsonDecode(res!) as Map<String, dynamic>;
-      final payload = jsonDecode(
-        json['result']['content'][0]['text'] as String,
-      );
-
-      expect(payload['lookback_weeks'], equals(4));
+      final lap = payload['open_lap'] as Map<String, dynamic>;
+      expect(lap['started_at_local'], equals('2026-11-05T10:00:00'));
+      expect(lap['start_timezone'], equals(zone));
+      expect(lap['elapsed_seconds'], equals(90));
+      expect(lap['elapsed_seconds_in_window'], equals(90));
+      expect(payload['records'], isEmpty);
+      expect(payload['labelled_seconds'], equals(0));
       expect(
-        payload['weekly_averages']['Meditation'],
-        equals(0.25),
-      ); // 1 hour / 4 weeks = 0.25
-
-      final histogram =
-          payload['time_of_day_distribution'] as Map<String, dynamic>;
-      expect(histogram.keys.length, equals(24));
-      expect(histogram['14:00'], equals(1.0)); // 0.5 + 0.5 = 1.0 hr
-
-      final streaks = payload['habit_streaks'] as List;
-      expect(streaks.length, equals(1));
-      expect(streaks[0]['activity'], equals('Meditation'));
-      expect(streaks[0]['current_streak_days'], equals(2));
-      expect(streaks[0]['max_streak_days'], equals(2));
+        payload['untracked_records'],
+        equals({'count': 0, 'duration_seconds': 0}),
+      );
     });
 
     test(
-      'guarded write tools operate successfully when allowWrites is enabled',
+      'get_time_per_activity totals a range and counts Untracked Records',
       () async {
-        final writeServer = TempoMcpServer(
-          database: db,
-          sanitizer: sanitizer,
-          allowWrites: true,
-          zoneProvider: () => 'Asia/Tokyo',
-        );
-
-        // 1. start_timer
-        final startReq = jsonEncode({
-          'jsonrpc': '2.0',
-          'id': 40,
-          'method': 'tools/call',
-          'params': {
-            'name': 'start_timer',
-            'arguments': {
-              'activity_name': 'Writing',
-              'comment': 'Drafting specs',
-              'tags': ['Focus'],
-            },
-          },
+        final result = await callTool(server, 'get_time_per_activity', {
+          'start_date': '2026-10-29',
+          'end_date': '2026-10-30',
+          'timezone': laZone,
         });
-        final startRes = await writeServer.handleMessage(startReq);
-        final startJson = jsonDecode(startRes!) as Map<String, dynamic>;
-        expect(startJson['result']['isError'], isFalse);
-        final startPayload = jsonDecode(
-          startJson['result']['content'][0]['text'] as String,
+        expect(result['isError'], isFalse);
+        final payload = payloadOf(result);
+
+        expect(payload['start_date'], equals('2026-10-29'));
+        expect(payload['end_date'], equals('2026-10-30'));
+        expect(payload['labelled_seconds'], equals((14 + 1 + 6) * 3600));
+        expect(
+          payload['untracked_records'],
+          equals({'count': 2, 'duration_seconds': 2 * 3600}),
         );
-        expect(startPayload['success'], isTrue);
-        expect(startPayload['activity_name'], equals('Writing'));
+        expect(payload['open_lap_seconds'], equals(0));
 
-        // Check the Lap was labelled as Writing
-        final writingRecords = await db.getRecords();
-        expect(writingRecords.length, equals(1));
-        expect(writingRecords.first.activityId, isNotNull);
-        expect(writingRecords.first.comment, equals('Drafting specs'));
-        expect(writingRecords.first.timezoneId, equals('Asia/Tokyo'));
-
-        // 2. stop_timer splits the Lap into an Untracked Record
-        final stopReq = jsonEncode({
-          'jsonrpc': '2.0',
-          'id': 41,
-          'method': 'tools/call',
-          'params': {
-            'name': 'stop_timer',
-            'arguments': {'comment': 'Finished drafting'},
-          },
-        });
-        final stopRes = await writeServer.handleMessage(stopReq);
-        final stopJson = jsonDecode(stopRes!) as Map<String, dynamic>;
-        expect(stopJson['result']['isError'], isFalse);
-        final stopPayload = jsonDecode(
-          stopJson['result']['content'][0]['text'] as String,
-        );
-        expect(stopPayload['success'], isTrue);
-        expect(stopPayload['activity_name'], isNull);
-        expect(stopPayload['comment'], equals(''));
-
-        final stopped = (await db.getRecords()).firstWhere(
-          (r) => r.activityId == null,
-        );
-        expect(stopped.timezoneId, equals('Asia/Tokyo'));
-        expect(stopped.endTimezoneId, equals('Asia/Tokyo'));
-
-        // 3. add_manual_record
-        final manualReq = jsonEncode({
-          'jsonrpc': '2.0',
-          'id': 42,
-          'method': 'tools/call',
-          'params': {
-            'name': 'add_manual_record',
-            'arguments': {
-              'activity_name': 'Reading',
-              'start_time': '2026-10-29T10:00:00Z',
-              'end_time': '2026-10-29T11:00:00Z',
-              'comment': 'Reading docs',
-              'tags': ['Learning'],
-            },
-          },
-        });
-        final manualRes = await writeServer.handleMessage(manualReq);
-        final manualJson = jsonDecode(manualRes!) as Map<String, dynamic>;
-        expect(manualJson['result']['isError'], isFalse);
-        final manualPayload = jsonDecode(
-          manualJson['result']['content'][0]['text'] as String,
-        );
-        expect(manualPayload['success'], isTrue);
-        expect(manualPayload['activity_name'], equals('Reading'));
-        expect(manualPayload['duration_seconds'], equals(3600));
-
-        final records = await db.getRecords();
-        final manual = records.firstWhere((r) => r.comment == 'Reading docs');
-        expect(manual.timezoneId, equals('Asia/Tokyo'));
-        expect(manual.endTimezoneId, equals('Asia/Tokyo'));
+        final totals = {
+          for (final entry in payload['time_per_activity'] as List)
+            entry['activity'] as String: entry,
+        };
+        expect(totals['Sleep']['duration_seconds'], equals(14 * 3600));
+        expect(totals['Sleep']['record_count'], equals(2));
+        expect(totals['Transit']['duration_seconds'], equals(6 * 3600));
+        expect(totals['Transit']['record_count'], equals(1));
+        expect(totals['Meals']['duration_seconds'], equals(3600));
       },
     );
+
+    test('get_untracked_records lists their count and length', () async {
+      final result = await callTool(server, 'get_untracked_records', {
+        'start_date': '2026-10-29',
+        'end_date': '2026-10-30',
+        'timezone': laZone,
+      });
+      final payload = payloadOf(result);
+
+      expect(payload['count'], equals(2));
+      expect(payload['total_duration_seconds'], equals(2 * 3600));
+
+      final records = payload['records'] as List;
+      expect(records.length, equals(2));
+      expect(records.every((r) => r['is_untracked'] == true), isTrue);
+      expect(records.every((r) => r['activity'] == null), isTrue);
+      expect(records.first['id'], equals('r-29-untracked'));
+      expect(records.last['id'], equals('r-30-untracked'));
+    });
+
+    test('compare_days reports each Day and the change between them', () async {
+      final result = await callTool(server, 'compare_days', {
+        'dates': ['2026-10-30', '2026-10-29'],
+        'timezone': laZone,
+      });
+      final payload = payloadOf(result);
+
+      final days = payload['days'] as List;
+      expect(days.length, equals(2));
+      expect(days[0]['date'], equals('2026-10-29'));
+      expect(days[1]['date'], equals('2026-10-30'));
+      expect(
+        days[0]['time_per_activity'],
+        equals({'Sleep': 7 * 3600, 'Meals': 3600}),
+      );
+      expect(
+        days[1]['time_per_activity'],
+        equals({'Sleep': 7 * 3600, 'Transit': 6 * 3600}),
+      );
+      expect(
+        days[1]['untracked_records'],
+        equals({'count': 1, 'duration_seconds': 3600}),
+      );
+
+      final differences = {
+        for (final entry in payload['differences'] as List)
+          entry['activity'] as String: entry,
+      };
+      expect(differences['Sleep']['difference_seconds'], equals(0));
+      expect(differences['Transit']['difference_seconds'], equals(6 * 3600));
+      expect(differences['Meals']['difference_seconds'], equals(-3600));
+      expect(differences['Sleep']['from_date'], equals('2026-10-29'));
+      expect(differences['Sleep']['to_date'], equals('2026-10-30'));
+    });
+
+    test(
+      'read output sanitizes comments with stable contact pseudonyms',
+      () async {
+        final contactTag = Tag(
+          id: 'tag-contact',
+          name: 'Contact',
+          createdAtEpochMs: 0,
+          updatedAtEpochMs: 0,
+        );
+        await db.insertTag(contactTag);
+        final start = wallMs(laZone, 2026, 11, 2, 9);
+        await insertRecord(
+          id: 'r-pii-1',
+          activityId: meals.id,
+          startMs: start,
+          endMs: start + hourMs,
+          comment: '1:1 w/ Bob Jones (reach bob@corp.com)',
+          tagIds: [contactTag.id],
+        );
+        await insertRecord(
+          id: 'r-pii-2',
+          activityId: meals.id,
+          startMs: start + hourMs,
+          endMs: start + (2 * hourMs),
+          comment: 'Lunch with Alice Wu',
+          tagIds: [contactTag.id],
+        );
+        await insertRecord(
+          id: 'r-pii-3',
+          activityId: meals.id,
+          startMs: start + (2 * hourMs),
+          endMs: start + (3 * hourMs),
+          comment: 'Dinner w/ Bob Jones',
+          tagIds: [contactTag.id],
+        );
+
+        final timeline = payloadOf(
+          await callTool(server, 'get_day_timeline', {
+            'date': '2026-11-02',
+            'timezone': laZone,
+          }),
+        );
+        final comments = {
+          for (final record in timeline['records'] as List)
+            record['id'] as String: record['comment'],
+        };
+        expect(
+          comments['r-pii-1'],
+          equals('1:1 w/ [Contact-1] (reach [EMAIL])'),
+        );
+        expect(comments['r-pii-2'], equals('Lunch with [Contact-2]'));
+        expect(comments['r-pii-3'], equals('Dinner w/ [Contact-1]'));
+
+        final taggedResponse = await callTool(server, 'query_records', {
+          'start_date': '2026-11-02',
+          'end_date': '2026-11-02',
+          'tag': 'Contact',
+          'timezone': laZone,
+        });
+        final queried =
+            jsonDecode(taggedResponse['content'][0]['text'] as String) as List;
+        expect(queried.length, equals(3));
+        expect(queried.first['comment'], contains('[Contact-1]'));
+        expect(
+          queried.first['started_at_local'],
+          equals('2026-11-02T09:00:00'),
+        );
+        expect(queried.first['tags'], equals(['Contact']));
+      },
+    );
+
+    test('write tools keep the Day continuous and surface refusals', () async {
+      var clock = wallMs(laZone, 2026, 11, 3, 8);
+      final recorder = DayRecorder(
+        database: db,
+        nowUtcMs: () => clock,
+        getTimezoneId: () => laZone,
+        autoSplitAtMidnight: false,
+      );
+      addTearDown(recorder.dispose);
+      await recorder.initialize();
+
+      final writeServer = TempoMcpServer(
+        database: db,
+        sanitizer: sanitizer,
+        allowWrites: true,
+        zoneProvider: () => laZone,
+        nowUtcMs: () => clock,
+        dayRecorder: recorder,
+      );
+
+      clock += 2 * hourMs;
+      final labelled = payloadOf(
+        await callTool(writeServer, 'label_lap', {
+          'activity_name': 'Reading',
+          'comment': '1:1 w/ Bob Jones',
+          'tags': ['Contact'],
+        }),
+      );
+      expect(labelled['success'], isTrue);
+      var reading = labelled['record'] as Map<String, dynamic>;
+      expect(reading['activity'], equals('Reading'));
+      expect(reading['duration_seconds'], equals(2 * 3600));
+      expect(reading['started_at_local'], equals('2026-11-03T08:00:00'));
+      expect(reading['start_timezone'], equals(laZone));
+      expect(reading['comment'], equals('1:1 w/ [Contact-1]'));
+
+      clock += hourMs;
+      final split = payloadOf(await callTool(writeServer, 'split_lap'));
+      expect(split['success'], isTrue);
+      final untracked = split['record'] as Map<String, dynamic>;
+      expect(untracked['is_untracked'], isTrue);
+      expect(untracked['activity'], isNull);
+      expect(untracked['duration_seconds'], equals(3600));
+
+      clock += hourMs;
+      await callTool(writeServer, 'label_lap', {'activity_name': 'Meals'});
+
+      final dayStart = wallMs(laZone, 2026, 11, 3, 0);
+      Future<List<Record>> readDay() async {
+        final all = await db.getRecords();
+        return all.where((r) => r.startedAtEpochMs >= dayStart).toList()
+          ..sort((a, b) => a.startedAtEpochMs.compareTo(b.startedAtEpochMs));
+      }
+
+      var records = await readDay();
+      expect(records.length, equals(3));
+      for (var i = 0; i < records.length - 1; i++) {
+        expect(
+          records[i].endedAtEpochMs,
+          equals(records[i + 1].startedAtEpochMs),
+        );
+      }
+      expect(records.first.id, equals(reading['id']));
+
+      final boundaryInstant = records.first.startedAtEpochMs + 9000000;
+      final moved = payloadOf(
+        await callTool(writeServer, 'move_boundary', {
+          'record_id': records.first.id,
+          'new_instant': DateTime.fromMillisecondsSinceEpoch(
+            boundaryInstant,
+            isUtc: true,
+          ).toIso8601String(),
+        }),
+      );
+      expect(moved['success'], isTrue);
+      reading = moved['record'] as Map<String, dynamic>;
+      expect(reading['duration_seconds'], equals(9000));
+
+      records = await readDay();
+      expect(records.length, equals(3));
+      expect(records[0].endedAtEpochMs, equals(boundaryInstant));
+      expect(records[1].startedAtEpochMs, equals(boundaryInstant));
+      expect(records[1].durationMs, equals(1800000));
+      expect(records[2].startedAtEpochMs, equals(records[1].endedAtEpochMs));
+
+      final pastNeighbour = await callTool(writeServer, 'move_boundary', {
+        'record_id': records.first.id,
+        'new_instant': DateTime.fromMillisecondsSinceEpoch(
+          records[2].startedAtEpochMs + 1800000,
+          isUtc: true,
+        ).toIso8601String(),
+      });
+      expect(pastNeighbour['isError'], isTrue);
+      expect(
+        pastNeighbour['content'][0]['text'] as String,
+        contains('past a neighbouring Record'),
+      );
+
+      final intoOpenLap = await callTool(writeServer, 'move_boundary', {
+        'record_id': records[2].id,
+        'new_instant': DateTime.fromMillisecondsSinceEpoch(
+          records[2].endedAtEpochMs + 1800000,
+          isUtc: true,
+        ).toIso8601String(),
+      });
+      expect(intoOpenLap['isError'], isTrue);
+      expect(intoOpenLap['content'][0]['text'] as String, contains('open Lap'));
+    });
 
     test('processStream handles multi-line stdio input cleanly', () async {
       final inputLines = Stream.fromIterable([
         jsonEncode({'jsonrpc': '2.0', 'id': 1, 'method': 'ping'}),
-        '', // empty line should be ignored
+        '',
         jsonEncode({'jsonrpc': '2.0', 'id': 2, 'method': 'ping'}),
       ]);
 
       final responses = await server.processStream(inputLines).toList();
       expect(responses.length, equals(2));
-      final res1 = jsonDecode(responses[0]);
-      final res2 = jsonDecode(responses[1]);
+      final res1 = jsonDecode(responses[0]) as Map<String, dynamic>;
+      final res2 = jsonDecode(responses[1]) as Map<String, dynamic>;
       expect(res1['id'], equals(1));
       expect(res2['id'], equals(2));
     });
