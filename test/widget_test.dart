@@ -39,8 +39,8 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
-    // Verify Tempo brand title and bottom navigation tabs
-    expect(find.text('Tempo'), findsOneWidget);
+    // Verify the Color Blocks dashboard and the bottom navigation tabs
+    expect(find.text('What was it?'), findsOneWidget);
     expect(find.text('Tracking'), findsOneWidget);
     expect(find.text('Statistics'), findsOneWidget);
     expect(find.text('History'), findsOneWidget);

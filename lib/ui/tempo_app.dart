@@ -100,6 +100,7 @@ class _TempoAppState extends State<TempoApp> with WidgetsBindingObserver {
         dayRecorder: widget.dayRecorder,
         database: widget.database,
         onNavigateToStats: () => setState(() => _currentTabIndex = 1),
+        onOpenHistory: () => setState(() => _currentTabIndex = 2),
       ),
       StatsView(database: widget.database),
       HistoryView(database: widget.database, dayRecorder: widget.dayRecorder),
