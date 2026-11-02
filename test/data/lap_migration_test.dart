@@ -160,7 +160,7 @@ void main() {
     expect(lap!.startedAtEpochMs, equals(pausedAt));
 
     final records = await tempo.getRecords(orderBy: 'started_at_epoch_ms ASC');
-    expect(records.length, equals(2));
+    expect(records.length, equals(3));
 
     final closed = records.firstWhere((r) => r.startedAtEpochMs == startedAt);
     expect(closed.endedAtEpochMs, equals(pausedAt));
@@ -170,6 +170,11 @@ void main() {
     expect(closed.tagIds, equals(['tag-travel']));
     expect(closed.timezoneId, equals('America/Los_Angeles'));
     expect(closed.endTimezoneId, isNotEmpty);
+
+    // The gap between the pre-upgrade Record and the closed timer is filled.
+    final gap = records.firstWhere((r) => r.startedAtEpochMs == 2000);
+    expect(gap.endedAtEpochMs, equals(startedAt));
+    expect(gap.activityId, isNull);
   });
 
   test('opens a Lap at upgrade time when no timer was running', () async {
@@ -187,8 +192,16 @@ void main() {
     expect(lap.startedAtEpochMs, lessThanOrEqualTo(after));
 
     // Existing Records are untouched.
-    final records = await tempo.getRecords();
-    expect(records.length, equals(1));
+    final records = await tempo.getRecords(orderBy: 'started_at_epoch_ms ASC');
+    expect(records.length, equals(2));
     expect(records.first.id, equals('rec-old'));
+    expect(records.first.startedAtEpochMs, equals(1000));
+    expect(records.first.endedAtEpochMs, equals(2000));
+
+    // Time between the last Record and the open Lap is filled as Untracked.
+    final gap = records.last;
+    expect(gap.activityId, isNull);
+    expect(gap.startedAtEpochMs, equals(2000));
+    expect(gap.endedAtEpochMs, equals(lap.startedAtEpochMs));
   });
 }

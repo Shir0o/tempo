@@ -107,15 +107,19 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
 
     final durations = <String, int>{};
     for (final r in weekRecords) {
-      durations[r.activityId] = (durations[r.activityId] ?? 0) + r.durationMs;
+      final activityId = r.activityId;
+      if (activityId == null) continue;
+      durations[activityId] = (durations[activityId] ?? 0) + r.durationMs;
     }
 
     // Determine recent activities from latest records
     final recentRecords = await widget.database.getRecords(limit: 30);
     final recentIds = <String>{};
     for (final r in recentRecords) {
-      if (!pinned.any((p) => p.id == r.activityId)) {
-        recentIds.add(r.activityId);
+      final activityId = r.activityId;
+      if (activityId == null) continue;
+      if (!pinned.any((p) => p.id == activityId)) {
+        recentIds.add(activityId);
       }
     }
 

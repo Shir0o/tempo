@@ -13,10 +13,14 @@ import '../time/timezone_id.dart';
 /// a Record. There is no pause, resume, or idle state: the Lap simply continues
 /// from its persisted start.
 class DayRecorder {
+  /// The interval after a label or split during which [undoLast] still works.
+  static const Duration defaultUndoGraceWindow = Duration(seconds: 3);
+
   final TempoDatabase _db;
   final int Function() _nowUtcMs;
   final String Function() _generateId;
   final FutureOr<String> Function() _getTimezoneId;
+  final Duration undoGraceWindow;
   final Future<void> Function(Record record)? onRecordCommitted;
   CsvExportEngine? csvExportEngine;
 
@@ -26,12 +30,14 @@ class DayRecorder {
 
   Future<void>? _lock;
   bool _isInitialized = false;
+  _UndoSnapshot? _lastOperation;
 
   DayRecorder({
     required TempoDatabase database,
     int Function()? nowUtcMs,
     String Function()? generateId,
     FutureOr<String> Function()? getTimezoneId,
+    this.undoGraceWindow = defaultUndoGraceWindow,
     this.onRecordCommitted,
     this.csvExportEngine,
   }) : _db = database,
@@ -70,19 +76,85 @@ class DayRecorder {
     String comment = '',
     List<String> tags = const [],
   }) => _synchronized(
-    () => _labelLocked(activityId, comment: comment, tags: tags),
+    () => _closeLapLocked(activityId: activityId, comment: comment, tags: tags),
   );
 
+  /// Closes the open Lap as an Untracked Record and opens a new Lap at the same
+  /// instant, so the boundary is marked without deciding what the time was.
+  Future<Record> split() => _synchronized(() => _closeLapLocked());
+
+  /// Labels an existing Record, including an Untracked one, with [activityId].
+  /// Passing null turns a labelled Record back into an Untracked Record.
+  Future<Record> relabel(String recordId, String? activityId) => _synchronized(
+    () async {
+      final record = await _db.getRecordById(recordId);
+      if (record == null) {
+        throw ArgumentError('Record with id "$recordId" does not exist.');
+      }
+      if (activityId != null) {
+        final activity = await _db.getActivityById(activityId);
+        if (activity == null) {
+          throw ArgumentError('Activity with id "$activityId" does not exist.');
+        }
+      }
+
+      final updated = record
+          .withActivity(activityId)
+          .copyWith(updatedAtEpochMs: _nowUtcMs());
+      await _db.updateRecord(updated);
+      await _requestExport();
+      return updated;
+    },
+  );
+
+  /// Reverses the most recent [label] or [split] when called inside the
+  /// [undoGraceWindow]: the Record is deleted (with a Tombstone) and the Lap is
+  /// restored to its previous start. Returns false when nothing is undoable.
+  Future<bool> undoLast() => _synchronized(() async {
+    await _ensureInitializedLocked();
+    final undo = _lastOperation;
+    if (undo == null) return false;
+
+    _lastOperation = null;
+    final now = _nowUtcMs();
+    if (now - undo.armedAtEpochMs > undoGraceWindow.inMilliseconds) {
+      return false;
+    }
+
+    await _db.db.transaction((txn) async {
+      await txn.delete('records', where: 'id = ?', whereArgs: [undo.record.id]);
+      await txn.insert(
+        'tombstones',
+        Tombstone(
+          entityId: undo.record.id,
+          entityType: 'record',
+          deletedAtEpochMs: now,
+        ).toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      await txn.insert(
+        'lap',
+        undo.previousLap.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    });
+
+    _updateLap(undo.previousLap);
+    await _requestExport();
+    return true;
+  });
+
   /// Labels the open Lap with the Activity of the most recent labelled Record.
-  /// Returns null when no previous Record exists.
+  /// Returns null when no labelled Record exists.
   Future<Record?> sameAsLast() => _synchronized(() async {
     await _ensureInitializedLocked();
     final previous = await _db.getRecords(
+      trackedOnly: true,
       limit: 1,
       orderBy: 'ended_at_epoch_ms DESC, rowid DESC',
     );
     if (previous.isEmpty) return null;
-    return _labelLocked(previous.first.activityId);
+    return _closeLapLocked(activityId: previous.first.activityId);
   });
 
   Future<Lap> _initializeLocked() async {
@@ -105,16 +177,18 @@ class DayRecorder {
     await _initializeLocked();
   }
 
-  Future<Record> _labelLocked(
-    String activityId, {
+  Future<Record> _closeLapLocked({
+    String? activityId,
     String comment = '',
     List<String> tags = const [],
   }) async {
     await _ensureInitializedLocked();
 
-    final activity = await _db.getActivityById(activityId);
-    if (activity == null) {
-      throw ArgumentError('Activity with id "$activityId" does not exist.');
+    if (activityId != null) {
+      final activity = await _db.getActivityById(activityId);
+      if (activity == null) {
+        throw ArgumentError('Activity with id "$activityId" does not exist.');
+      }
     }
 
     final now = _nowUtcMs();
@@ -161,6 +235,11 @@ class DayRecorder {
       );
     });
 
+    _lastOperation = _UndoSnapshot(
+      record: record,
+      previousLap: current,
+      armedAtEpochMs: now,
+    );
     _updateLap(nextLap);
     await _notifyRecordCommitted(record);
     return record;
@@ -174,16 +253,19 @@ class DayRecorder {
   }
 
   Future<void> _notifyRecordCommitted(Record record) async {
-    final engine = csvExportEngine;
-    if (engine != null) {
-      if (engine.debounceDuration == Duration.zero) {
-        await engine.scheduleExport();
-      } else {
-        engine.scheduleExport();
-      }
-    }
+    await _requestExport();
     if (onRecordCommitted != null) {
       await onRecordCommitted!(record);
+    }
+  }
+
+  Future<void> _requestExport() async {
+    final engine = csvExportEngine;
+    if (engine == null) return;
+    if (engine.debounceDuration == Duration.zero) {
+      await engine.scheduleExport();
+    } else {
+      engine.scheduleExport();
     }
   }
 
@@ -211,4 +293,17 @@ class DayRecorder {
     _lapStreamController.close();
     _lapNotifier.dispose();
   }
+}
+
+/// The state needed to reverse one label or split.
+class _UndoSnapshot {
+  final Record record;
+  final Lap previousLap;
+  final int armedAtEpochMs;
+
+  const _UndoSnapshot({
+    required this.record,
+    required this.previousLap,
+    required this.armedAtEpochMs,
+  });
 }

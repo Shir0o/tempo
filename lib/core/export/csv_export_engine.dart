@@ -196,6 +196,10 @@ class CsvExportEngine {
     buffer.write('\n');
 
     for (final record in records) {
+      // Untracked Records have no Activity, so BNPB never sees a row without
+      // an activity name. Labelling one includes it on the next export.
+      if (record.isUntracked) continue;
+
       final activity = activityMap[record.activityId];
       final activityName = activity?.name ?? '';
       final tagNames = record.tagIds

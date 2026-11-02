@@ -105,7 +105,7 @@ void main() {
           final records = await db.getRecords();
           expect(records.length, equals(1));
 
-          final activity = await db.getActivityById(records.first.activityId);
+          final activity = await db.getActivityById(records.first.activityId!);
           expect(activity, isNotNull);
           expect(activity!.name, equals('Guitar Practice'));
 
@@ -184,13 +184,11 @@ void main() {
     });
 
     group('tempo://stop', () {
-      test('labels the Lap with the previous Record Activity', () async {
+      test('splits the open Lap into an Untracked Record', () async {
         await deepLinkService.handleUrl('tempo://start?activity=Coding');
         mockTime += 120000;
 
-        final success = await deepLinkService.handleUrl(
-          'tempo://stop?comment=Finished%20PR%20Review',
-        );
+        final success = await deepLinkService.handleUrl('tempo://stop');
 
         expect(success, isTrue);
 
@@ -199,16 +197,27 @@ void main() {
         final stopped = records.firstWhere(
           (r) => r.startedAtEpochMs == 1000000000,
         );
-        expect(stopped.activityId, equals('act-coding'));
+        expect(stopped.activityId, isNull);
         expect(stopped.durationMs, equals(120000));
         expect(dayRecorder.lap!.startedAtEpochMs, equals(1000120000));
       });
 
-      test('handles stop with no previous Record without error', () async {
+      test('splits with no previous Record without error', () async {
         final success = await deepLinkService.handleUrl('tempo://stop');
         expect(success, isTrue);
-        expect(await db.getRecords(), isEmpty);
+        final records = await db.getRecords();
+        expect(records.length, equals(1));
+        expect(records.single.activityId, isNull);
         expect(dayRecorder.lap!.startedAtEpochMs, equals(1000000000));
+      });
+
+      test('tempo://split is an alias for the same Split', () async {
+        mockTime += 60000;
+        expect(await deepLinkService.handleUrl('tempo://split'), isTrue);
+
+        final records = await db.getRecords();
+        expect(records.single.activityId, isNull);
+        expect(records.single.durationMs, equals(60000));
       });
     });
 
@@ -284,7 +293,7 @@ void main() {
 
         expect(success, isTrue);
         final records = await db.getRecords();
-        final act = await db.getActivityById(records.first.activityId);
+        final act = await db.getActivityById(records.first.activityId!);
         expect(act?.name, equals('Research 🚀'));
         expect(records.first.comment, equals('✨ Testing'));
       });

@@ -81,7 +81,7 @@ class _TempoAppState extends State<TempoApp> {
         onNavigateToStats: () => setState(() => _currentTabIndex = 1),
       ),
       StatsView(database: widget.database),
-      HistoryView(database: widget.database),
+      HistoryView(database: widget.database, dayRecorder: widget.dayRecorder),
       SettingsView(
         database: widget.database,
         syncService: widget.syncService,

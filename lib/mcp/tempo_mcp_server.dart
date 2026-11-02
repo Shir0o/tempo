@@ -240,13 +240,13 @@ class TempoMcpServer {
         },
         {
           'name': 'stop_timer',
-          'description': 'Stops the currently active timer and records the session (guarded write tool).',
+          'description': 'Splits the open Lap into an untracked Record and opens a new Lap (guarded write tool).',
           'inputSchema': {
             'type': 'object',
             'properties': {
               'comment': {
                 'type': 'string',
-                'description': 'Optional final comment to record.',
+                'description': 'Ignored; kept for backward compatibility.',
               },
             },
           },
@@ -410,8 +410,10 @@ class TempoMcpServer {
 
     for (final r in records) {
       totalDurationMs += r.durationMs;
-      activityDurations[r.activityId] =
-          (activityDurations[r.activityId] ?? 0) + r.durationMs;
+      final activityId = r.activityId;
+      if (activityId == null) continue;
+      activityDurations[activityId] =
+          (activityDurations[activityId] ?? 0) + r.durationMs;
     }
 
     final activities = await database.getAllActivities(includeArchived: true);
@@ -506,7 +508,10 @@ class TempoMcpServer {
     final limited = filtered.take(limit).toList();
 
     return limited.map((r) {
-      final actName = activityMap[r.activityId]?.name ?? r.activityId;
+      final activityId = r.activityId;
+      final actName = activityId == null
+          ? 'Untracked'
+          : activityMap[activityId]?.name ?? activityId;
       final tagNames = r.tagIds.map((tid) => tagMap[tid] ?? tid).toList();
       return {
         'id': r.id,
@@ -543,8 +548,10 @@ class TempoMcpServer {
     // 1. Weekly averages
     final activityTotals = <String, int>{};
     for (final r in records) {
-      activityTotals[r.activityId] =
-          (activityTotals[r.activityId] ?? 0) + r.durationMs;
+      final activityId = r.activityId;
+      if (activityId == null) continue;
+      activityTotals[activityId] =
+          (activityTotals[activityId] ?? 0) + r.durationMs;
     }
     final weeklyAverages = <String, double>{};
     for (final entry in activityTotals.entries) {
@@ -685,36 +692,20 @@ class TempoMcpServer {
   }
 
   Future<Map<String, dynamic>> _stopTimerTool(Map<String, dynamic> args) async {
-    // Split is #16; until then `stop_timer` labels the Lap with the most recent
-    // Record's Activity so existing automation keeps closing Records.
-    final previous = await database.getRecords(
-      limit: 1,
-      orderBy: 'ended_at_epoch_ms DESC, rowid DESC',
-    );
-    if (previous.isEmpty) {
-      return {
-        'success': false,
-        'message': 'No previous Record to label the open Lap with.',
-      };
-    }
-
+    // `stop_timer` keeps existing automation working by splitting the open Lap
+    // into an Untracked Record, which can be labelled later.
     final recorder = await _readyRecorder();
-    final record = await recorder.label(
-      previous.first.activityId,
-      comment: args['comment'] as String? ?? '',
-    );
+    final record = await recorder.split();
     if (csvExportEngine != null) {
       await csvExportEngine!.scheduleExport();
     }
 
-    final activity = await database.getActivityById(record.activityId);
-
     return {
       'success': true,
       'record_id': record.id,
-      'activity_name': activity?.name ?? 'Unknown',
+      'activity_name': null,
       'duration_seconds': record.durationMs ~/ 1000,
-      'comment': record.comment,
+      'comment': '',
     };
   }
 

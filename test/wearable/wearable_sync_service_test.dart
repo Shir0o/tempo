@@ -179,7 +179,7 @@ void main() {
     });
 
     test(
-      'incoming STOP action labels the Lap with the last Activity',
+      'incoming STOP action splits the Lap into an Untracked Record',
       () async {
         syncService.initialize();
         await dayRecorder.label('act-coding');
@@ -205,7 +205,7 @@ void main() {
 
         final records = await db.getRecords();
         expect(records.length, equals(2));
-        expect(records.first.activityId, 'act-coding');
+        expect(records.first.activityId, isNull);
         expect(dayRecorder.lap!.startedAtEpochMs, equals(mockTime));
       },
     );
