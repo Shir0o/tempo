@@ -74,6 +74,18 @@ class _HistoryViewState extends State<HistoryView> {
   }
 
   Future<void> _openLabelUntrackedDialog(Record record) async {
+    final activity = await _pickActivity(record, offerCorrections: true);
+    if (activity == null) return;
+    await _applyEdit(() => widget.dayRecorder.relabel(record.id, activity.id));
+  }
+
+  /// The Activity chooser. Returns null when the sheet is dismissed.
+  /// [offerCorrections] adds a way into the full edit sheet, so an Untracked
+  /// Record can still be split or resized.
+  Future<Activity?> _pickActivity(
+    Record record, {
+    bool offerCorrections = false,
+  }) async {
     final activities =
         _activitiesMap.values.where((activity) => !activity.isArchived).toList()
           ..sort((a, b) {
@@ -82,7 +94,7 @@ class _HistoryViewState extends State<HistoryView> {
           });
     final timeRange = UiHelpers.formatZonedTimeRange(record);
 
-    await showModalBottomSheet<void>(
+    return showModalBottomSheet<Activity>(
       context: context,
       backgroundColor: const Color(0xFF1C1C24),
       shape: const RoundedRectangleBorder(
@@ -122,7 +134,7 @@ class _HistoryViewState extends State<HistoryView> {
               Flexible(
                 child: ListView(
                   shrinkWrap: true,
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 20),
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                   children: [
                     for (final activity in activities)
                       ListTile(
@@ -141,18 +153,25 @@ class _HistoryViewState extends State<HistoryView> {
                             fontSize: 14,
                           ),
                         ),
-                        onTap: () async {
-                          Navigator.of(ctx).pop();
-                          await widget.dayRecorder.relabel(
-                            record.id,
-                            activity.id,
-                          );
-                          if (mounted) await _loadData();
-                        },
+                        onTap: () => Navigator.of(ctx).pop(activity),
                       ),
                   ],
                 ),
               ),
+              if (offerCorrections)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                  child: TextButton(
+                    onPressed: () {
+                      Navigator.of(ctx).pop();
+                      _openEditRecordDialog(record);
+                    },
+                    child: const Text(
+                      'Split or adjust this time',
+                      style: TextStyle(color: Colors.white60, fontSize: 13),
+                    ),
+                  ),
+                ),
             ],
           ),
         );
@@ -160,19 +179,65 @@ class _HistoryViewState extends State<HistoryView> {
     );
   }
 
+  /// Runs a correction, then reloads. Refusals are shown in plain language.
+  Future<bool> _applyEdit(Future<Object?> Function() action) async {
+    try {
+      await action();
+      if (mounted) await _loadData();
+      return true;
+    } on RecordEditRefused catch (error) {
+      _showEditMessage(error.message);
+      return false;
+    } on ArgumentError catch (error) {
+      _showEditMessage(
+        error.message?.toString() ?? 'That edit is not possible.',
+      );
+      return false;
+    }
+  }
+
+  void _showEditMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFF22222C),
+      ),
+    );
+  }
+
+  /// The Record that ends exactly where [record] starts, if any.
+  Record? _previousRecord(Record record) {
+    for (final other in _records) {
+      if (other.id != record.id &&
+          other.endedAtEpochMs == record.startedAtEpochMs) {
+        return other;
+      }
+    }
+    return null;
+  }
+
+  /// The Record that starts exactly where [record] ends, if any.
+  Record? _nextRecord(Record record) {
+    for (final other in _records) {
+      if (other.id != record.id &&
+          other.startedAtEpochMs == record.endedAtEpochMs) {
+        return other;
+      }
+    }
+    return null;
+  }
+
   Future<void> _openEditRecordDialog(Record record) async {
     final activity = _activitiesMap[record.activityId];
     final color = UiHelpers.parseHexColor(activity?.colorHex);
     final commentController = TextEditingController(text: record.comment);
+    final previous = _previousRecord(record);
+    final next = _nextRecord(record);
 
-    DateTime startDateTime = wallClockAt(
-      record.timezoneId,
-      record.startedAtEpochMs,
-    );
-    DateTime endDateTime = wallClockAt(
-      record.endTimezoneId,
-      record.endedAtEpochMs,
-    );
+    final startClock = wallClockAt(record.timezoneId, record.startedAtEpochMs);
+    final endClock = wallClockAt(record.endTimezoneId, record.endedAtEpochMs);
     final startZoneLabel = zoneAbbreviationAt(
       record.timezoneId,
       record.startedAtEpochMs,
@@ -193,20 +258,15 @@ class _HistoryViewState extends State<HistoryView> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) {
+        // Every correction closes the sheet first, then applies and reports.
+        Future<void> closeThenApply(Future<Object?> Function() action) async {
+          if (ctx.mounted) Navigator.of(ctx).pop();
+          await _applyEdit(action);
+        }
+
         return StatefulBuilder(
           builder: (context, setModalState) {
-            final durationMs =
-                epochMsFromWallClock(
-                  endDateTime,
-                  record.endTimezoneId,
-                  referenceEpochMs: record.endedAtEpochMs,
-                ) -
-                epochMsFromWallClock(
-                  startDateTime,
-                  record.timezoneId,
-                  referenceEpochMs: record.startedAtEpochMs,
-                );
-            final durationStr = UiHelpers.formatDurationHuman(durationMs);
+            final durationStr = UiHelpers.formatDurationHuman(record.elapsedMs);
 
             return Padding(
               padding: EdgeInsets.only(
@@ -241,7 +301,7 @@ class _HistoryViewState extends State<HistoryView> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                activity?.name ?? 'Record Details',
+                                activity?.name ?? 'Untracked',
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 16,
@@ -260,58 +320,62 @@ class _HistoryViewState extends State<HistoryView> {
                             ],
                           ),
                         ),
-                        IconButton(
-                          icon: const Icon(
-                            Icons.delete_outline,
-                            color: Color(0xFFE57373),
-                          ),
-                          tooltip: 'Delete Record',
-                          onPressed: () async {
-                            final confirm = await showDialog<bool>(
-                              context: context,
-                              builder: (dCtx) => AlertDialog(
-                                backgroundColor: const Color(0xFF22222C),
-                                title: const Text(
-                                  'Delete Record?',
-                                  style: TextStyle(color: Colors.white),
-                                ),
-                                content: const Text(
-                                  'This record will be permanently deleted and a tombstone recorded.',
-                                  style: TextStyle(color: Colors.white70),
-                                ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.of(dCtx).pop(false),
-                                    child: const Text(
-                                      'Cancel',
-                                      style: TextStyle(color: Colors.white60),
-                                    ),
+                        if (!record.isUntracked)
+                          IconButton(
+                            icon: const Icon(
+                              Icons.delete_outline,
+                              color: Color(0xFFE57373),
+                            ),
+                            tooltip: 'Make Untracked',
+                            onPressed: () async {
+                              final confirm = await showDialog<bool>(
+                                context: context,
+                                builder: (dCtx) => AlertDialog(
+                                  backgroundColor: const Color(0xFF22222C),
+                                  title: const Text(
+                                    'Make this time Untracked?',
+                                    style: TextStyle(color: Colors.white),
                                   ),
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.of(dCtx).pop(true),
-                                    child: const Text(
-                                      'Delete',
-                                      style: TextStyle(color: Colors.redAccent),
-                                    ),
+                                  content: const Text(
+                                    'The time stays in your day, but it will need a label again.',
+                                    style: TextStyle(color: Colors.white70),
                                   ),
-                                ],
-                              ),
-                            );
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.of(dCtx).pop(false),
+                                      child: const Text(
+                                        'Cancel',
+                                        style: TextStyle(color: Colors.white60),
+                                      ),
+                                    ),
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.of(dCtx).pop(true),
+                                      child: const Text(
+                                        'Make Untracked',
+                                        style: TextStyle(
+                                          color: Colors.redAccent,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
 
-                            if (confirm == true) {
-                              await widget.database.deleteRecord(record.id);
-                              if (ctx.mounted) Navigator.of(ctx).pop();
-                              _loadData();
-                            }
-                          },
-                        ),
+                              if (confirm == true) {
+                                await closeThenApply(
+                                  () => widget.dayRecorder.delete(record.id),
+                                );
+                              }
+                            },
+                          ),
                       ],
                     ),
                     const SizedBox(height: 16),
 
-                    // Timestamp Picker Row
+                    // Boundary row: the start resizes the previous Record, the
+                    // end resizes this one. Both neighbours change together.
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
@@ -325,26 +389,34 @@ class _HistoryViewState extends State<HistoryView> {
                             onTap: () async {
                               final time = await showTimePicker(
                                 context: context,
-                                initialTime: TimeOfDay.fromDateTime(
-                                  startDateTime,
+                                initialTime: TimeOfDay.fromDateTime(startClock),
+                              );
+                              if (time == null) return;
+                              final previousRecord = previous;
+                              if (previousRecord == null) {
+                                _showEditMessage(
+                                  'There is no earlier Record to share this '
+                                  'edge with.',
+                                );
+                                return;
+                              }
+                              final instant = epochMsFromWallClock(
+                                DateTime.utc(
+                                  startClock.year,
+                                  startClock.month,
+                                  startClock.day,
+                                  time.hour,
+                                  time.minute,
+                                ),
+                                record.timezoneId,
+                                referenceEpochMs: record.startedAtEpochMs,
+                              );
+                              await closeThenApply(
+                                () => widget.dayRecorder.moveBoundary(
+                                  previousRecord.id,
+                                  instant,
                                 ),
                               );
-                              if (time != null) {
-                                setModalState(() {
-                                  startDateTime = DateTime.utc(
-                                    startDateTime.year,
-                                    startDateTime.month,
-                                    startDateTime.day,
-                                    time.hour,
-                                    time.minute,
-                                  );
-                                  if (endDateTime.isBefore(startDateTime)) {
-                                    endDateTime = startDateTime.add(
-                                      const Duration(minutes: 30),
-                                    );
-                                  }
-                                });
-                              }
                             },
                             child: Column(
                               children: [
@@ -357,7 +429,7 @@ class _HistoryViewState extends State<HistoryView> {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  DateFormat('HH:mm').format(startDateTime),
+                                  DateFormat('HH:mm').format(startClock),
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 16,
@@ -377,26 +449,26 @@ class _HistoryViewState extends State<HistoryView> {
                             onTap: () async {
                               final time = await showTimePicker(
                                 context: context,
-                                initialTime: TimeOfDay.fromDateTime(
-                                  endDateTime,
+                                initialTime: TimeOfDay.fromDateTime(endClock),
+                              );
+                              if (time == null) return;
+                              final instant = epochMsFromWallClock(
+                                DateTime.utc(
+                                  endClock.year,
+                                  endClock.month,
+                                  endClock.day,
+                                  time.hour,
+                                  time.minute,
+                                ),
+                                record.endTimezoneId,
+                                referenceEpochMs: record.endedAtEpochMs,
+                              );
+                              await closeThenApply(
+                                () => widget.dayRecorder.moveBoundary(
+                                  record.id,
+                                  instant,
                                 ),
                               );
-                              if (time != null) {
-                                setModalState(() {
-                                  endDateTime = DateTime.utc(
-                                    endDateTime.year,
-                                    endDateTime.month,
-                                    endDateTime.day,
-                                    time.hour,
-                                    time.minute,
-                                  );
-                                  if (endDateTime.isBefore(startDateTime)) {
-                                    startDateTime = endDateTime.subtract(
-                                      const Duration(minutes: 30),
-                                    );
-                                  }
-                                });
-                              }
                             },
                             child: Column(
                               children: [
@@ -409,7 +481,7 @@ class _HistoryViewState extends State<HistoryView> {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  DateFormat('HH:mm').format(endDateTime),
+                                  DateFormat('HH:mm').format(endClock),
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 16,
@@ -500,33 +572,129 @@ class _HistoryViewState extends State<HistoryView> {
                       const SizedBox(height: 14),
                     ],
 
+                    // Activity, split and merge corrections
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        if (ctx.mounted) Navigator.of(ctx).pop();
+                        final picked = await _pickActivity(record);
+                        if (picked == null) return;
+                        await _applyEdit(
+                          () =>
+                              widget.dayRecorder.relabel(record.id, picked.id),
+                        );
+                      },
+                      icon: Icon(
+                        record.isUntracked ? Icons.add : Icons.swap_horiz,
+                        size: 16,
+                        color: Colors.white70,
+                      ),
+                      label: Text(
+                        record.isUntracked ? 'What was it?' : 'Change Activity',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 13,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(
+                          color: Colors.white.withValues(alpha: 0.15),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton.icon(
+                            onPressed: () async {
+                              final time = await showTimePicker(
+                                context: context,
+                                initialTime: TimeOfDay.fromDateTime(
+                                  startClock.add(
+                                    Duration(
+                                      milliseconds: record.elapsedMs ~/ 2,
+                                    ),
+                                  ),
+                                ),
+                              );
+                              if (time == null) return;
+                              final instant = epochMsFromWallClock(
+                                DateTime.utc(
+                                  startClock.year,
+                                  startClock.month,
+                                  startClock.day,
+                                  time.hour,
+                                  time.minute,
+                                ),
+                                record.timezoneId,
+                                referenceEpochMs: record.startedAtEpochMs,
+                              );
+                              await closeThenApply(
+                                () => widget.dayRecorder.splitRecord(
+                                  record.id,
+                                  instant,
+                                ),
+                              );
+                            },
+                            icon: const Icon(
+                              Icons.content_cut,
+                              size: 16,
+                              color: Colors.white60,
+                            ),
+                            label: const Text(
+                              'Split…',
+                              style: TextStyle(
+                                color: Colors.white60,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (next != null)
+                          Expanded(
+                            child: TextButton.icon(
+                              onPressed: () => closeThenApply(
+                                () => widget.dayRecorder.merge(
+                                  record.id,
+                                  next.id,
+                                ),
+                              ),
+                              icon: const Icon(
+                                Icons.merge_type,
+                                size: 16,
+                                color: Colors.white60,
+                              ),
+                              label: const Text(
+                                'Merge with next',
+                                style: TextStyle(
+                                  color: Colors.white60,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+
                     // Save Button
                     ElevatedButton(
                       onPressed: () async {
-                        final startMs = epochMsFromWallClock(
-                          startDateTime,
-                          record.timezoneId,
-                          referenceEpochMs: record.startedAtEpochMs,
-                        );
-                        final endMs = epochMsFromWallClock(
-                          endDateTime,
-                          record.endTimezoneId,
-                          referenceEpochMs: record.endedAtEpochMs,
-                        );
                         final updated = record.copyWith(
                           comment: commentController.text.trim(),
-                          startedAtEpochMs: startMs,
-                          endedAtEpochMs: endMs,
-                          durationMs: endMs > startMs ? endMs - startMs : 0,
                           updatedAtEpochMs: DateTime.now()
                               .toUtc()
                               .millisecondsSinceEpoch,
                           tagIds: selectedTagIds,
                         );
 
-                        await widget.database.updateRecord(updated);
-                        if (ctx.mounted) Navigator.of(ctx).pop();
-                        _loadData();
+                        await closeThenApply(
+                          () => widget.database.updateRecord(updated),
+                        );
                       },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF4CAF50),
@@ -537,7 +705,7 @@ class _HistoryViewState extends State<HistoryView> {
                         ),
                       ),
                       child: const Text(
-                        'Save Changes',
+                        'Save note & tags',
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ),

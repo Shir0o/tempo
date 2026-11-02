@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:tempo/core/export/csv_export_engine.dart';
 import 'package:tempo/core/state/day_recorder.dart';
 import 'package:tempo/core/time/timezone_id.dart';
 import 'package:tempo/data/database/tempo_database.dart';
@@ -307,6 +310,317 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(emissions.single!.startedAtEpochMs, equals(1030000));
+  });
+
+  group('Correcting the past', () {
+    late int morning;
+    late Record sleepRecord;
+    late Record mealsRecord;
+    late int lapStart;
+
+    Future<void> recordTwoHours() async {
+      zoneId = 'America/Los_Angeles';
+      nowUtc = wallMs(zoneId, 2026, 6, 1, 8);
+      await recorder.initialize();
+      morning = nowUtc;
+
+      nowUtc = wallMs(zoneId, 2026, 6, 1, 10);
+      sleepRecord = await recorder.label(
+        sleep.id,
+        comment: 'w/ Sam',
+        tags: [travelTag.id],
+      );
+
+      nowUtc = wallMs(zoneId, 2026, 6, 1, 12);
+      mealsRecord = await recorder.label(meals.id);
+      lapStart = recorder.lap!.startedAtEpochMs;
+    }
+
+    int at(int hour, [int minute = 0]) =>
+        wallMs(zoneId, 2026, 6, 1, hour, minute);
+
+    test(
+      'moveBoundary resizes both neighbours and keeps the Day whole',
+      () async {
+        await recordTwoHours();
+        final edge = at(11);
+
+        final moved = await recorder.moveBoundary(sleepRecord.id, edge);
+
+        expect(moved.id, sleepRecord.id);
+        expect(moved.startedAtEpochMs, morning);
+        expect(moved.endedAtEpochMs, edge);
+        expect(moved.durationMs, 3 * hourMs);
+        expect(moved.activityId, sleep.id);
+        expect(moved.comment, 'w/ Sam');
+        expect(moved.tagIds, [travelTag.id]);
+
+        final right = await db.getRecordById(mealsRecord.id);
+        expect(right!.startedAtEpochMs, edge);
+        expect(right.durationMs, hourMs);
+        expect(right.activityId, meals.id);
+
+        final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+        expect(records[0].endedAtEpochMs, records[1].startedAtEpochMs);
+        expect(records.last.endedAtEpochMs, recorder.lap!.startedAtEpochMs);
+        expect(records.last.endedAtEpochMs, lapStart);
+      },
+    );
+
+    test('moveBoundary refuses to pass a neighbour\'s other edge', () async {
+      await recordTwoHours();
+
+      await expectLater(
+        recorder.moveBoundary(sleepRecord.id, mealsRecord.endedAtEpochMs),
+        throwsA(isA<RecordEditRefused>()),
+      );
+      await expectLater(
+        recorder.moveBoundary(sleepRecord.id, morning),
+        throwsA(
+          isA<RecordEditRefused>().having(
+            (error) => error.message,
+            'message',
+            contains('past a neighbouring Record'),
+          ),
+        ),
+      );
+
+      final left = await db.getRecordById(sleepRecord.id);
+      expect(left!.endedAtEpochMs, at(10));
+      final right = await db.getRecordById(mealsRecord.id);
+      expect(right!.startedAtEpochMs, at(10));
+    });
+
+    test(
+      'moveBoundary refuses to move the edge where the open Lap starts',
+      () async {
+        await recordTwoHours();
+
+        await expectLater(
+          recorder.moveBoundary(mealsRecord.id, at(11)),
+          throwsA(
+            isA<RecordEditRefused>().having(
+              (error) => error.message,
+              'message',
+              contains('open Lap'),
+            ),
+          ),
+        );
+
+        final unchanged = await db.getRecordById(mealsRecord.id);
+        expect(unchanged!.endedAtEpochMs, lapStart);
+      },
+    );
+
+    test('moveBoundary keeps each Record\'s start and end zones', () async {
+      zoneId = 'America/Los_Angeles';
+      nowUtc = wallMs(zoneId, 2026, 6, 1, 8);
+      await recorder.initialize();
+
+      zoneId = 'Asia/Tokyo';
+      nowUtc = wallMs(zoneId, 2026, 6, 2, 1);
+      sleepRecord = await recorder.label(sleep.id);
+      nowUtc += hourMs;
+      mealsRecord = await recorder.label(meals.id);
+
+      await recorder.moveBoundary(
+        sleepRecord.id,
+        sleepRecord.startedAtEpochMs + hourMs ~/ 2,
+      );
+
+      final left = await db.getRecordById(sleepRecord.id);
+      expect(left!.timezoneId, 'America/Los_Angeles');
+      expect(left.endTimezoneId, 'Asia/Tokyo');
+
+      final right = await db.getRecordById(mealsRecord.id);
+      expect(right!.timezoneId, 'Asia/Tokyo');
+      expect(right.endTimezoneId, 'Asia/Tokyo');
+    });
+
+    test('splitRecord creates two neighbours that share everything', () async {
+      await recordTwoHours();
+      final splitAt = at(9, 30);
+
+      final later = await recorder.splitRecord(sleepRecord.id, splitAt);
+
+      final earlier = await db.getRecordById(sleepRecord.id);
+      expect(earlier!.startedAtEpochMs, morning);
+      expect(earlier.endedAtEpochMs, splitAt);
+      expect(earlier.durationMs, 90 * 60 * 1000);
+
+      expect(later.startedAtEpochMs, splitAt);
+      expect(later.endedAtEpochMs, at(10));
+      expect(later.durationMs, 30 * 60 * 1000);
+
+      for (final half in [earlier, later]) {
+        expect(half.activityId, sleep.id);
+        expect(half.comment, 'w/ Sam');
+        expect(half.tagIds, [travelTag.id]);
+        expect(half.timezoneId, 'America/Los_Angeles');
+        expect(half.endTimezoneId, 'America/Los_Angeles');
+      }
+      expect(later.id, isNot(sleepRecord.id));
+
+      final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+      expect(records, hasLength(3));
+      expect(records[0].endedAtEpochMs, records[1].startedAtEpochMs);
+      expect(records[1].endedAtEpochMs, records[2].startedAtEpochMs);
+    });
+
+    test('splitRecord refuses a time outside the Record', () async {
+      await recordTwoHours();
+
+      await expectLater(
+        recorder.splitRecord(sleepRecord.id, sleepRecord.startedAtEpochMs),
+        throwsA(isA<RecordEditRefused>()),
+      );
+      await expectLater(
+        recorder.splitRecord(sleepRecord.id, sleepRecord.endedAtEpochMs),
+        throwsA(
+          isA<RecordEditRefused>().having(
+            (error) => error.message,
+            'message',
+            contains('outside this Record'),
+          ),
+        ),
+      );
+
+      expect(await db.getRecords(), hasLength(2));
+    });
+
+    test('splitRecord gives both halves the zones they lived in', () async {
+      zoneId = 'America/Los_Angeles';
+      nowUtc = wallMs(zoneId, 2026, 6, 1, 8);
+      await recorder.initialize();
+
+      zoneId = 'Asia/Tokyo';
+      nowUtc = wallMs(zoneId, 2026, 6, 2, 1);
+      sleepRecord = await recorder.label(sleep.id);
+
+      final later = await recorder.splitRecord(
+        sleepRecord.id,
+        sleepRecord.startedAtEpochMs + hourMs ~/ 2,
+      );
+
+      final earlier = await db.getRecordById(sleepRecord.id);
+      expect(earlier!.timezoneId, 'America/Los_Angeles');
+      expect(earlier.endTimezoneId, 'Asia/Tokyo');
+      expect(later.timezoneId, 'Asia/Tokyo');
+      expect(later.endTimezoneId, 'Asia/Tokyo');
+    });
+
+    test(
+      'merge joins neighbours and tombstones the one that disappears',
+      () async {
+        await recordTwoHours();
+
+        final merged = await recorder.merge(sleepRecord.id, mealsRecord.id);
+
+        expect(merged.id, sleepRecord.id);
+        expect(merged.startedAtEpochMs, morning);
+        expect(merged.endedAtEpochMs, at(12));
+        expect(merged.durationMs, 4 * hourMs);
+        expect(merged.activityId, sleep.id);
+        expect(merged.comment, 'w/ Sam');
+        expect(merged.tagIds, [travelTag.id]);
+
+        expect(await db.getRecordById(mealsRecord.id), isNull);
+        final tombstones = await db.getTombstones();
+        expect(tombstones.single.entityId, mealsRecord.id);
+        expect(tombstones.single.entityType, 'record');
+
+        final records = await db.getRecords();
+        expect(records, hasLength(1));
+        expect(recorder.lap!.startedAtEpochMs, merged.endedAtEpochMs);
+      },
+    );
+
+    test('merge refuses Records that are not neighbours', () async {
+      await recordTwoHours();
+      nowUtc = at(13);
+      final laterRecord = await recorder.label(meals.id);
+
+      await expectLater(
+        recorder.merge(sleepRecord.id, laterRecord.id),
+        throwsA(
+          isA<RecordEditRefused>().having(
+            (error) => error.message,
+            'message',
+            contains("aren't next to each other"),
+          ),
+        ),
+      );
+
+      expect(await db.getRecords(), hasLength(3));
+      expect(await db.getTombstones(), isEmpty);
+    });
+
+    test('delete makes a Record Untracked without removing its time', () async {
+      await recordTwoHours();
+      final before = await db.getRecordById(mealsRecord.id);
+
+      final deleted = await recorder.delete(mealsRecord.id);
+
+      expect(deleted.id, mealsRecord.id);
+      expect(deleted.isUntracked, isTrue);
+      expect(deleted.comment, isEmpty);
+      expect(deleted.tagIds, isEmpty);
+      expect(deleted.startedAtEpochMs, before!.startedAtEpochMs);
+      expect(deleted.endedAtEpochMs, before.endedAtEpochMs);
+
+      expect(await db.getRecordById(mealsRecord.id), isNotNull);
+      expect(await db.getTombstones(), isEmpty);
+
+      final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+      expect(records, hasLength(2));
+      final covered = records.fold<int>(0, (sum, r) => sum + r.elapsedMs);
+      expect(covered, 4 * hourMs);
+    });
+
+    test('relabel turns a Record back into an Untracked Record', () async {
+      await recordTwoHours();
+
+      final untracked = await recorder.relabel(mealsRecord.id, null);
+
+      expect(untracked.isUntracked, isTrue);
+      expect(untracked.startedAtEpochMs, mealsRecord.startedAtEpochMs);
+      expect(untracked.endedAtEpochMs, mealsRecord.endedAtEpochMs);
+    });
+
+    test('every correction schedules a debounced CSV rewrite', () async {
+      final exportDir = await Directory.systemTemp.createTemp(
+        'tempo-corrections',
+      );
+      addTearDown(() => exportDir.delete(recursive: true));
+      final engine = CsvExportEngine(database: db, exportDirectory: exportDir);
+      addTearDown(engine.dispose);
+      recorder.attachExportEngine(engine);
+
+      await recordTwoHours();
+      await engine.exportImmediately();
+      expect(engine.isExportScheduled, isFalse);
+
+      final edge = at(11);
+      await recorder.moveBoundary(sleepRecord.id, edge);
+      expect(engine.isExportScheduled, isTrue);
+      await engine.exportImmediately();
+
+      final later = await recorder.splitRecord(sleepRecord.id, at(9));
+      expect(engine.isExportScheduled, isTrue);
+      await engine.exportImmediately();
+
+      await recorder.merge(sleepRecord.id, later.id);
+      expect(engine.isExportScheduled, isTrue);
+      await engine.exportImmediately();
+
+      await recorder.delete(mealsRecord.id);
+      expect(engine.isExportScheduled, isTrue);
+      await engine.exportImmediately();
+
+      await recorder.relabel(mealsRecord.id, meals.id);
+      expect(engine.isExportScheduled, isTrue);
+      await engine.exportImmediately();
+    });
   });
 
   group('MidnightSplit', () {

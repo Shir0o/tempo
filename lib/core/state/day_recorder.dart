@@ -103,10 +103,7 @@ class DayRecorder {
   /// Passing null turns a labelled Record back into an Untracked Record.
   Future<Record> relabel(String recordId, String? activityId) => _synchronized(
     () async {
-      final record = await _db.getRecordById(recordId);
-      if (record == null) {
-        throw ArgumentError('Record with id "$recordId" does not exist.');
-      }
+      final record = await _recordOrThrow(recordId);
       if (activityId != null) {
         final activity = await _db.getActivityById(activityId);
         if (activity == null) {
@@ -122,6 +119,161 @@ class DayRecorder {
       return updated;
     },
   );
+
+  /// Moves the Boundary at the end of [leftRecordId], resizing that Record and
+  /// the one that begins there together. Both keep the start and end zones they
+  /// were recorded in; only their instants change.
+  ///
+  /// Refused when nothing follows the Record (the open Lap starts at that
+  /// edge), or when [newInstantEpochMs] would pass either neighbour's other
+  /// edge.
+  Future<Record> moveBoundary(String leftRecordId, int newInstantEpochMs) =>
+      _synchronized(() async {
+        await _ensureInitializedLocked();
+        final left = await _recordOrThrow(leftRecordId);
+        if (newInstantEpochMs == left.endedAtEpochMs) return left;
+
+        final right = await _recordStartingAt(left.endedAtEpochMs);
+        if (right == null) {
+          throw const RecordEditRefused(
+            "This edge meets the open Lap, so it can't be moved.",
+          );
+        }
+        if (newInstantEpochMs <= left.startedAtEpochMs ||
+            newInstantEpochMs >= right.endedAtEpochMs) {
+          throw const RecordEditRefused(
+            'That would push the edge past a neighbouring Record, so the '
+            'change was not made.',
+          );
+        }
+
+        final now = _nowUtcMs();
+        final resizedLeft = left.copyWith(
+          endedAtEpochMs: newInstantEpochMs,
+          durationMs: newInstantEpochMs - left.startedAtEpochMs,
+          updatedAtEpochMs: now,
+        );
+        final resizedRight = right.copyWith(
+          startedAtEpochMs: newInstantEpochMs,
+          durationMs: right.endedAtEpochMs - newInstantEpochMs,
+          updatedAtEpochMs: now,
+        );
+
+        await _db.db.transaction((txn) async {
+          await _updateRecordInTxn(txn, resizedLeft);
+          await _updateRecordInTxn(txn, resizedRight);
+        });
+        _lastOperation = null;
+        await _requestExport();
+        return resizedLeft;
+      });
+
+  /// Splits [recordId] at [atEpochMs] into two neighbouring Records that share
+  /// its Activity, comment and tags. The earlier half keeps the original id.
+  /// Refused when [atEpochMs] is not strictly inside the Record.
+  Future<Record> splitRecord(String recordId, int atEpochMs) =>
+      _synchronized(() async {
+        await _ensureInitializedLocked();
+        final record = await _recordOrThrow(recordId);
+        if (atEpochMs <= record.startedAtEpochMs ||
+            atEpochMs >= record.endedAtEpochMs) {
+          throw const RecordEditRefused(
+            "That time is outside this Record, so it can't be split there.",
+          );
+        }
+
+        final now = _nowUtcMs();
+        final earlier = record.copyWith(
+          endedAtEpochMs: atEpochMs,
+          durationMs: atEpochMs - record.startedAtEpochMs,
+          updatedAtEpochMs: now,
+        );
+        // The instant a Record crossed from its start zone to its end zone is
+        // not stored, so the later half starts in the zone the Record ended in.
+        final later = record.copyWith(
+          id: _generateId(),
+          startedAtEpochMs: atEpochMs,
+          durationMs: record.endedAtEpochMs - atEpochMs,
+          timezoneId: record.endTimezoneId,
+          createdAtEpochMs: now,
+          updatedAtEpochMs: now,
+        );
+
+        await _db.db.transaction((txn) async {
+          await _updateRecordInTxn(txn, earlier);
+          await _insertRecordInTxn(txn, later);
+        });
+        _lastOperation = null;
+        await _requestExport();
+        return later;
+      });
+
+  /// Joins two neighbouring Records into one, keeping the earlier Record's
+  /// Activity, comment and tags and taking the later Record's end. The later
+  /// Record disappears with a Tombstone.
+  ///
+  /// Refused when the two Records are not directly adjacent.
+  Future<Record> merge(String leftRecordId, String rightRecordId) =>
+      _synchronized(() async {
+        await _ensureInitializedLocked();
+        final first = await _recordOrThrow(leftRecordId);
+        final second = await _recordOrThrow(rightRecordId);
+        final earlier = first.startedAtEpochMs <= second.startedAtEpochMs
+            ? first
+            : second;
+        final later = identical(earlier, first) ? second : first;
+        if (earlier.id == later.id ||
+            earlier.endedAtEpochMs != later.startedAtEpochMs) {
+          throw const RecordEditRefused(
+            "Those Records aren't next to each other, so they can't be merged.",
+          );
+        }
+
+        final now = _nowUtcMs();
+        final merged = earlier.copyWith(
+          endedAtEpochMs: later.endedAtEpochMs,
+          durationMs: later.endedAtEpochMs - earlier.startedAtEpochMs,
+          endTimezoneId: later.endTimezoneId,
+          updatedAtEpochMs: now,
+        );
+
+        await _db.db.transaction((txn) async {
+          await _updateRecordInTxn(txn, merged);
+          await txn.delete('records', where: 'id = ?', whereArgs: [later.id]);
+          await txn.insert(
+            'tombstones',
+            Tombstone(
+              entityId: later.id,
+              entityType: 'record',
+              deletedAtEpochMs: now,
+            ).toMap(),
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        });
+        _lastOperation = null;
+        await _requestExport();
+        return merged;
+      });
+
+  /// Turns a Record into an Untracked Record in place, so its time stays in the
+  /// Day. Its Activity, comment and tags are cleared.
+  Future<Record> delete(String recordId) => _synchronized(() async {
+    await _ensureInitializedLocked();
+    final record = await _recordOrThrow(recordId);
+    if (record.isUntracked) return record;
+
+    final updated = record
+        .withActivity(null)
+        .copyWith(
+          comment: '',
+          tagIds: const <String>[],
+          updatedAtEpochMs: _nowUtcMs(),
+        );
+    await _db.updateRecord(updated);
+    _lastOperation = null;
+    await _requestExport();
+    return updated;
+  });
 
   /// Reverses the most recent [label] or [split] when called inside the
   /// [undoGraceWindow]: the Record is deleted (with a Tombstone) and the Lap is
@@ -387,6 +539,28 @@ class DayRecorder {
     await _armMidnightTimer();
   }
 
+  Future<Record> _recordOrThrow(String recordId) async {
+    final record = await _db.getRecordById(recordId);
+    if (record == null) {
+      throw ArgumentError('Record with id "$recordId" does not exist.');
+    }
+    return record;
+  }
+
+  /// The Record that begins at [epochMs], or null when the open Lap does.
+  Future<Record?> _recordStartingAt(int epochMs) async {
+    final rows = await _db.db.query(
+      'records',
+      columns: ['id'],
+      where: 'started_at_epoch_ms = ?',
+      whereArgs: [epochMs],
+      orderBy: 'rowid ASC',
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return _db.getRecordById(rows.first['id'] as String);
+  }
+
   /// The contiguous MidnightSplit Records ending exactly at [lapStartEpochMs],
   /// oldest first. They are the earlier Days of the same unlabeled span.
   Future<List<Record>> _trailingMidnightSplits(int lapStartEpochMs) async {
@@ -520,6 +694,18 @@ class DayRecorder {
     _lapStreamController.close();
     _lapNotifier.dispose();
   }
+}
+
+/// Thrown when a correction would break the Day's continuity: a gap, an
+/// overlap, or an edge pushed past its neighbour. [message] is safe to show to
+/// the user as-is.
+class RecordEditRefused implements Exception {
+  final String message;
+
+  const RecordEditRefused(this.message);
+
+  @override
+  String toString() => message;
 }
 
 /// The state needed to reverse one label or split.
