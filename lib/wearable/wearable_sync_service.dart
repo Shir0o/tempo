@@ -8,7 +8,9 @@ import '../data/models/activity.dart';
 
 /// Represents an action received from the Wear OS companion watch.
 class WatchAction {
-  final String type; // "START", "STOP", "PAUSE", "RESUME", "UNDO"
+  /// "LABEL", "SPLIT", or the retired "START", "STOP", "PAUSE", "RESUME",
+  /// "UNDO" names older watch builds still send.
+  final String type;
   final String? activityId;
   final int timestampEpochMs;
   final String? actionId;
@@ -45,10 +47,17 @@ class WatchAction {
 class WearableSyncService {
   static const String channelName = 'com.tempos.tracker/wearable';
 
+  /// The window the watch tile ranks Activities over.
+  static const Duration tileActivityWindow = Duration(days: 14);
+
+  /// How many Activities the watch tile offers.
+  static const int tileActivityCount = 3;
+
   final DayRecorder dayRecorder;
   final TempoDatabase? database;
   final Future<Activity?> Function(String activityId)? getActivity;
   final MethodChannel channel;
+  final int Function() _nowUtcMs;
 
   final StreamController<WatchAction> _watchActionController =
       StreamController<WatchAction>.broadcast();
@@ -60,7 +69,10 @@ class WearableSyncService {
     this.database,
     this.getActivity,
     MethodChannel? channel,
-  }) : channel = channel ?? const MethodChannel(channelName);
+    int Function()? nowUtcMs,
+  }) : channel = channel ?? const MethodChannel(channelName),
+       _nowUtcMs =
+           nowUtcMs ?? (() => DateTime.now().toUtc().millisecondsSinceEpoch);
 
   /// Stream of raw actions received from the watch.
   Stream<WatchAction> get incomingWatchActions => _watchActionController.stream;
@@ -74,7 +86,8 @@ class WearableSyncService {
     _onLapChanged();
   }
 
-  /// Synchronizes the list of available activities with the Wear OS watch.
+  /// Synchronizes the list of available activities, and the tile's ranked
+  /// slots, with the Wear OS watch.
   Future<bool> syncActivities(List<Activity> activities) async {
     if (_isDisposed) return false;
     try {
@@ -92,6 +105,7 @@ class WearableSyncService {
 
       final result = await channel.invokeMethod<bool>('syncActivities', {
         'activities': list,
+        'tileActivityIds': await _tileActivityIds(activities),
       });
       return result ?? true;
     } catch (e) {
@@ -100,42 +114,79 @@ class WearableSyncService {
     }
   }
 
-  /// Sends the current open Lap snapshot to the watch.
+  /// Re-reads Activities from the database and pushes them, plus the tile's
+  /// ranked slots, to the watch. Call after a Record is committed so the tile
+  /// follows what the user actually labels.
+  Future<void> refreshActivities() async {
+    final db = database;
+    if (_isDisposed || db == null) return;
+    try {
+      await syncActivities(await db.getAllActivities());
+    } catch (_) {
+      // Activity refresh is best effort; the next sync retries.
+    }
+  }
+
+  /// The ids of the most-labelled Activities over [tileActivityWindow], most
+  /// used first. Ties keep the user's own Activity order.
+  Future<List<String>> _tileActivityIds(List<Activity> activities) async {
+    final db = database;
+    if (db == null) return const [];
+
+    final since = _nowUtcMs() - tileActivityWindow.inMilliseconds;
+    final records = await db.getRecords(startedAfter: since, trackedOnly: true);
+    final counts = <String, int>{};
+    for (final record in records) {
+      final activityId = record.activityId;
+      if (activityId != null) {
+        counts.update(activityId, (count) => count + 1, ifAbsent: () => 1);
+      }
+    }
+
+    final order = <String, int>{
+      for (var i = 0; i < activities.length; i++) activities[i].id: i,
+    };
+    final ranked =
+        counts.entries.where((entry) => order.containsKey(entry.key)).toList()
+          ..sort((a, b) {
+            final byCount = b.value.compareTo(a.value);
+            if (byCount != 0) return byCount;
+            return order[a.key]!.compareTo(order[b.key]!);
+          });
+
+    return ranked
+        .take(tileActivityCount)
+        .map((entry) => entry.key)
+        .toList(growable: false);
+  }
+
+  /// Sends the open Lap snapshot to the watch.
   ///
-  /// The channel method name and payload shape are unchanged so the existing
-  /// Wear OS companion keeps working: it now receives the Lap as an always
-  /// running, unpaused session with no Activity.
+  /// The channel method name is unchanged so the existing Wear OS companion
+  /// keeps working. The payload now carries the Lap (start instant and zone);
+  /// the retired timer keys stay for older watch builds.
   Future<void> _onLapChanged() async {
     if (_isDisposed) return;
 
     final lap = dayRecorder.lap;
+    final now = _nowUtcMs();
 
     try {
-      if (lap != null) {
-        await channel.invokeMethod('syncActiveTimer', {
-          'isRunning': true,
-          'activityId': null,
-          'activityName': null,
-          'activityColorHex': null,
-          'startedAtEpochMs': lap.startedAtEpochMs,
-          'isPaused': false,
-          'accumulatedPauseMs': 0,
-          'revision': lap.revision,
-          'updatedAtEpochMs': DateTime.now().toUtc().millisecondsSinceEpoch,
-        });
-      } else {
-        await channel.invokeMethod('syncActiveTimer', {
-          'isRunning': false,
-          'activityId': null,
-          'activityName': null,
-          'activityColorHex': null,
-          'startedAtEpochMs': 0,
-          'isPaused': false,
-          'accumulatedPauseMs': 0,
-          'revision': 0,
-          'updatedAtEpochMs': DateTime.now().toUtc().millisecondsSinceEpoch,
-        });
-      }
+      await channel.invokeMethod('syncActiveTimer', {
+        'lapStartedAtEpochMs': lap?.startedAtEpochMs ?? 0,
+        'lapStartedTimezoneId': lap?.startedTimezoneId ?? '',
+        'revision': lap?.revision ?? 0,
+        'updatedAtEpochMs': now,
+        // Legacy timer keys, derived from the Lap: it is the only span and it
+        // always runs.
+        'isRunning': lap != null,
+        'activityId': null,
+        'activityName': null,
+        'activityColorHex': null,
+        'startedAtEpochMs': lap?.startedAtEpochMs ?? 0,
+        'isPaused': false,
+        'accumulatedPauseMs': 0,
+      });
     } catch (_) {
       // Platform channel or watch unreachable; offline buffer will sync upon reconnection
     }
@@ -158,6 +209,7 @@ class WearableSyncService {
   Future<void> _executeWatchAction(WatchAction action) async {
     try {
       switch (action.type.toUpperCase()) {
+        case 'LABEL':
         case 'START':
           if (action.activityId != null && action.activityId!.isNotEmpty) {
             await dayRecorder.label(
@@ -167,6 +219,7 @@ class WearableSyncService {
           }
           break;
 
+        case 'SPLIT':
         case 'STOP':
           await dayRecorder.split();
           break;

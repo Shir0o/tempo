@@ -77,6 +77,7 @@ void main() {
         dayRecorder: dayRecorder,
         database: db,
         channel: channel,
+        nowUtcMs: () => mockTime,
       );
     });
 
@@ -94,6 +95,9 @@ void main() {
       expect(methodCalls.length, 1);
       expect(methodCalls.first.method, 'syncActiveTimer');
       final args = methodCalls.first.arguments as Map;
+      expect(args['lapStartedAtEpochMs'], mockTime);
+      expect(args['lapStartedTimezoneId'], 'America/Los_Angeles');
+      expect(args['revision'], dayRecorder.lap!.revision);
       expect(args['isRunning'], isTrue);
       expect(args['activityId'], isNull);
       expect(args['startedAtEpochMs'], mockTime);
@@ -113,6 +117,8 @@ void main() {
       expect(lastCall.method, 'syncActiveTimer');
 
       final args = lastCall.arguments as Map;
+      expect(args['lapStartedAtEpochMs'], mockTime);
+      expect(args['lapStartedTimezoneId'], 'America/Los_Angeles');
       expect(args['isRunning'], isTrue);
       expect(args['activityId'], isNull);
       expect(args['startedAtEpochMs'], mockTime);
@@ -142,6 +148,73 @@ void main() {
         expect(list[1]['isPinned'], isFalse);
       },
     );
+
+    test(
+      'tile slots are the three most-used Activities of the last 14 days',
+      () async {
+        await db.insertActivity(
+          const Activity(
+            id: 'act-reading',
+            name: 'Reading',
+            createdAtEpochMs: 1700000000000,
+            updatedAtEpochMs: 1700000000000,
+          ),
+        );
+
+        // Three Workout labels, two Reading labels, one Coding label.
+        for (final activityId in [
+          'act-workout',
+          'act-reading',
+          'act-workout',
+          'act-reading',
+          'act-workout',
+          'act-coding',
+        ]) {
+          mockTime += 60000;
+          await dayRecorder.label(activityId);
+        }
+
+        syncService.initialize();
+        methodCalls.clear();
+
+        await syncService.syncActivities(await db.getAllActivities());
+
+        final args = methodCalls.single.arguments as Map;
+        expect(args['tileActivityIds'], [
+          'act-workout',
+          'act-reading',
+          'act-coding',
+        ]);
+      },
+    );
+
+    test('tile slots ignore labels older than 14 days', () async {
+      syncService.initialize();
+      methodCalls.clear();
+
+      final oldStart = mockTime - Duration(days: 20).inMilliseconds;
+      await db.insertRecord(
+        Record(
+          id: 'old-workout',
+          activityId: 'act-workout',
+          startedAtEpochMs: oldStart,
+          endedAtEpochMs: oldStart + 60000,
+          durationMs: 60000,
+          timezoneId: 'America/Los_Angeles',
+          endTimezoneId: 'America/Los_Angeles',
+          createdAtEpochMs: oldStart,
+          updatedAtEpochMs: oldStart,
+        ),
+      );
+
+      mockTime += 60000;
+      await dayRecorder.label('act-coding');
+
+      await syncService.syncActivities(await db.getAllActivities());
+
+      final args = methodCalls.last.arguments as Map;
+      expect(args['tileActivityIds'], ['act-coding']);
+    });
 
     test('incoming START action from watch labels the Lap', () async {
       syncService.initialize();
@@ -176,6 +249,58 @@ void main() {
       expect(watchActions.first.activityId, 'act-workout');
 
       await sub.cancel();
+    });
+
+    test('incoming LABEL action from the watch labels the Lap', () async {
+      syncService.initialize();
+
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final codec = const StandardMethodCodec();
+
+      await messenger.handlePlatformMessage(
+        WearableSyncService.channelName,
+        codec.encodeMethodCall(
+          const MethodCall('onWatchActionReceived', {
+            'action': 'LABEL',
+            'activityId': 'act-workout',
+            'timestampEpochMs': 1700000010000,
+            'actionId': 'evt-125',
+          }),
+        ),
+        (ByteData? reply) {},
+      );
+
+      final records = await db.getRecords();
+      expect(records.single.activityId, 'act-workout');
+      expect(dayRecorder.lap!.startedAtEpochMs, equals(mockTime));
+    });
+
+    test('incoming SPLIT action from the watch splits the Lap', () async {
+      syncService.initialize();
+      await dayRecorder.label('act-coding');
+      mockTime += 30000;
+
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final codec = const StandardMethodCodec();
+
+      await messenger.handlePlatformMessage(
+        WearableSyncService.channelName,
+        codec.encodeMethodCall(
+          const MethodCall('onWatchActionReceived', {
+            'action': 'SPLIT',
+            'timestampEpochMs': 1700000020000,
+            'actionId': 'evt-126',
+          }),
+        ),
+        (ByteData? reply) {},
+      );
+
+      final records = await db.getRecords();
+      expect(records.length, equals(2));
+      expect(records.first.activityId, isNull);
+      expect(dayRecorder.lap!.startedAtEpochMs, equals(mockTime));
     });
 
     test(

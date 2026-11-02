@@ -9,7 +9,6 @@ import androidx.wear.watchface.complications.data.ComplicationData
 import androidx.wear.watchface.complications.data.ComplicationText
 import androidx.wear.watchface.complications.data.ComplicationType
 import androidx.wear.watchface.complications.data.CountUpTimeReference
-import androidx.wear.watchface.complications.data.MonochromaticImage
 import androidx.wear.watchface.complications.data.PlainComplicationText
 import androidx.wear.watchface.complications.data.RangedValueComplicationData
 import androidx.wear.watchface.complications.data.ShortTextComplicationData
@@ -26,9 +25,11 @@ import java.time.Instant
 /**
  * TempoComplicationService:
  * Supports SHORT_TEXT, RANGED_VALUE, and SMALL_IMAGE complications.
- * - Idle State: Renders [▶️ Track]; direct tap launches QuickLogActivity.
- * - Active State: Renders live stopwatch elapsed time via system TimeDifferenceComplicationText
- *   with STYLE_STOPWATCH (zero watch battery drain); tap opens ActiveSessionActivity.
+ * - Open Lap: renders the Lap's elapsed time from its start epoch with the
+ *   system TimeDifferenceComplicationText stopwatch (zero watch battery drain,
+ *   no polling loop). Tapping opens the QuickLog list to label it.
+ * - Before the first sync from the phone: renders "Track"; the same tap opens
+ *   the list.
  */
 class TempoComplicationService : SuspendingComplicationDataSourceService() {
 
@@ -40,13 +41,12 @@ class TempoComplicationService : SuspendingComplicationDataSourceService() {
     }
 
     override suspend fun onComplicationRequest(request: ComplicationRequest): ComplicationData? {
-        val repository = WearTimerRepository.getInstance(this)
-        val activeTimer = repository.activeTimerState.value
+        val lap = WearLapRepository.getInstance(this).lap.value
 
         return when (request.complicationType) {
-            ComplicationType.SHORT_TEXT -> createShortTextData(activeTimer)
-            ComplicationType.RANGED_VALUE -> createRangedValueData(activeTimer)
-            ComplicationType.SMALL_IMAGE -> createSmallImageData(activeTimer)
+            ComplicationType.SHORT_TEXT -> createShortTextData(lap)
+            ComplicationType.RANGED_VALUE -> createRangedValueData(lap)
+            ComplicationType.SMALL_IMAGE -> createSmallImageData()
             else -> null
         }
     }
@@ -56,9 +56,9 @@ class TempoComplicationService : SuspendingComplicationDataSourceService() {
             ComplicationType.SHORT_TEXT -> {
                 ShortTextComplicationData.Builder(
                     text = PlainComplicationText.Builder("24m").build(),
-                    contentDescription = PlainComplicationText.Builder("Tempo").build()
+                    contentDescription = PlainComplicationText.Builder("Tempo Lap").build()
                 )
-                    .setTitle(PlainComplicationText.Builder("Coding").build())
+                    .setTitle(PlainComplicationText.Builder("Lap").build())
                     .build()
             }
             ComplicationType.RANGED_VALUE -> {
@@ -66,65 +66,61 @@ class TempoComplicationService : SuspendingComplicationDataSourceService() {
                     value = 24f,
                     min = 0f,
                     max = 60f,
-                    contentDescription = PlainComplicationText.Builder("Tempo 24m").build()
+                    contentDescription = PlainComplicationText.Builder("Tempo Lap 24m").build()
                 )
                     .setText(PlainComplicationText.Builder("24m").build())
-                    .setTitle(PlainComplicationText.Builder("Coding").build())
+                    .setTitle(PlainComplicationText.Builder("Lap").build())
                     .build()
             }
             ComplicationType.SMALL_IMAGE -> {
                 val icon = Icon.createWithResource(this, android.R.drawable.ic_menu_recent_history)
                 SmallImageComplicationData.Builder(
                     smallImage = SmallImage.Builder(icon, SmallImageType.ICON).build(),
-                    contentDescription = PlainComplicationText.Builder("Tempo").build()
+                    contentDescription = PlainComplicationText.Builder("Tempo Lap").build()
                 ).build()
             }
             else -> null
         }
     }
 
-    private fun createShortTextData(timer: ActiveTimerState): ComplicationData {
-        return if (timer.isRunning && timer.startedAtEpochMs > 0) {
-            val tapIntent = Intent(this, ActiveSessionActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            }
-            val pendingIntent = PendingIntent.getActivity(
-                this, 101, tapIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
+    private fun openQuickLogIntent(): PendingIntent {
+        val intent = Intent(this, QuickLogActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        return PendingIntent.getActivity(
+            this, 101, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
 
-            val text: ComplicationText = try {
-                val instant = Instant.ofEpochMilli(timer.startedAtEpochMs)
-                TimeDifferenceComplicationText.Builder(
-                    TimeDifferenceStyle.STOPWATCH,
-                    CountUpTimeReference(instant)
-                ).build()
-            } catch (_: Throwable) {
-                val elapsedMinutes = ((System.currentTimeMillis() - timer.startedAtEpochMs) / 60000).coerceAtLeast(0)
-                PlainComplicationText.Builder("${elapsedMinutes}m").build()
-            }
+    /** The elapsed time of an open Lap, rendered by the system stopwatch. */
+    private fun elapsedText(lap: LapState, fallback: String): ComplicationText {
+        return try {
+            val instant = Instant.ofEpochMilli(lap.startedAtEpochMs)
+            TimeDifferenceComplicationText.Builder(
+                TimeDifferenceStyle.STOPWATCH,
+                CountUpTimeReference(instant)
+            ).build()
+        } catch (_: Throwable) {
+            PlainComplicationText.Builder(fallback).build()
+        }
+    }
 
-            val title = timer.activityName ?: "Active"
+    private fun createShortTextData(lap: LapState): ComplicationData {
+        val pendingIntent = openQuickLogIntent()
 
+        return if (lap.isOpen) {
             ShortTextComplicationData.Builder(
-                text = text,
-                contentDescription = PlainComplicationText.Builder("Active Timer: $title").build()
+                text = elapsedText(lap, elapsedMinutes(lap)),
+                contentDescription = PlainComplicationText.Builder("Open Lap: label it").build()
             )
-                .setTitle(PlainComplicationText.Builder(title).build())
+                .setTitle(PlainComplicationText.Builder("Lap").build())
                 .setTapAction(pendingIntent)
                 .build()
         } else {
-            val tapIntent = Intent(this, QuickLogActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            }
-            val pendingIntent = PendingIntent.getActivity(
-                this, 102, tapIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
             ShortTextComplicationData.Builder(
                 text = PlainComplicationText.Builder("Track").build(),
-                contentDescription = PlainComplicationText.Builder("Tempo - Start Tracking").build()
+                contentDescription = PlainComplicationText.Builder("Tempo - label the open Lap").build()
             )
                 .setTitle(PlainComplicationText.Builder("▶️").build())
                 .setTapAction(pendingIntent)
@@ -132,72 +128,50 @@ class TempoComplicationService : SuspendingComplicationDataSourceService() {
         }
     }
 
-    private fun createRangedValueData(timer: ActiveTimerState): ComplicationData {
-        val tapIntent = if (timer.isRunning) {
-            Intent(this, ActiveSessionActivity::class.java)
-        } else {
-            Intent(this, QuickLogActivity::class.java)
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            this, 103, tapIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    private fun createRangedValueData(lap: LapState): ComplicationData {
+        val pendingIntent = openQuickLogIntent()
+        val elapsed = elapsedMinutesValue(lap)
+        val targetMinutes = 60f
+
+        return RangedValueComplicationData.Builder(
+            value = if (lap.isOpen) elapsed.coerceAtMost(targetMinutes) else 0f,
+            min = 0f,
+            max = targetMinutes,
+            contentDescription = PlainComplicationText.Builder(
+                if (lap.isOpen) "Tempo Lap" else "Tempo"
+            ).build()
         )
-
-        return if (timer.isRunning && timer.startedAtEpochMs > 0) {
-            val elapsedMinutes = ((System.currentTimeMillis() - timer.startedAtEpochMs) / 60000).toFloat()
-            val targetMinutes = 60f
-
-            val text: ComplicationText = try {
-                val instant = Instant.ofEpochMilli(timer.startedAtEpochMs)
-                TimeDifferenceComplicationText.Builder(
-                    TimeDifferenceStyle.STOPWATCH,
-                    CountUpTimeReference(instant)
-                ).build()
-            } catch (_: Throwable) {
-                PlainComplicationText.Builder("${elapsedMinutes.toInt()}m").build()
-            }
-
-            RangedValueComplicationData.Builder(
-                value = elapsedMinutes.coerceAtMost(targetMinutes),
-                min = 0f,
-                max = targetMinutes,
-                contentDescription = PlainComplicationText.Builder("Tempo Active").build()
+            .setText(
+                if (lap.isOpen) {
+                    elapsedText(lap, elapsedMinutes(lap))
+                } else {
+                    PlainComplicationText.Builder("Track").build()
+                }
             )
-                .setText(text)
-                .setTitle(PlainComplicationText.Builder(timer.activityName ?: "Active").build())
-                .setTapAction(pendingIntent)
-                .build()
-        } else {
-            RangedValueComplicationData.Builder(
-                value = 0f,
-                min = 0f,
-                max = 60f,
-                contentDescription = PlainComplicationText.Builder("Tempo Idle").build()
+            .setTitle(
+                PlainComplicationText.Builder(if (lap.isOpen) "Lap" else "▶️").build()
             )
-                .setText(PlainComplicationText.Builder("Track").build())
-                .setTitle(PlainComplicationText.Builder("▶️").build())
-                .setTapAction(pendingIntent)
-                .build()
-        }
+            .setTapAction(pendingIntent)
+            .build()
     }
 
-    private fun createSmallImageData(timer: ActiveTimerState): ComplicationData {
-        val tapIntent = if (timer.isRunning) {
-            Intent(this, ActiveSessionActivity::class.java)
-        } else {
-            Intent(this, QuickLogActivity::class.java)
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            this, 104, tapIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
+    private fun createSmallImageData(): ComplicationData {
         val icon = Icon.createWithResource(this, android.R.drawable.ic_menu_recent_history)
         return SmallImageComplicationData.Builder(
             smallImage = SmallImage.Builder(icon, SmallImageType.ICON).build(),
             contentDescription = PlainComplicationText.Builder("Tempo").build()
         )
-            .setTapAction(pendingIntent)
+            .setTapAction(openQuickLogIntent())
             .build()
+    }
+
+    private fun elapsedMinutesValue(lap: LapState): Float {
+        if (!lap.isOpen) return 0f
+        val elapsed = System.currentTimeMillis() - lap.startedAtEpochMs
+        return (elapsed / 60000).coerceAtLeast(0).toFloat()
+    }
+
+    private fun elapsedMinutes(lap: LapState): String {
+        return "${elapsedMinutesValue(lap).toInt()}m"
     }
 }

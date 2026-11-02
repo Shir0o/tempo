@@ -125,13 +125,17 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
             return
         }
 
-        val isRunning = args["isRunning"] as? Boolean ?: false
-        val activityId = args["activityId"] as? String
-        val activityName = args["activityName"] as? String
-        val colorHex = args["activityColorHex"] as? String ?: "#4CAF50"
-        val startedAt = (args["startedAtEpochMs"] as? Number)?.toLong() ?: 0L
-        val isPaused = args["isPaused"] as? Boolean ?: false
-        val accPause = (args["accumulatedPauseMs"] as? Number)?.toLong() ?: 0L
+        // The payload carries the open Lap (start instant and zone). Older Dart
+        // builds only sent the retired timer keys, so those are still read.
+        val lapStartedAt = (args["lapStartedAtEpochMs"] as? Number)?.toLong() ?: 0L
+        val legacyRunning = args["isRunning"] as? Boolean ?: false
+        val legacyStartedAt = (args["startedAtEpochMs"] as? Number)?.toLong() ?: 0L
+        val startedAt = when {
+            lapStartedAt > 0L -> lapStartedAt
+            legacyRunning && legacyStartedAt > 0L -> legacyStartedAt
+            else -> 0L
+        }
+        val timezoneId = args["lapStartedTimezoneId"] as? String ?: ""
         val revision = (args["revision"] as? Number)?.toLong() ?: 0L
         val updatedAt = (args["updatedAtEpochMs"] as? Number)?.toLong() ?: System.currentTimeMillis()
 
@@ -139,8 +143,8 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
         try {
             TempoQuickSettingsTileService.updateTileState(
                 this,
-                isRunning && !isPaused,
-                activityName,
+                startedAt > 0L,
+                null,
                 startedAt
             )
         } catch (e: Exception) {
@@ -150,21 +154,25 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
         scope.launch {
             try {
                 val putRequest = PutDataMapRequest.create(PATH_ACTIVE_TIMER).apply {
-                    dataMap.putBoolean("isRunning", isRunning)
-                    dataMap.putString("activityId", activityId ?: "")
-                    dataMap.putString("activityName", activityName ?: "")
-                    dataMap.putString("activityColorHex", colorHex)
-                    dataMap.putLong("startedAtEpochMs", startedAt)
-                    dataMap.putBoolean("isPaused", isPaused)
-                    dataMap.putLong("accumulatedPauseMs", accPause)
+                    dataMap.putLong("lapStartedAtEpochMs", startedAt)
+                    dataMap.putString("lapStartedTimezoneId", timezoneId)
                     dataMap.putLong("revision", revision)
                     dataMap.putLong("updatedAtEpochMs", updatedAt)
+                    // Legacy timer keys for older watch builds: the Lap is the
+                    // only span and it always runs.
+                    dataMap.putBoolean("isRunning", startedAt > 0L)
+                    dataMap.putString("activityId", "")
+                    dataMap.putString("activityName", "")
+                    dataMap.putString("activityColorHex", "#4CAF50")
+                    dataMap.putLong("startedAtEpochMs", startedAt)
+                    dataMap.putBoolean("isPaused", false)
+                    dataMap.putLong("accumulatedPauseMs", 0L)
                 }.asPutDataRequest().setUrgent()
 
                 Wearable.getDataClient(this@MainActivity).putDataItem(putRequest).await()
                 runOnUiThread { result.success(true) }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to sync active timer to DataClient", e)
+                Log.e(TAG, "Failed to sync the Lap to DataClient", e)
                 runOnUiThread { result.error("DATA_CLIENT_ERROR", e.message, null) }
             }
         }
@@ -176,6 +184,9 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
             result.error("INVALID_ARGS", "Expected 'activities' list", null)
             return
         }
+        val tileActivityIds = (args.get("tileActivityIds") as? List<*>)
+            ?.filterIsInstance<String>()
+            ?: emptyList()
 
         val jsonArray = JSONArray()
         for (item in activitiesList) {
@@ -191,10 +202,15 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
             }
         }
 
+        val tileIdsArray = JSONArray().apply {
+            for (id in tileActivityIds) put(id)
+        }
+
         scope.launch {
             try {
                 val putRequest = PutDataMapRequest.create(PATH_ACTIVITIES).apply {
                     dataMap.putString("activities_json", jsonArray.toString())
+                    dataMap.putString("tileActivityIds_json", tileIdsArray.toString())
                     dataMap.putLong("updatedAtEpochMs", System.currentTimeMillis())
                 }.asPutDataRequest()
 
