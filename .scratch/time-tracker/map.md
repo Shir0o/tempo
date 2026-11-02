@@ -19,6 +19,7 @@ A locked product and technical architecture specification (`PRODUCT.md`, `CONTEX
 - [06: MCP Server Tools and Privacy Guardrails](issues/06-mcp-server-tools-and-privacy-guardrails-spec.md): Offline stdio MCP CLI on macOS connecting directly to SQLite; deterministic `PIISanitizer` redacting contact names following `w/` and `with ` with anonymous tokens; rich analytical tools with write operations disabled by default.
 - [07: Author Product and Architecture Specification](issues/07-author-product-and-architecture-spec.md): Destination reached; finalized canonical `PRODUCT.md`, locked domain in `CONTEXT.md`, and generated a sequenced 15-ticket implementation backlog across 5 phases.
 
+- [08: Retrospective Day Record & Color Blocks Dashboard](specs/08-retrospective-day-record-and-color-blocks-dashboard.md): Tempo becomes a plain, continuous midnight-to-midnight record — an always-running Lap labeled after the fact, no pause/stop/GuardedStop, Untracked Records, Boundary edits, MidnightSplit, start/end IANA zones; phone dashboard is design D (Color Blocks). Status: ready-for-agent.
 
 ## Not yet specified
 

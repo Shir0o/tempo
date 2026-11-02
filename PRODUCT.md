@@ -8,11 +8,11 @@ adaptive
 
 ## Users
 
-Individual developers, researchers, students, and professionals who manage their own time, build deep habits, and interact with a constellation of personal apps across Android, Pixel Watch, and macOS. They need effortless, sub-second time capture without cognitive overhead, battery drain, or privacy exposure.
+People who want a plain, complete record of how each of their days went — sleep, meals, travel, chores, time with others, everything — and who use a constellation of personal apps across Android, Pixel Watch, and macOS. They need effortless, sub-second labeling without cognitive overhead, battery drain, or privacy exposure, and they do not want to be coached, scored, or nudged.
 
 ## Product Purpose
 
-Tempo delivers instant, frictionless time tracking and habit awareness across everyday devices. It bridges mobile, watch, and desktop into a cohesive offline-first system that operates without mandatory cloud accounts, provides continuous live interoperability with peer tools (such as BNPB and Workout Planner), and enables local AI analytics via Model Context Protocol (MCP) with strict PII protection.
+Tempo keeps a continuous record of the whole day, every day, midnight to midnight. An open Lap always runs; the user labels what it was after the fact, which closes it as a Record and starts the next Lap. Tempo describes how a day was spent and never judges it: no goals, streaks, scores, or focus/productivity framing. It bridges mobile, watch, and desktop into a cohesive offline-first system that operates without mandatory cloud accounts, provides continuous live interoperability with peer tools (such as BNPB and Workout Planner), and enables local AI analytics via Model Context Protocol (MCP) with strict PII protection.
 
 ## Positioning
 
@@ -25,10 +25,10 @@ Unlike cloud-locked, corporate subscription trackers (Toggl, Clockify, Harvest) 
 
 ## Operating Context
 
-- **Pixel Watch (Wear OS)**: Ultra-fast micro-interactions on the wrist. Tapping a watch complication or smart tile slot starts tracking, triggers haptic confirmation, and immediately exits back to the watch face so incoming notifications, texts, and calls are never blocked.
-- **Android Phone/Tablet**: Comprehensive mobile dashboard for daily/weekly review, habit statistics, category configuration, and quick-settings tile logging.
-- **macOS Desktop**: Lightweight menu bar popover for instant keyboard-driven habit switching during deep focus work, plus full window for historical analysis and reporting.
-- **Local MCP Client**: Local CLI process invoked over stdio by AI assistants to query productivity trends, calculate time distributions, and inspect habit consistency.
+- **Pixel Watch (Wear OS)**: Ultra-fast micro-interactions on the wrist. The complication shows the open Lap's elapsed time; tapping it or a smart tile slot (the three most-used Activities) labels the Lap, triggers haptic confirmation, and immediately exits back to the watch face so incoming notifications, texts, and calls are never blocked.
+- **Android Phone/Tablet**: Dashboard showing the open Lap, a midnight-to-midnight timeline of the day, and one-tap labeling; daily/weekly review of time per Activity, Activity configuration, and quick-settings tile labeling.
+- **macOS Desktop**: Lightweight menu bar popover for instant keyboard-driven labeling of the open Lap, plus full window for browsing and correcting past Days.
+- **Local MCP Client**: Local CLI process invoked over stdio by AI assistants to describe how time was spent: timelines, time per Activity, and comparisons across days and weeks.
 
 ## Capabilities and Constraints
 
@@ -39,11 +39,12 @@ Unlike cloud-locked, corporate subscription trackers (Toggl, Clockify, Harvest) 
   - Local stdio MCP server CLI executable on macOS.
 - **Storage & Relational Schema**:
   - Normalized SQLite database (`activities`, `tags`, `records`, `record_tags`, `active_timer`, and indexed `tombstones`).
-  - Monotonic UTC epoch arithmetic (`nowUtc - startedAt - accumulatedPause`) guaranteeing 100% mathematical accuracy across device sleep, timezone crossings, and daylight saving shifts.
-  - 60-second heartbeat checkpointing in `active_timer` to recover gracefully from unexpected battery death.
-  - Strict single-active-timer semantics via atomic SQLite `SWITCH` transitions.
+  - Monotonic UTC epoch arithmetic (`nowUtc - lapStartedAt`; no pause) guaranteeing exact durations across device sleep, timezone crossings, and daylight saving shifts — a 6h flight is always 6h.
+  - Each Record stores its start and end IANA time zone; past Records always display in the zones they happened in, never the device's current zone.
+  - Continuous coverage: every moment of a Day belongs to exactly one Record or the open Lap, enforced by atomic SQLite transitions (label = close Lap as Record + open new Lap). Records crossing midnight are split at 00:00 local.
+  - The open Lap's start is persisted, so battery death or a reboot simply extends the Lap; nothing is lost.
 - **Data Portability & Ecosystem Interoperability**:
-  - Continuous atomic Write-Flush-Rename CSV export matching Simple Time Tracker 8-column layout (`activity name,time started,time ended,comment,categories,record tags,duration,duration minutes`).
+  - Continuous atomic Write-Flush-Rename CSV export matching Simple Time Tracker 8-column layout (`activity name,time started,time ended,comment,categories,record tags,duration,duration minutes`). Times are written in each Record's start zone; durations come from UTC epoch arithmetic; Untracked Records are omitted until labeled.
   - Strict adherence to BNPB ingestion standards (`"Contact"` tags, `w/` and `with ` name markers, and SHA-256 deduplication fingerprints).
   - ActivityWatch bucket format compatibility for automated screen-time reconciliation.
 - **Automations & Extensibility**:
@@ -58,12 +59,13 @@ Unlike cloud-locked, corporate subscription trackers (Toggl, Clockify, Harvest) 
 
 - **Name**: Tempo (CLI binary: `tempo-mcp`, scheme: `tempo://`).
 - **Design Language**: Clean, high-contrast utility design system with vibrant activity accent colors, dark mode defaults, legible monospace duration timers, and minimal visual noise.
-- **Tone & Voice**: Focused, calm, unobtrusive, and rigorously private. Zero nag screens, zero subscription prompts, and zero uninvited telemetry.
+- **Tone & Voice**: Calm, plain, unobtrusive, and rigorously private. Descriptive, never evaluative. Zero nag screens, zero goals or streaks, zero subscription prompts, and zero uninvited telemetry.
 
 ## Product Principles
 
-1. **Sub-Second Capture**: Logging time must never feel like work. Wrist complications, menu bar hotkeys, and widget buttons must initiate tracking in $\le 1$ second.
+1. **Sub-Second Capture**: Labeling time must never feel like a chore. Wrist complications, menu bar hotkeys, and widget buttons must label the open Lap in $\le 1$ second.
 2. **Never Miss a Notification**: Watch interactions must execute an Action-and-Exit pattern, immediately returning to the watch face so system alerts and communications remain unblocked.
 3. **Data Sovereign & Local-First**: Time history is deeply personal. All data resides on physical hardware in open formats (SQLite, CSV, JSON); synchronization uses private user accounts (Google Drive) without middlemen.
-4. **Guarded Intentionality**: Starting is 1-tap fast with a 3-second Undo window; stopping an active timer requires a deliberate 600ms hold to eliminate accidental stoppage from sleeve brushes or bumps.
+4. **The Day Is Continuous**: Time is never paused or stopped. Every label is 1 tap with a 3-second Undo window, and any past Boundary can be moved later — so an accidental tap costs nothing.
 5. **Private AI Assistance**: AI analysis must be performed locally via MCP with deterministic sanitization so personal names, notes, and contacts are never leaked to cloud models.
+6. **True to Where You Were**: Records show the local times they were lived in and their true durations, across any time zone or daylight saving change.
