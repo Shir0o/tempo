@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
 import '../export/csv_export_engine.dart';
+import '../time/timezone_id.dart';
 
 /// Represents an abnormal shutdown or crash recovery state detected on boot.
 class CrashRecoverySession {
@@ -56,7 +57,7 @@ class TimerStateMachine {
   final TempoDatabase _db;
   final int Function() _nowUtcMs;
   final String Function() _generateId;
-  final String Function() _getTimezoneId;
+  final FutureOr<String> Function() _getTimezoneId;
   final Duration _heartbeatInterval;
   final int _crashThresholdMs;
   final Future<void> Function(Record record)? onRecordCommitted;
@@ -82,7 +83,7 @@ class TimerStateMachine {
     required TempoDatabase database,
     int Function()? nowUtcMs,
     String Function()? generateId,
-    String Function()? getTimezoneId,
+    FutureOr<String> Function()? getTimezoneId,
     Duration? heartbeatInterval,
     int? crashThresholdMs,
     this.onRecordCommitted,
@@ -91,7 +92,7 @@ class TimerStateMachine {
        _nowUtcMs =
            nowUtcMs ?? (() => DateTime.now().toUtc().millisecondsSinceEpoch),
        _generateId = generateId ?? (() => const Uuid().v4()),
-       _getTimezoneId = getTimezoneId ?? (() => DateTime.now().timeZoneName),
+       _getTimezoneId = getTimezoneId ?? localTimezoneId,
        _heartbeatInterval = heartbeatInterval ?? defaultHeartbeatInterval,
        _crashThresholdMs = crashThresholdMs ?? defaultCrashThresholdMs;
 
@@ -349,7 +350,7 @@ class TimerStateMachine {
       endedAtEpochMs: referenceEnd,
       durationMs: duration,
       comment: finalComment ?? current.currentComment,
-      timezoneId: _getTimezoneId(),
+      timezoneId: await _getTimezoneId(),
       createdAtEpochMs: now,
       updatedAtEpochMs: now,
       tagIds: current.initialTagIds,
@@ -420,7 +421,7 @@ class TimerStateMachine {
         endedAtEpochMs: referenceEnd,
         durationMs: duration,
         comment: current.currentComment,
-        timezoneId: _getTimezoneId(),
+        timezoneId: await _getTimezoneId(),
         createdAtEpochMs: now,
         updatedAtEpochMs: now,
         tagIds: current.initialTagIds,
@@ -527,7 +528,7 @@ class TimerStateMachine {
         endedAtEpochMs: referenceEnd,
         durationMs: duration,
         comment: finalComment ?? current.currentComment,
-        timezoneId: _getTimezoneId(),
+        timezoneId: await _getTimezoneId(),
         createdAtEpochMs: now,
         updatedAtEpochMs: now,
         tagIds: current.initialTagIds,

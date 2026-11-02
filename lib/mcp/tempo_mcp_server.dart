@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:uuid/uuid.dart';
 
 import '../core/export/csv_export_engine.dart';
+import '../core/time/timezone_id.dart';
 import '../data/database/tempo_database.dart';
 import '../data/models/models.dart';
 import 'pii_sanitizer.dart';
@@ -664,7 +665,7 @@ class TempoMcpServer {
         endedAtEpochMs: refEnd,
         durationMs: duration,
         comment: currentTimer.currentComment,
-        timezoneId: DateTime.now().timeZoneName,
+        timezoneId: localTimezoneId(),
         createdAtEpochMs: now,
         updatedAtEpochMs: now,
         tagIds: currentTimer.initialTagIds,
@@ -727,7 +728,7 @@ class TempoMcpServer {
       endedAtEpochMs: refEnd,
       durationMs: duration,
       comment: finalComment,
-      timezoneId: DateTime.now().timeZoneName,
+      timezoneId: localTimezoneId(),
       createdAtEpochMs: now,
       updatedAtEpochMs: now,
       tagIds: currentTimer.initialTagIds,
@@ -793,7 +794,7 @@ class TempoMcpServer {
       endedAtEpochMs: endMs,
       durationMs: durationMs,
       comment: comment,
-      timezoneId: DateTime.now().timeZoneName,
+      timezoneId: localTimezoneId(),
       createdAtEpochMs: now,
       updatedAtEpochMs: now,
       tagIds: tagIds,
