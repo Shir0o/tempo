@@ -25,6 +25,11 @@ class Record {
   /// never crossed a zone and for rows written before end zones existed.
   final String endTimezoneId;
 
+  /// Whether this Record was produced by a MidnightSplit rather than by a
+  /// label or an explicit Split. A trailing MidnightSplit Record still belongs
+  /// to the open Lap's unlabeled span, so labelling the Lap also labels it.
+  final bool isMidnightSplit;
+
   final int createdAtEpochMs;
   final int updatedAtEpochMs;
   final List<String> tagIds;
@@ -38,6 +43,7 @@ class Record {
     this.comment = '',
     required this.timezoneId,
     String? endTimezoneId,
+    this.isMidnightSplit = false,
     required this.createdAtEpochMs,
     required this.updatedAtEpochMs,
     this.tagIds = const [],
@@ -65,6 +71,7 @@ class Record {
     'comment': comment,
     'timezone_id': timezoneId,
     'end_timezone_id': endTimezoneId,
+    'is_midnight_split': isMidnightSplit ? 1 : 0,
     'created_at_epoch_ms': createdAtEpochMs,
     'updated_at_epoch_ms': updatedAtEpochMs,
   };
@@ -86,6 +93,7 @@ class Record {
       endTimezoneId: (storedEndZone == null || storedEndZone.isEmpty)
           ? timezoneId
           : storedEndZone,
+      isMidnightSplit: (map['is_midnight_split'] as int? ?? 0) == 1,
       createdAtEpochMs: map['created_at_epoch_ms'] as int,
       updatedAtEpochMs: map['updated_at_epoch_ms'] as int,
       tagIds: tagIds,
@@ -101,6 +109,7 @@ class Record {
     String? comment,
     String? timezoneId,
     String? endTimezoneId,
+    bool? isMidnightSplit,
     int? createdAtEpochMs,
     int? updatedAtEpochMs,
     List<String>? tagIds,
@@ -113,6 +122,7 @@ class Record {
     comment: comment ?? this.comment,
     timezoneId: timezoneId ?? this.timezoneId,
     endTimezoneId: endTimezoneId ?? this.endTimezoneId,
+    isMidnightSplit: isMidnightSplit ?? this.isMidnightSplit,
     createdAtEpochMs: createdAtEpochMs ?? this.createdAtEpochMs,
     updatedAtEpochMs: updatedAtEpochMs ?? this.updatedAtEpochMs,
     tagIds: tagIds ?? this.tagIds,
@@ -129,6 +139,7 @@ class Record {
     comment: comment,
     timezoneId: timezoneId,
     endTimezoneId: endTimezoneId,
+    isMidnightSplit: isMidnightSplit,
     createdAtEpochMs: createdAtEpochMs,
     updatedAtEpochMs: updatedAtEpochMs,
     tagIds: tagIds,
@@ -147,6 +158,7 @@ class Record {
           comment == other.comment &&
           timezoneId == other.timezoneId &&
           endTimezoneId == other.endTimezoneId &&
+          isMidnightSplit == other.isMidnightSplit &&
           createdAtEpochMs == other.createdAtEpochMs &&
           updatedAtEpochMs == other.updatedAtEpochMs &&
           _listEquals(tagIds, other.tagIds);
@@ -161,11 +173,12 @@ class Record {
       comment.hashCode ^
       timezoneId.hashCode ^
       endTimezoneId.hashCode ^
+      isMidnightSplit.hashCode ^
       createdAtEpochMs.hashCode ^
       updatedAtEpochMs.hashCode ^
       Object.hashAll(tagIds);
 
   @override
   String toString() =>
-      'Record(id: $id, activityId: $activityId, startedAtEpochMs: $startedAtEpochMs, endedAtEpochMs: $endedAtEpochMs, durationMs: $durationMs, comment: $comment, timezoneId: $timezoneId, endTimezoneId: $endTimezoneId, tagIds: $tagIds)';
+      'Record(id: $id, activityId: $activityId, startedAtEpochMs: $startedAtEpochMs, endedAtEpochMs: $endedAtEpochMs, durationMs: $durationMs, comment: $comment, timezoneId: $timezoneId, endTimezoneId: $endTimezoneId, isMidnightSplit: $isMidnightSplit, tagIds: $tagIds)';
 }

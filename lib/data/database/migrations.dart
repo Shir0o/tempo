@@ -275,3 +275,12 @@ Future<void> migrateV2ToV3(DatabaseExecutor db) async {
     'revision': 1,
   }, conflictAlgorithm: ConflictAlgorithm.replace);
 }
+
+/// Version 5: Records distinguish MidnightSplit halves from explicitly split
+/// ones, so labelling the open Lap can apply to the whole unlabeled span while
+/// still respecting a Split the user made by hand.
+Future<void> migrateV4ToV5(DatabaseExecutor db) async {
+  await db.execute(
+    'ALTER TABLE records ADD COLUMN is_midnight_split INTEGER NOT NULL DEFAULT 0',
+  );
+}

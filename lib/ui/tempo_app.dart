@@ -28,8 +28,29 @@ class TempoApp extends StatefulWidget {
   State<TempoApp> createState() => _TempoAppState();
 }
 
-class _TempoAppState extends State<TempoApp> {
+class _TempoAppState extends State<TempoApp> with WidgetsBindingObserver {
   int _currentTabIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Timers do not run while the app is suspended, so catch up on every
+    // midnight that passed in the background.
+    if (state == AppLifecycleState.resumed) {
+      widget.dayRecorder.applyMidnightSplits();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
