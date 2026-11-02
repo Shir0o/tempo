@@ -15,54 +15,74 @@ String localTimezoneId() {
   return DateTime.now().timeZoneName;
 }
 
-/// Offsets for zone abbreviations stored by Records written before
-/// `timezoneId` held IANA ids. Ambiguous ones use the most likely meaning
-/// for this app's users (CST = US Central, IST = India).
-const Map<String, int> _abbreviationOffsetMinutes = {
-  'UTC': 0,
-  'GMT': 0,
-  'WET': 0,
-  'BST': 60,
-  'CET': 60,
-  'CEST': 120,
-  'EET': 120,
-  'EEST': 180,
-  'MSK': 180,
-  'IST': 330,
-  'SGT': 480,
-  'HKT': 480,
-  'JST': 540,
-  'KST': 540,
-  'AEST': 600,
-  'AEDT': 660,
-  'NZST': 720,
-  'NZDT': 780,
-  'HST': -600,
-  'AKST': -540,
-  'AKDT': -480,
-  'PST': -480,
-  'PDT': -420,
-  'MST': -420,
-  'MDT': -360,
-  'CST': -360,
-  'CDT': -300,
-  'EST': -300,
-  'EDT': -240,
+/// Canonical IANA zone for each legacy abbreviation. Ambiguous abbreviations
+/// resolve to the choice documented in spec 08: `CST` is US Central
+/// (`America/Chicago`) and `IST` is India (`Asia/Kolkata`). The choice is made
+/// once here so migrated rows stay stable.
+const Map<String, String> _abbreviationToIana = {
+  'UTC': 'Etc/UTC',
+  'GMT': 'Etc/GMT',
+  'WET': 'Europe/Lisbon',
+  'BST': 'Europe/London',
+  'CET': 'Europe/Paris',
+  'CEST': 'Europe/Paris',
+  'EET': 'Europe/Athens',
+  'EEST': 'Europe/Athens',
+  'MSK': 'Europe/Moscow',
+  'IST': 'Asia/Kolkata',
+  'SGT': 'Asia/Singapore',
+  'HKT': 'Asia/Hong_Kong',
+  'JST': 'Asia/Tokyo',
+  'KST': 'Asia/Seoul',
+  'AEST': 'Australia/Sydney',
+  'AEDT': 'Australia/Sydney',
+  'NZST': 'Pacific/Auckland',
+  'NZDT': 'Pacific/Auckland',
+  'HST': 'Pacific/Honolulu',
+  'AKST': 'America/Anchorage',
+  'AKDT': 'America/Anchorage',
+  'PST': 'America/Los_Angeles',
+  'PDT': 'America/Los_Angeles',
+  'MST': 'America/Denver',
+  'MDT': 'America/Denver',
+  'CST': 'America/Chicago',
+  'CDT': 'America/Chicago',
+  'EST': 'America/New_York',
+  'EDT': 'America/New_York',
 };
+
+bool _tzDatabaseLoaded = false;
 
 final RegExp _gmtOffsetPattern = RegExp(
   r'^(?:GMT|UTC)([+-])(\d{1,2})(?::?(\d{2}))?$',
 );
 
-bool _tzDatabaseLoaded = false;
+void _ensureTimezoneDatabase() {
+  if (_tzDatabaseLoaded) return;
+  tz_data.initializeTimeZones();
+  _tzDatabaseLoaded = true;
+}
+
+/// The IANA zone that best represents a legacy abbreviation such as `PST`,
+/// or null when [timezoneId] is not a known abbreviation (already IANA,
+/// a fixed offset, or unknown).
+String? ianaZoneForAbbreviation(String timezoneId) {
+  final normalized = timezoneId.trim().toUpperCase();
+  if (normalized.isEmpty) return null;
+  _ensureTimezoneDatabase();
+  try {
+    tz.getLocation(timezoneId);
+    return null;
+  } on tz.LocationNotFoundException {
+    // Not IANA; fall through to the legacy map.
+  }
+  return _abbreviationToIana[normalized];
+}
 
 /// UTC offset of [timezoneId] at [epochMs], or null if the id is unknown.
 /// Accepts IANA ids, `GMT+hh:mm` forms, and legacy abbreviations.
 Duration? utcOffsetAt(String timezoneId, int epochMs) {
-  if (!_tzDatabaseLoaded) {
-    tz_data.initializeTimeZones();
-    _tzDatabaseLoaded = true;
-  }
+  _ensureTimezoneDatabase();
   try {
     return tz.getLocation(timezoneId).timeZone(epochMs).offset;
   } on tz.LocationNotFoundException {
@@ -75,6 +95,46 @@ Duration? utcOffsetAt(String timezoneId, int epochMs) {
     return Duration(minutes: match[1] == '-' ? -minutes : minutes);
   }
 
-  final minutes = _abbreviationOffsetMinutes[timezoneId];
-  return minutes == null ? null : Duration(minutes: minutes);
+  final subject = _abbreviationToIana[timezoneId.toUpperCase()];
+  if (subject == null) return null;
+  try {
+    return tz.getLocation(subject).timeZone(epochMs).offset;
+  } on tz.LocationNotFoundException {
+    return null;
+  }
+}
+
+/// The wall-clock time in [timezoneId] at [epochMs], encoded as a UTC
+/// [DateTime] whose fields are the local fields. Falls back to the device's
+/// local time when the zone cannot be resolved.
+DateTime wallClockAt(String timezoneId, int epochMs) {
+  final offset = utcOffsetAt(timezoneId, epochMs);
+  if (offset == null) return DateTime.fromMillisecondsSinceEpoch(epochMs);
+  return DateTime.fromMillisecondsSinceEpoch(
+    epochMs + offset.inMilliseconds,
+    isUtc: true,
+  );
+}
+
+/// The abbreviation in effect in [timezoneId] at [epochMs] (e.g. `PDT`), or
+/// the id itself when the zone cannot be resolved.
+String zoneAbbreviationAt(String timezoneId, int epochMs) {
+  _ensureTimezoneDatabase();
+  try {
+    return tz.getLocation(timezoneId).timeZone(epochMs).abbreviation;
+  } on tz.LocationNotFoundException {
+    return timezoneId;
+  }
+}
+
+/// Converts a wall-clock [time] back to a UTC epoch millisecond instant in
+/// [timezoneId]. [referenceEpochMs] picks which side of a DST change to use.
+int epochMsFromWallClock(
+  DateTime time,
+  String timezoneId, {
+  required int referenceEpochMs,
+}) {
+  final offset = utcOffsetAt(timezoneId, referenceEpochMs);
+  if (offset == null) return time.millisecondsSinceEpoch;
+  return time.millisecondsSinceEpoch - offset.inMilliseconds;
 }

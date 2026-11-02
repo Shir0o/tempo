@@ -18,13 +18,16 @@ class TempoMcpServer {
   final PIISanitizer sanitizer;
   final bool allowWrites;
   final CsvExportEngine? csvExportEngine;
+  final String Function() zoneProvider;
 
   TempoMcpServer({
     required this.database,
     PIISanitizer? sanitizer,
     this.allowWrites = false,
     this.csvExportEngine,
-  }) : sanitizer = sanitizer ?? PIISanitizer();
+    String Function()? zoneProvider,
+  }) : sanitizer = sanitizer ?? PIISanitizer(),
+       zoneProvider = zoneProvider ?? localTimezoneId;
 
   /// Processes a stream of JSON-RPC lines from standard input and yields
   /// formatted JSON-RPC responses.
@@ -652,12 +655,16 @@ class TempoMcpServer {
 
     final now = DateTime.now().toUtc().millisecondsSinceEpoch;
     final currentTimer = await database.getActiveTimer();
+    final endTimezoneId = zoneProvider();
     if (currentTimer != null) {
       final duration = currentTimer.calculateDurationMs(now);
       final refEnd =
           (currentTimer.isPaused && currentTimer.pausedAtEpochMs != null)
           ? currentTimer.pausedAtEpochMs!
           : now;
+      final startTimezoneId = currentTimer.startedTimezoneId.isEmpty
+          ? endTimezoneId
+          : currentTimer.startedTimezoneId;
       final record = Record(
         id: const Uuid().v4(),
         activityId: currentTimer.activityId,
@@ -665,7 +672,8 @@ class TempoMcpServer {
         endedAtEpochMs: refEnd,
         durationMs: duration,
         comment: currentTimer.currentComment,
-        timezoneId: localTimezoneId(),
+        timezoneId: startTimezoneId,
+        endTimezoneId: endTimezoneId,
         createdAtEpochMs: now,
         updatedAtEpochMs: now,
         tagIds: currentTimer.initialTagIds,
@@ -680,6 +688,7 @@ class TempoMcpServer {
       id: 1,
       activityId: activity.id,
       startedAtEpochMs: now,
+      startedTimezoneId: endTimezoneId,
       isPaused: false,
       pausedAtEpochMs: null,
       accumulatedPauseMs: 0,
@@ -721,6 +730,10 @@ class TempoMcpServer {
 
     final finalComment =
         (args['comment'] as String?) ?? currentTimer.currentComment;
+    final endTimezoneId = zoneProvider();
+    final startTimezoneId = currentTimer.startedTimezoneId.isEmpty
+        ? endTimezoneId
+        : currentTimer.startedTimezoneId;
     final record = Record(
       id: const Uuid().v4(),
       activityId: currentTimer.activityId,
@@ -728,7 +741,8 @@ class TempoMcpServer {
       endedAtEpochMs: refEnd,
       durationMs: duration,
       comment: finalComment,
-      timezoneId: localTimezoneId(),
+      timezoneId: startTimezoneId,
+      endTimezoneId: endTimezoneId,
       createdAtEpochMs: now,
       updatedAtEpochMs: now,
       tagIds: currentTimer.initialTagIds,
@@ -786,6 +800,7 @@ class TempoMcpServer {
     final activity = await _getOrCreateActivity(activityName);
     final tagIds = await _getOrCreateTagIds(tagNames);
     final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+    final zoneId = zoneProvider();
 
     final record = Record(
       id: const Uuid().v4(),
@@ -794,7 +809,8 @@ class TempoMcpServer {
       endedAtEpochMs: endMs,
       durationMs: durationMs,
       comment: comment,
-      timezoneId: localTimezoneId(),
+      timezoneId: zoneId,
+      endTimezoneId: zoneId,
       createdAtEpochMs: now,
       updatedAtEpochMs: now,
       tagIds: tagIds,

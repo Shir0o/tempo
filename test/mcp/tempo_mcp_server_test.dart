@@ -482,6 +482,7 @@ void main() {
           database: db,
           sanitizer: sanitizer,
           allowWrites: true,
+          zoneProvider: () => 'Asia/Tokyo',
         );
 
         // 1. start_timer
@@ -511,6 +512,7 @@ void main() {
         final active = await db.getActiveTimer();
         expect(active, isNotNull);
         expect(active!.currentComment, equals('Drafting specs'));
+        expect(active.startedTimezoneId, equals('Asia/Tokyo'));
 
         // 2. stop_timer
         final stopReq = jsonEncode({
@@ -534,6 +536,12 @@ void main() {
 
         // Timer should now be stopped
         expect(await db.getActiveTimer(), isNull);
+
+        final stopped = (await db.getRecords()).firstWhere(
+          (r) => r.comment == 'Finished drafting',
+        );
+        expect(stopped.timezoneId, equals('Asia/Tokyo'));
+        expect(stopped.endTimezoneId, equals('Asia/Tokyo'));
 
         // 3. add_manual_record
         final manualReq = jsonEncode({
@@ -562,7 +570,9 @@ void main() {
         expect(manualPayload['duration_seconds'], equals(3600));
 
         final records = await db.getRecords();
-        expect(records.any((r) => r.comment == 'Reading docs'), isTrue);
+        final manual = records.firstWhere((r) => r.comment == 'Reading docs');
+        expect(manual.timezoneId, equals('Asia/Tokyo'));
+        expect(manual.endTimezoneId, equals('Asia/Tokyo'));
       },
     );
 
