@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:tempo/core/state/timer_state_machine.dart';
+import 'package:tempo/core/state/day_recorder.dart';
 import 'package:tempo/data/database/tempo_database.dart';
 import 'package:tempo/data/models/models.dart';
 import 'package:tempo/desktop/deep_link_service.dart';
@@ -15,7 +15,7 @@ void main() {
 
   group('DeepLinkService', () {
     late TempoDatabase db;
-    late TimerStateMachine stateMachine;
+    late DayRecorder dayRecorder;
     late DeepLinkService deepLinkService;
     late int mockTime;
     late int idCounter;
@@ -54,15 +54,16 @@ void main() {
         ),
       );
 
-      stateMachine = TimerStateMachine(
+      dayRecorder = DayRecorder(
         database: db,
         nowUtcMs: () => mockTime,
         generateId: () => 'rec-${++idCounter}',
         getTimezoneId: () => 'America/Los_Angeles',
       );
+      await dayRecorder.initialize();
 
       deepLinkService = DeepLinkService(
-        timerStateMachine: stateMachine,
+        dayRecorder: dayRecorder,
         database: db,
         nowUtcMs: () => mockTime,
         generateId: () => 'gen-${++idCounter}',
@@ -70,28 +71,28 @@ void main() {
     });
 
     tearDown(() async {
-      stateMachine.dispose();
+      dayRecorder.dispose();
       await db.close();
     });
 
     group('tempo://start', () {
-      test(
-        'starts timer with existing activity and decodes comment and tags',
-        () async {
-          final success = await deepLinkService.handleUrl(
-            'tempo://start?activity=Coding&comment=Review%20PR%20w/%20Alice&tags=DeepWork',
-          );
+      test('labels the open Lap with the Activity, comment and tags', () async {
+        mockTime += 60000;
 
-          expect(success, isTrue);
-          expect(stateMachine.isTracking, isTrue);
-          expect(stateMachine.activeTimer?.activityId, equals('act-coding'));
-          expect(
-            stateMachine.activeTimer?.currentComment,
-            equals('Review PR w/ Alice'),
-          );
-          expect(stateMachine.activeTimer?.initialTagIds, contains('tag-deep'));
-        },
-      );
+        final success = await deepLinkService.handleUrl(
+          'tempo://start?activity=Coding&comment=Review%20PR%20w/%20Alice&tags=DeepWork',
+        );
+
+        expect(success, isTrue);
+        final records = await db.getRecords();
+        expect(records.length, equals(1));
+        expect(records.first.activityId, equals('act-coding'));
+        expect(records.first.comment, equals('Review PR w/ Alice'));
+        expect(records.first.tagIds, contains('tag-deep'));
+        expect(records.first.startedAtEpochMs, equals(1000000000));
+        expect(records.first.endedAtEpochMs, equals(1000060000));
+        expect(dayRecorder.lap!.startedAtEpochMs, equals(1000060000));
+      });
 
       test(
         'creates new activity and new tags when they do not exist',
@@ -101,18 +102,17 @@ void main() {
           );
 
           expect(success, isTrue);
-          expect(stateMachine.isTracking, isTrue);
+          final records = await db.getRecords();
+          expect(records.length, equals(1));
 
-          final activity = await db.getActivityById(
-            stateMachine.activeTimer!.activityId,
-          );
+          final activity = await db.getActivityById(records.first.activityId);
           expect(activity, isNotNull);
           expect(activity!.name, equals('Guitar Practice'));
 
           final tags = await db.getAllTags();
           expect(tags.any((t) => t.name == 'Music'), isTrue);
           expect(tags.any((t) => t.name == 'Hobby'), isTrue);
-          expect(stateMachine.activeTimer?.initialTagIds.length, equals(2));
+          expect(records.first.tagIds.length, equals(2));
         },
       );
 
@@ -122,8 +122,9 @@ void main() {
         );
 
         expect(success, isTrue);
-        expect(stateMachine.activeTimer?.activityId, equals('act-workout'));
-        expect(stateMachine.activeTimer?.currentComment, equals('Chest Day'));
+        final records = await db.getRecords();
+        expect(records.first.activityId, equals('act-workout'));
+        expect(records.first.comment, equals('Chest Day'));
       });
 
       test(
@@ -134,15 +135,15 @@ void main() {
           );
 
           expect(success, isTrue);
-          expect(stateMachine.activeTimer?.activityId, equals('act-coding'));
+          final records = await db.getRecords();
+          expect(records.first.activityId, equals('act-coding'));
         },
       );
 
-      test('atomically switches when a timer is already active', () async {
+      test('closes the previous Lap when a second start arrives', () async {
         await deepLinkService.handleUrl(
           'tempo://start?activity=Coding&comment=Initial',
         );
-        expect(stateMachine.activeTimer?.activityId, equals('act-coding'));
 
         mockTime += 60000; // 1 minute later
 
@@ -151,15 +152,18 @@ void main() {
         );
 
         expect(switched, isTrue);
-        expect(stateMachine.activeTimer?.activityId, equals('act-workout'));
-        expect(stateMachine.activeTimer?.currentComment, equals('Gym'));
+        expect(dayRecorder.lap!.startedAtEpochMs, equals(1000060000));
 
-        // Verify previous session was committed as record
         final records = await db.getRecords();
-        expect(records.length, equals(1));
-        expect(records.first.activityId, equals('act-coding'));
-        expect(records.first.comment, equals('Initial'));
-        expect(records.first.durationMs, equals(60000));
+        expect(records.length, equals(2));
+        final coding = records.firstWhere((r) => r.activityId == 'act-coding');
+        expect(coding.comment, equals('Initial'));
+        expect(coding.durationMs, equals(0));
+        final workout = records.firstWhere(
+          (r) => r.activityId == 'act-workout',
+        );
+        expect(workout.comment, equals('Gym'));
+        expect(workout.durationMs, equals(60000));
       });
 
       test(
@@ -174,14 +178,14 @@ void main() {
             await deepLinkService.handleUrl('tempo://start?activity=%20'),
             isFalse,
           );
-          expect(stateMachine.isIdle, isTrue);
+          expect(await db.getRecords(), isEmpty);
         },
       );
     });
 
     group('tempo://stop', () {
-      test('stops running timer and persists optional comment', () async {
-        await stateMachine.start('act-coding', comment: 'Draft');
+      test('labels the Lap with the previous Record Activity', () async {
+        await deepLinkService.handleUrl('tempo://start?activity=Coding');
         mockTime += 120000;
 
         final success = await deepLinkService.handleUrl(
@@ -189,117 +193,56 @@ void main() {
         );
 
         expect(success, isTrue);
-        expect(stateMachine.isIdle, isTrue);
 
         final records = await db.getRecords();
-        expect(records.length, equals(1));
-        expect(records.first.comment, equals('Finished PR Review'));
-        expect(records.first.durationMs, equals(120000));
+        expect(records.length, equals(2));
+        final stopped = records.firstWhere(
+          (r) => r.startedAtEpochMs == 1000000000,
+        );
+        expect(stopped.activityId, equals('act-coding'));
+        expect(stopped.durationMs, equals(120000));
+        expect(dayRecorder.lap!.startedAtEpochMs, equals(1000120000));
       });
 
-      test(
-        'stops running timer preserving current comment if none provided',
-        () async {
-          await stateMachine.start('act-coding', comment: 'Existing Note');
-          mockTime += 30000;
-
-          final success = await deepLinkService.handleUrl('tempo://stop');
-          expect(success, isTrue);
-          expect(stateMachine.isIdle, isTrue);
-
-          final records = await db.getRecords();
-          expect(records.first.comment, equals('Existing Note'));
-        },
-      );
-
-      test('handles stop gracefully when idle without error', () async {
+      test('handles stop with no previous Record without error', () async {
         final success = await deepLinkService.handleUrl('tempo://stop');
         expect(success, isTrue);
-        expect(stateMachine.isIdle, isTrue);
+        expect(await db.getRecords(), isEmpty);
+        expect(dayRecorder.lap!.startedAtEpochMs, equals(1000000000));
       });
     });
 
-    group('tempo://pause and tempo://resume', () {
-      test('pauses and resumes active timer cleanly', () async {
-        await stateMachine.start('act-coding');
-        expect(stateMachine.isTracking, isTrue);
-
-        // Pause
-        final pauseSuccess = await deepLinkService.handleUrl('tempo://pause');
-        expect(pauseSuccess, isTrue);
-        expect(stateMachine.isPaused, isTrue);
-
-        // Resume
-        mockTime += 10000;
-        final resumeSuccess = await deepLinkService.handleUrl('tempo://resume');
-        expect(resumeSuccess, isTrue);
-        expect(stateMachine.isTracking, isTrue);
-      });
-
-      test('pause when idle or already paused is handled gracefully', () async {
-        // Idle
-        expect(await deepLinkService.handleUrl('tempo://pause'), isTrue);
-
-        // Paused
-        await stateMachine.start('act-coding');
-        await stateMachine.pause();
-        expect(await deepLinkService.handleUrl('tempo://pause'), isTrue);
-        expect(stateMachine.isPaused, isTrue);
-      });
-
-      test('resume when idle or tracking is handled gracefully', () async {
-        // Idle
-        expect(await deepLinkService.handleUrl('tempo://resume'), isTrue);
-
-        // Tracking
-        await stateMachine.start('act-coding');
-        expect(await deepLinkService.handleUrl('tempo://resume'), isTrue);
-        expect(stateMachine.isTracking, isTrue);
+    group('retired pause and resume links', () {
+      test('pause and resume are no longer recognised', () async {
+        expect(await deepLinkService.handleUrl('tempo://pause'), isFalse);
+        expect(await deepLinkService.handleUrl('tempo://resume'), isFalse);
+        expect(await db.getRecords(), isEmpty);
       });
     });
 
     group('tempo://toggle', () {
-      test('starts activity when idle', () async {
+      test('labels the open Lap when an activity is provided', () async {
         final success = await deepLinkService.handleUrl(
           'tempo://toggle?activity=Coding',
         );
 
         expect(success, isTrue);
-        expect(stateMachine.isTracking, isTrue);
-        expect(stateMachine.activeTimer?.activityId, equals('act-coding'));
-      });
-
-      test('stops timer when active with the same activity', () async {
-        await stateMachine.start('act-coding');
-
-        final success = await deepLinkService.handleUrl(
-          'tempo://toggle?activity=Coding',
-        );
-
-        expect(success, isTrue);
-        expect(stateMachine.isIdle, isTrue);
-      });
-
-      test('switches activity when active with a different activity', () async {
-        await stateMachine.start('act-coding');
-
-        final success = await deepLinkService.handleUrl(
-          'tempo://toggle?activity=Workout',
-        );
-
-        expect(success, isTrue);
-        expect(stateMachine.isTracking, isTrue);
-        expect(stateMachine.activeTimer?.activityId, equals('act-workout'));
+        final records = await db.getRecords();
+        expect(records.single.activityId, equals('act-coding'));
       });
 
       test(
-        'stops active timer when no activity parameter is provided',
+        'labels the open Lap with the last Activity without a parameter',
         () async {
-          await stateMachine.start('act-coding');
+          await deepLinkService.handleUrl('tempo://start?activity=Coding');
+          mockTime += 30000;
 
           final success = await deepLinkService.handleUrl('tempo://toggle');
           expect(success, isTrue);
-          expect(stateMachine.isIdle, isTrue);
+
+          final records = await db.getRecords();
+          expect(records.length, equals(2));
+          expect(records.first.activityId, equals('act-coding'));
         },
       );
     });
@@ -330,7 +273,7 @@ void main() {
             'tempo:///start?activity=Coding',
           );
           expect(success, isTrue);
-          expect(stateMachine.isTracking, isTrue);
+          expect((await db.getRecords()).length, equals(1));
         },
       );
 
@@ -340,11 +283,10 @@ void main() {
         );
 
         expect(success, isTrue);
-        final act = await db.getActivityById(
-          stateMachine.activeTimer!.activityId,
-        );
+        final records = await db.getRecords();
+        final act = await db.getActivityById(records.first.activityId);
         expect(act?.name, equals('Research 🚀'));
-        expect(stateMachine.activeTimer?.currentComment, equals('✨ Testing'));
+        expect(records.first.comment, equals('✨ Testing'));
       });
     });
   });

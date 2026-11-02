@@ -8,7 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
 import 'core/export/csv_export_engine.dart';
-import 'core/state/timer_state_machine.dart';
+import 'core/state/day_recorder.dart';
 import 'core/sync/google_drive_sync_service.dart';
 import 'data/database/tempo_database.dart';
 import 'data/models/models.dart';
@@ -41,38 +41,28 @@ Future<void> main() async {
     targetFile: exportFile,
   );
 
-  // 4. Initialize Core Timer State Machine
-  final timerStateMachine = TimerStateMachine(
+  // 4. Open the always-running Lap
+  final dayRecorder = DayRecorder(
     database: database,
     csvExportEngine: exportEngine,
     getTimezoneId: () async =>
         (await FlutterTimezone.getLocalTimezone()).identifier,
   );
-
-  // Check for boot-up crash recovery (>6 hours) and resume or recover
-  final crashSession = await timerStateMachine.checkCrashRecovery();
-  if (crashSession != null) {
-    // By default, truncate to last heartbeat on boot if abnormal shutdown
-    try {
-      await crashSession.truncateToHeartbeat();
-    } catch (_) {}
-  } else {
-    await timerStateMachine.initialize();
-  }
+  await dayRecorder.initialize();
 
   // 5. Initialize Google Drive Sync Service
   final driveSyncService = GoogleDriveSyncService(database: database);
   driveSyncService.attachToExportEngine(exportEngine);
 
   // 6. Initialize Universal Deep Link Bus (tempo:// & timetracker://)
-  DeepLinkService(timerStateMachine: timerStateMachine, database: database);
+  DeepLinkService(dayRecorder: dayRecorder, database: database);
 
   // 7. Platform-specific integrations
   if (!kIsWeb) {
     if (Platform.isAndroid) {
       // Connect Wear OS Companion synchronization
       final wearableSyncService = WearableSyncService(
-        timerStateMachine: timerStateMachine,
+        dayRecorder: dayRecorder,
         database: database,
       );
       wearableSyncService.initialize();
@@ -80,13 +70,13 @@ Future<void> main() async {
       database.getAllActivities().then(wearableSyncService.syncActivities);
     } else if (Platform.isMacOS) {
       // Connect macOS menu bar status item
-      MenuBarService(timerStateMachine: timerStateMachine, database: database);
+      MenuBarService(dayRecorder: dayRecorder, database: database);
     }
   }
 
   runApp(
     TempoApp(
-      timerStateMachine: timerStateMachine,
+      dayRecorder: dayRecorder,
       database: database,
       syncService: driveSyncService,
       exportEngine: exportEngine,

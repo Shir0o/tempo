@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tempo/data/models/active_timer.dart';
 import 'package:tempo/data/models/record.dart';
 import 'package:tempo/mcp/pii_sanitizer.dart';
 
@@ -132,21 +131,6 @@ void main() {
       expect(sanitized.comment, equals('1:1 w/ [Contact-1]'));
       expect(sanitized.tagIds, contains('tag-contact'));
       expect(sanitized.tagIds, contains('tag-work'));
-    });
-
-    test('sanitizes ActiveTimer comment', () {
-      final timer = ActiveTimer(
-        activityId: 'act-1',
-        startedAtEpochMs: 1000,
-        lastHeartbeatEpochMs: 1000,
-        currentComment: 'Interviewing candidate with Bob Jones',
-      );
-
-      final sanitized = sanitizer.sanitizeActiveTimer(timer);
-      expect(
-        sanitized.currentComment,
-        equals('Interviewing candidate with [Contact-1]'),
-      );
     });
 
     test('returns original string when enabled is false', () {

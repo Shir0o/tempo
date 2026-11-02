@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
-import '../../core/state/timer_state_machine.dart';
+import '../../core/state/day_recorder.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
 
@@ -14,15 +14,14 @@ import '../../data/models/models.dart';
 /// `05-desktop-macos-menu-bar-and-automation-spec.md`
 ///
 /// Keyboard hierarchy:
-/// - `1`-`9`: Quick start pinned habit N and dismiss popover.
-/// - `Space`: Toggles Pause/Resume on active timer.
-/// - `Cmd + Enter`: Stops active timer.
+/// - `1`-`9`: Label the open Lap with pinned Activity N and dismiss popover.
+/// - `Cmd + Enter`: Label the open Lap with the most recent Activity.
 /// - `/`: Focuses the search input.
 /// - `Escape`: Dismisses popover.
 /// - `Cmd + O`: Opens the full window.
 /// - `Cmd + Q`: Quits the application.
 class QuickPopoverView extends StatefulWidget {
-  final TimerStateMachine timerStateMachine;
+  final DayRecorder dayRecorder;
   final TempoDatabase database;
   final bool enableTicker;
   final VoidCallback? onClose;
@@ -32,7 +31,7 @@ class QuickPopoverView extends StatefulWidget {
 
   const QuickPopoverView({
     super.key,
-    required this.timerStateMachine,
+    required this.dayRecorder,
     required this.database,
     this.enableTicker = true,
     this.onClose,
@@ -56,7 +55,6 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
   List<Activity> _pinnedActivities = [];
   List<Activity> _recentActivities = [];
   Map<String, int> _weeklyDurations = {};
-  Activity? _activeActivity;
   String _searchQuery = '';
   bool _isLoading = true;
 
@@ -65,19 +63,15 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
     super.initState();
     _loadData();
 
-    widget.timerStateMachine.activeTimerNotifier.addListener(
-      _onActiveTimerChanged,
-    );
-    _onActiveTimerChanged();
+    widget.dayRecorder.lapListenable.addListener(_onLapChanged);
+    _onLapChanged();
   }
 
   @override
   void dispose() {
     _liveTicker?.cancel();
     _liveTicker = null;
-    widget.timerStateMachine.activeTimerNotifier.removeListener(
-      _onActiveTimerChanged,
-    );
+    widget.dayRecorder.lapListenable.removeListener(_onLapChanged);
     _rootFocusNode.dispose();
     _searchFocusNode.dispose();
     _commentFocusNode.dispose();
@@ -90,7 +84,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
     if (!widget.enableTicker) return;
     _liveTicker?.cancel();
     _liveTicker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (widget.timerStateMachine.isTracking && mounted) {
+      if (widget.dayRecorder.lap != null && mounted) {
         setState(() {});
       } else {
         _liveTicker?.cancel();
@@ -151,27 +145,12 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
     return monday.toUtc().millisecondsSinceEpoch;
   }
 
-  Future<void> _onActiveTimerChanged() async {
-    final active = widget.timerStateMachine.activeTimer;
-    if (active == null) {
+  Future<void> _onLapChanged() async {
+    if (widget.dayRecorder.lap != null) {
+      _startLiveTicker();
+    } else {
       _liveTicker?.cancel();
       _liveTicker = null;
-      _activeActivity = null;
-      _commentController.text = '';
-    } else {
-      _commentController.text = active.currentComment;
-      final act = await widget.database.getActivityById(active.activityId);
-      if (mounted) {
-        setState(() {
-          _activeActivity = act;
-        });
-      }
-      if (!active.isPaused && _liveTicker == null) {
-        _startLiveTicker();
-      } else if (active.isPaused) {
-        _liveTicker?.cancel();
-        _liveTicker = null;
-      }
     }
     if (mounted) setState(() {});
   }
@@ -199,14 +178,12 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
       return KeyEventResult.handled;
     }
 
-    // Cmd + Enter: Stop active timer
+    // Cmd + Enter: Label the Lap with the most recent Activity
     if (isCmdPressed &&
         (event.logicalKey == LogicalKeyboardKey.enter ||
             event.logicalKey == LogicalKeyboardKey.numpadEnter)) {
-      if (widget.timerStateMachine.activeTimer != null) {
-        _stopTimer();
-        return KeyEventResult.handled;
-      }
+      _labelSameAsLast();
+      return KeyEventResult.handled;
     }
 
     // Cmd + O: Open full window
@@ -232,9 +209,9 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
       return KeyEventResult.handled;
     }
 
-    // Space: Toggle pause / resume
+    // Space: Label the Lap with the most recent Activity
     if (event.logicalKey == LogicalKeyboardKey.space) {
-      _togglePauseResume();
+      _labelSameAsLast();
       return KeyEventResult.handled;
     }
 
@@ -256,36 +233,16 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
   // ==========================================
 
   Future<void> _startHabit(Activity activity) async {
-    await widget.timerStateMachine.start(activity.id);
-    await _loadData();
-  }
-
-  Future<void> _togglePauseResume() async {
-    final active = widget.timerStateMachine.activeTimer;
-    if (active == null) {
-      if (_pinnedActivities.isNotEmpty) {
-        await _startHabit(_pinnedActivities.first);
-      }
-    } else if (active.isPaused) {
-      await widget.timerStateMachine.resume();
-    } else {
-      await widget.timerStateMachine.pause();
-    }
-  }
-
-  Future<void> _stopTimer() async {
-    if (widget.timerStateMachine.activeTimer == null) return;
     final comment = _commentController.text.trim();
-    await widget.timerStateMachine.stop(
-      finalComment: comment.isNotEmpty ? comment : null,
-    );
+    await widget.dayRecorder.label(activity.id, comment: comment);
+    _commentController.clear();
     await _loadData();
   }
 
-  void _onCommentChanged(String val) {
-    if (widget.timerStateMachine.activeTimer != null) {
-      widget.timerStateMachine.updateComment(val);
-    }
+  Future<void> _labelSameAsLast() async {
+    await widget.dayRecorder.sameAsLast();
+    _commentController.clear();
+    await _loadData();
   }
 
   void _closePopover() {
@@ -382,9 +339,9 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
 
   @override
   Widget build(BuildContext context) {
-    final activeTimer = widget.timerStateMachine.activeTimer;
+    final lap = widget.dayRecorder.lap;
     final nowUtc = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final elapsedMs = activeTimer?.calculateDurationMs(nowUtc) ?? 0;
+    final elapsedMs = lap?.elapsedMs(nowUtc) ?? 0;
 
     return Focus(
       focusNode: _rootFocusNode,
@@ -411,9 +368,9 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Active Timer Banner (if active)
-              if (activeTimer != null) ...[
-                _buildActiveTimerBanner(activeTimer, elapsedMs),
+              // Open Lap Banner (always present)
+              if (lap != null) ...[
+                _buildLapBanner(elapsedMs),
                 const Divider(height: 1, color: Colors.white12),
               ],
 
@@ -455,12 +412,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
     );
   }
 
-  Widget _buildActiveTimerBanner(ActiveTimer timer, int elapsedMs) {
-    final actName = _activeActivity?.name ?? 'Tracking';
-    final isPaused = timer.isPaused;
-    final dotColor = isPaused
-        ? const Color(0xFFFFB300)
-        : const Color(0xFF4CAF50);
+  Widget _buildLapBanner(int elapsedMs) {
     final elapsedStr = _formatElapsedDuration(elapsedMs);
 
     return Container(
@@ -474,15 +426,15 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
               Container(
                 width: 10,
                 height: 10,
-                decoration: BoxDecoration(
-                  color: dotColor,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF4CAF50),
                   shape: BoxShape.circle,
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  '${actName.toUpperCase()} ($elapsedStr)',
+                  'UNTRACKED ($elapsedStr)',
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -492,32 +444,13 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              InkWell(
-                onTap: _togglePauseResume,
-                borderRadius: BorderRadius.circular(4),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white10,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    isPaused ? '▶️ Resume' : '⏸️ Pause',
-                    style: const TextStyle(color: Colors.white, fontSize: 11),
-                  ),
-                ),
-              ),
             ],
           ),
           const SizedBox(height: 8),
-          // Inline editable comment field
+          // Inline editable comment field, applied to the next label.
           TextField(
             focusNode: _commentFocusNode,
             controller: _commentController,
-            onChanged: _onCommentChanged,
             style: const TextStyle(color: Colors.white70, fontSize: 12),
             decoration: const InputDecoration(
               isDense: true,
@@ -536,16 +469,16 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
             ),
           ),
           const SizedBox(height: 8),
-          // Stop Button
+          // Same as last
           ElevatedButton.icon(
-            onPressed: _stopTimer,
-            icon: const Icon(Icons.stop, size: 16, color: Colors.white),
+            onPressed: _labelSameAsLast,
+            icon: const Icon(Icons.repeat, size: 16, color: Colors.white),
             label: const Text(
-              'Stop (Cmd+Enter)',
+              'Same as last (Cmd+Enter)',
               style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
             ),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFD32F2F),
+              backgroundColor: const Color(0xFF4CAF50),
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 8),
               minimumSize: const Size(double.infinity, 32),
@@ -647,16 +580,12 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
   Widget _buildHabitRow(Activity activity, int? hotkeyNumber) {
     final durationMs = _weeklyDurations[activity.id] ?? 0;
     final weeklyText = _formatWeeklySummary(durationMs);
-    final isCurrent =
-        widget.timerStateMachine.activeTimer?.activityId == activity.id;
 
     return InkWell(
       onTap: () => _startHabit(activity),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-        color: isCurrent
-            ? Colors.white.withValues(alpha: 0.06)
-            : Colors.transparent,
+        color: Colors.transparent,
         child: Row(
           children: [
             if (hotkeyNumber != null)
@@ -684,11 +613,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
             Expanded(
               child: Text(
                 activity.name,
-                style: TextStyle(
-                  color: isCurrent ? const Color(0xFF4CAF50) : Colors.white,
-                  fontSize: 13,
-                  fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-                ),
+                style: const TextStyle(color: Colors.white, fontSize: 13),
                 overflow: TextOverflow.ellipsis,
               ),
             ),

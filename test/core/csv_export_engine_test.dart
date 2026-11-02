@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:tempo/core/export/csv_export_engine.dart';
-import 'package:tempo/core/state/timer_state_machine.dart';
+import 'package:tempo/core/state/day_recorder.dart';
 import 'package:tempo/data/database/tempo_database.dart';
 import 'package:tempo/data/models/models.dart';
 
@@ -681,47 +681,46 @@ void main() {
     });
   });
 
-  group('TimerStateMachine Integration', () {
-    test(
-      'timer stop automatically triggers debounced export to target CSV',
-      () async {
-        final engine = CsvExportEngine(
-          database: db,
-          targetFile: targetFile,
-          debounceDuration: Duration.zero, // Zero-delay for synchronous test
-          epochToDateTime: fixedEpochToDateTime,
-        );
-        addTearDown(engine.dispose);
+  group('DayRecorder Integration', () {
+    test('labeling the Lap automatically triggers debounced export', () async {
+      final engine = CsvExportEngine(
+        database: db,
+        targetFile: targetFile,
+        debounceDuration: Duration.zero, // Zero-delay for synchronous test
+        epochToDateTime: fixedEpochToDateTime,
+      );
+      addTearDown(engine.dispose);
 
-        int mockTime = 1758109597000;
-        final sm = TimerStateMachine(
-          database: db,
-          csvExportEngine: engine,
-          nowUtcMs: () => mockTime,
-          generateId: () => 'sm-rec-1',
-          getTimezoneId: () => 'UTC',
-        );
-        addTearDown(sm.dispose);
+      int mockTime = 1758109597000;
+      final recorder = DayRecorder(
+        database: db,
+        csvExportEngine: engine,
+        nowUtcMs: () => mockTime,
+        generateId: () => 'rec-label-1',
+        getTimezoneId: () => 'UTC',
+      );
+      addTearDown(recorder.dispose);
 
-        await sm.start(testActivityLunch.id, comment: 'w/ Abel');
+      await recorder.initialize();
 
-        // Fast-forward 1 hour (3600000 ms)
-        mockTime += 3600000;
+      // Fast-forward 1 hour (3600000 ms)
+      mockTime += 3600000;
 
-        // Stop timer: triggers debounced export
-        final stoppedRecord = await sm.stop();
-        expect(stoppedRecord.id, equals('sm-rec-1'));
+      // Labeling closes the Lap and triggers the export
+      final record = await recorder.label(
+        testActivityLunch.id,
+        comment: 'w/ Abel',
+      );
+      expect(record.durationMs, equals(3600000));
 
-        // Verify file was written immediately
-        expect(await targetFile.exists(), isTrue);
-        final content = await targetFile.readAsString();
-        expect(content, contains('"Lunch",2025-09-17 11:46:37'));
-        expect(content, contains('"w/ Abel"'));
-        expect(content, contains('1:0:0,60'));
-      },
-    );
+      expect(await targetFile.exists(), isTrue);
+      final content = await targetFile.readAsString();
+      expect(content, contains('"Lunch",2025-09-17 11:46:37'));
+      expect(content, contains('"w/ Abel"'));
+      expect(content, contains('1:0:0,60'));
+    });
 
-    test('timer switchActivity automatically triggers debounced export of committed record', () async {
+    test('labeling exports the Record that just closed', () async {
       final engine = CsvExportEngine(
         database: db,
         targetFile: targetFile,
@@ -731,24 +730,21 @@ void main() {
       addTearDown(engine.dispose);
 
       int mockTime = 1758109597000;
-      final sm = TimerStateMachine(
+      final recorder = DayRecorder(
         database: db,
         csvExportEngine: engine,
         nowUtcMs: () => mockTime,
-        generateId: () => 'sm-rec-switch',
+        generateId: () => 'rec-label-2',
         getTimezoneId: () => 'UTC',
       );
-      addTearDown(sm.dispose);
+      addTearDown(recorder.dispose);
 
-      await sm.start(testActivityLunch.id, comment: 'Quick lunch');
+      await recorder.initialize();
 
-      // Fast-forward 30 minutes
+      // Fast-forward 30 minutes, then label the Lap as Lunch.
       mockTime += 1800000;
+      await recorder.label(testActivityLunch.id, comment: 'Quick lunch');
 
-      // Switch to Coding
-      await sm.switchActivity(testActivityCoding.id, comment: 'Back to work');
-
-      // The Lunch record should be committed and exported
       expect(await targetFile.exists(), isTrue);
       final content = await targetFile.readAsString();
       expect(content, contains('"Lunch"'));
@@ -756,7 +752,7 @@ void main() {
       expect(content, contains('0:30:0,30'));
     });
 
-    test('crash recovery truncateToHeartbeat automatically triggers debounced export', () async {
+    test('attachExportEngine dynamically binds engine to recorder', () async {
       final engine = CsvExportEngine(
         database: db,
         targetFile: targetFile,
@@ -766,73 +762,25 @@ void main() {
       addTearDown(engine.dispose);
 
       int mockTime = 1758109597000;
-      final sm = TimerStateMachine(
+      final recorder = DayRecorder(
         database: db,
-        csvExportEngine: engine,
         nowUtcMs: () => mockTime,
-        generateId: () => 'sm-rec-recovery',
+        generateId: () => 'rec-label-dyn',
         getTimezoneId: () => 'UTC',
       );
-      addTearDown(sm.dispose);
+      addTearDown(recorder.dispose);
 
-      await sm.start(testActivityCoding.id, comment: 'Session before crash');
+      expect(recorder.csvExportEngine, isNull);
+      recorder.attachExportEngine(engine);
+      expect(recorder.csvExportEngine, equals(engine));
 
-      // Simulate 1 hour passing, then heartbeat
-      mockTime += 3600000;
-      await sm.tickHeartbeat();
+      await recorder.initialize();
+      mockTime += 1800000;
+      await recorder.label(testActivityLunch.id);
 
-      // Simulate abnormal crash gap (7 hours > 6 hour threshold)
-      mockTime += 7 * 3600 * 1000;
-
-      final session = await sm.checkCrashRecovery();
-      expect(session, isNotNull);
-
-      // Truncate to heartbeat
-      final recoveredRecord = await session!.truncateToHeartbeat(
-        finalComment: 'Session recovered',
-      );
-      expect(recoveredRecord.id, equals('sm-rec-recovery'));
-
-      // Verify exported CSV has the recovered record
       expect(await targetFile.exists(), isTrue);
       final content = await targetFile.readAsString();
-      expect(content, contains('"Coding"'));
-      expect(content, contains('"Session recovered"'));
-      expect(content, contains('1:0:0,60'));
+      expect(content, contains('"Lunch"'));
     });
-
-    test(
-      'attachExportEngine dynamically binds engine to existing state machine',
-      () async {
-        final engine = CsvExportEngine(
-          database: db,
-          targetFile: targetFile,
-          debounceDuration: Duration.zero,
-          epochToDateTime: fixedEpochToDateTime,
-        );
-        addTearDown(engine.dispose);
-
-        int mockTime = 1758109597000;
-        final sm = TimerStateMachine(
-          database: db,
-          nowUtcMs: () => mockTime,
-          generateId: () => 'sm-rec-dyn',
-          getTimezoneId: () => 'UTC',
-        );
-        addTearDown(sm.dispose);
-
-        expect(sm.csvExportEngine, isNull);
-        sm.attachExportEngine(engine);
-        expect(sm.csvExportEngine, equals(engine));
-
-        await sm.start(testActivityLunch.id);
-        mockTime += 1800000;
-        await sm.stop();
-
-        expect(await targetFile.exists(), isTrue);
-        final content = await targetFile.readAsString();
-        expect(content, contains('"Lunch"'));
-      },
-    );
   });
 }

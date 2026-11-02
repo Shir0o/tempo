@@ -1,7 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:tempo/core/state/timer_state_machine.dart';
+import 'package:tempo/core/state/day_recorder.dart';
 import 'package:tempo/data/database/tempo_database.dart';
 import 'package:tempo/data/models/models.dart';
 import 'package:tempo/wearable/wearable_sync_service.dart';
@@ -16,7 +16,7 @@ void main() {
 
   group('WearableSyncService', () {
     late TempoDatabase db;
-    late TimerStateMachine stateMachine;
+    late DayRecorder dayRecorder;
     late WearableSyncService syncService;
     late MethodChannel channel;
     late List<MethodCall> methodCalls;
@@ -52,12 +52,13 @@ void main() {
         ),
       );
 
-      stateMachine = TimerStateMachine(
+      dayRecorder = DayRecorder(
         database: db,
         nowUtcMs: () => mockTime,
         generateId: () => 'rec-${++idCounter}',
+        getTimezoneId: () => 'America/Los_Angeles',
       );
-      await stateMachine.initialize();
+      await dayRecorder.initialize();
 
       channel = const MethodChannel(WearableSyncService.channelName);
       methodCalls = [];
@@ -73,7 +74,7 @@ void main() {
           });
 
       syncService = WearableSyncService(
-        timerStateMachine: stateMachine,
+        dayRecorder: dayRecorder,
         database: db,
         channel: channel,
       );
@@ -81,93 +82,41 @@ void main() {
 
     tearDown(() async {
       syncService.dispose();
-      stateMachine.dispose();
+      dayRecorder.dispose();
       await db.close();
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, null);
     });
 
-    test('initialize performs initial sync with idle state', () async {
+    test('initialize performs initial sync with the open Lap', () async {
       syncService.initialize();
 
       expect(methodCalls.length, 1);
       expect(methodCalls.first.method, 'syncActiveTimer');
       final args = methodCalls.first.arguments as Map;
-      expect(args['isRunning'], isFalse);
+      expect(args['isRunning'], isTrue);
       expect(args['activityId'], isNull);
+      expect(args['startedAtEpochMs'], mockTime);
+      expect(args['isPaused'], isFalse);
     });
 
-    test(
-      'starting a timer dispatches urgent active timer snapshot to watch',
-      () async {
-        syncService.initialize();
-        methodCalls.clear();
-
-        await stateMachine.start('act-coding');
-        // Allow async activity lookup to finish
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-
-        expect(methodCalls.isNotEmpty, isTrue);
-        final lastCall = methodCalls.last;
-        expect(lastCall.method, 'syncActiveTimer');
-
-        final args = lastCall.arguments as Map;
-        expect(args['isRunning'], isTrue);
-        expect(args['activityId'], 'act-coding');
-        expect(args['activityName'], 'Coding');
-        expect(args['activityColorHex'], '#2563EB');
-        expect(args['startedAtEpochMs'], mockTime);
-        expect(args['isPaused'], isFalse);
-      },
-    );
-
-    test(
-      'pausing and resuming timer dispatches updated state to watch',
-      () async {
-        syncService.initialize();
-        await stateMachine.start('act-coding');
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-        methodCalls.clear();
-
-        mockTime += 60000;
-        await stateMachine.pause();
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-
-        expect(methodCalls.isNotEmpty, isTrue);
-        final pauseCall = methodCalls.last;
-        final pauseArgs = pauseCall.arguments as Map;
-        expect(pauseArgs['isRunning'], isFalse);
-        expect(pauseArgs['isPaused'], isTrue);
-
-        methodCalls.clear();
-        mockTime += 30000;
-        await stateMachine.resume();
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-
-        expect(methodCalls.isNotEmpty, isTrue);
-        final resumeCall = methodCalls.last;
-        final resumeArgs = resumeCall.arguments as Map;
-        expect(resumeArgs['isRunning'], isTrue);
-        expect(resumeArgs['isPaused'], isFalse);
-        expect(resumeArgs['accumulatedPauseMs'], 30000);
-      },
-    );
-
-    test('stopping a timer dispatches idle state to watch', () async {
+    test('labeling dispatches a fresh Lap snapshot to the watch', () async {
       syncService.initialize();
-      await stateMachine.start('act-coding');
-      await Future<void>.delayed(const Duration(milliseconds: 10));
       methodCalls.clear();
 
-      await stateMachine.stop();
+      mockTime += 60000;
+      await dayRecorder.label('act-coding');
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
       expect(methodCalls.isNotEmpty, isTrue);
-      final stopCall = methodCalls.last;
-      final args = stopCall.arguments as Map;
-      expect(args['isRunning'], isFalse);
+      final lastCall = methodCalls.last;
+      expect(lastCall.method, 'syncActiveTimer');
+
+      final args = lastCall.arguments as Map;
+      expect(args['isRunning'], isTrue);
       expect(args['activityId'], isNull);
-      expect(args['activityName'], isNull);
+      expect(args['startedAtEpochMs'], mockTime);
+      expect(args['isPaused'], isFalse);
     });
 
     test(
@@ -194,7 +143,7 @@ void main() {
       },
     );
 
-    test('incoming START action from watch starts timer machine', () async {
+    test('incoming START action from watch labels the Lap', () async {
       syncService.initialize();
 
       final watchActions = <WatchAction>[];
@@ -219,8 +168,9 @@ void main() {
         (ByteData? reply) {},
       );
 
-      expect(stateMachine.activeTimer, isNotNull);
-      expect(stateMachine.activeTimer!.activityId, 'act-workout');
+      final records = await db.getRecords();
+      expect(records.single.activityId, 'act-workout');
+      expect(dayRecorder.lap!.startedAtEpochMs, equals(mockTime));
       expect(watchActions.length, 1);
       expect(watchActions.first.type, 'START');
       expect(watchActions.first.activityId, 'act-workout');
@@ -228,115 +178,79 @@ void main() {
       await sub.cancel();
     });
 
-    test('incoming STOP action from watch stops active timer', () async {
+    test(
+      'incoming STOP action labels the Lap with the last Activity',
+      () async {
+        syncService.initialize();
+        await dayRecorder.label('act-coding');
+        mockTime += 30000;
+
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        final codec = const StandardMethodCodec();
+
+        final callData = codec.encodeMethodCall(
+          const MethodCall('onWatchActionReceived', {
+            'action': 'STOP',
+            'timestampEpochMs': 1700000020000,
+            'actionId': 'evt-124',
+          }),
+        );
+
+        await messenger.handlePlatformMessage(
+          WearableSyncService.channelName,
+          callData,
+          (ByteData? reply) {},
+        );
+
+        final records = await db.getRecords();
+        expect(records.length, equals(2));
+        expect(records.first.activityId, 'act-coding');
+        expect(dayRecorder.lap!.startedAtEpochMs, equals(mockTime));
+      },
+    );
+
+    test('incoming PAUSE, RESUME and UNDO are no-ops', () async {
       syncService.initialize();
-      await stateMachine.start('act-coding');
+      await dayRecorder.label('act-coding');
+      final recordsBefore = await db.getRecords();
 
       final messenger =
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
       final codec = const StandardMethodCodec();
 
-      final callData = codec.encodeMethodCall(
-        const MethodCall('onWatchActionReceived', {
-          'action': 'STOP',
-          'timestampEpochMs': 1700000020000,
-          'actionId': 'evt-124',
-        }),
-      );
-
-      await messenger.handlePlatformMessage(
-        WearableSyncService.channelName,
-        callData,
-        (ByteData? reply) {},
-      );
-
-      expect(stateMachine.activeTimer, isNull);
-      expect(stateMachine.lastStoppedRecord, isNotNull);
-      expect(stateMachine.lastStoppedRecord!.activityId, 'act-coding');
-    });
-
-    test(
-      'incoming PAUSE and RESUME actions from watch transition timer',
-      () async {
-        syncService.initialize();
-        await stateMachine.start('act-coding');
-
-        final messenger =
-            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-        final codec = const StandardMethodCodec();
-
-        // Pause
+      for (final action in ['PAUSE', 'RESUME', 'UNDO']) {
         await messenger.handlePlatformMessage(
           WearableSyncService.channelName,
           codec.encodeMethodCall(
-            const MethodCall('onWatchActionReceived', {
-              'action': 'PAUSE',
+            MethodCall('onWatchActionReceived', {
+              'action': action,
               'timestampEpochMs': 1700000030000,
             }),
           ),
           (ByteData? reply) {},
         );
-        expect(stateMachine.isPaused, isTrue);
+      }
 
-        // Resume
-        await messenger.handlePlatformMessage(
-          WearableSyncService.channelName,
-          codec.encodeMethodCall(
-            const MethodCall('onWatchActionReceived', {
-              'action': 'RESUME',
-              'timestampEpochMs': 1700000040000,
-            }),
-          ),
-          (ByteData? reply) {},
-        );
-        expect(stateMachine.isTracking, isTrue);
-        expect(stateMachine.isPaused, isFalse);
-      },
-    );
+      expect((await db.getRecords()).length, recordsBefore.length);
+      expect(dayRecorder.lap, isNotNull);
+    });
 
-    test(
-      'incoming UNDO action from watch discards timer without saving Record',
-      () async {
-        syncService.initialize();
-        await stateMachine.start('act-coding');
+    test('channel errors during sync do not crash the service', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (MethodCall call) async {
+            throw PlatformException(
+              code: 'WEAR_UNAVAILABLE',
+              message: 'No watch paired',
+            );
+          });
 
-        final messenger =
-            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-        final codec = const StandardMethodCodec();
-
-        await messenger.handlePlatformMessage(
-          WearableSyncService.channelName,
-          codec.encodeMethodCall(
-            const MethodCall('onWatchActionReceived', {
-              'action': 'UNDO',
-              'timestampEpochMs': 1700000050000,
-            }),
-          ),
-          (ByteData? reply) {},
-        );
-
-        expect(stateMachine.activeTimer, isNull);
-        expect(stateMachine.lastStoppedRecord, isNull);
-      },
-    );
-
-    test(
-      'channel errors during active timer change do not crash service',
-      () async {
-        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-            .setMockMethodCallHandler(channel, (MethodCall call) async {
-              throw PlatformException(
-                code: 'WEAR_UNAVAILABLE',
-                message: 'No watch paired',
-              );
-            });
-
-        syncService.initialize();
-        // Should not throw
-        await stateMachine.start('act-coding');
-        await Future<void>.delayed(Duration.zero);
-        expect(stateMachine.activeTimer, isNotNull);
-      },
-    );
+      syncService.initialize();
+      // Should not throw
+      await dayRecorder.label('act-coding');
+      await Future<void>.delayed(Duration.zero);
+      expect(dayRecorder.lap, isNotNull);
+      expect((await db.getRecords()).length, equals(1));
+    });
   });
 }

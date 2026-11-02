@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-import '../core/state/timer_state_machine.dart';
+import '../core/state/day_recorder.dart';
 import '../data/database/tempo_database.dart';
 
 /// Display format modes for the macOS menu bar status item.
@@ -28,14 +28,15 @@ enum StatusDisplayMode {
 /// Service managing the macOS menu bar status item (`NSStatusItem`).
 ///
 /// Features:
-/// - Listens to [TimerStateMachine.activeTimerNotifier].
-/// - Formats title string across full, compact, minimal, idle, and paused states.
-/// - 1-second in-memory duration ticker without SQLite I/O during active tracking.
+/// - Listens to [DayRecorder.lapListenable].
+/// - Formats title string across full, compact, minimal and bracket modes,
+///   showing the open Lap's elapsed time.
+/// - 1-second in-memory duration ticker without SQLite I/O.
 /// - Bridges to native AppKit via method channel `com.tempos.tracker/menubar`.
 class MenuBarService {
   static const String channelName = 'com.tempos.tracker/menubar';
 
-  final TimerStateMachine timerStateMachine;
+  final DayRecorder dayRecorder;
   final TempoDatabase database;
   final MethodChannel _channel;
   final int Function() _nowUtcMs;
@@ -43,8 +44,6 @@ class MenuBarService {
   StatusDisplayMode _displayMode = StatusDisplayMode.full;
   bool includeBrackets = true;
   Timer? _tickerTimer;
-  String? _currentActivityId;
-  String? _currentActivityName;
 
   VoidCallback? onToggleQuickMenu;
   VoidCallback? onOpenFullWindow;
@@ -52,7 +51,7 @@ class MenuBarService {
   final ValueNotifier<String> _titleNotifier = ValueNotifier<String>('[⏱️]');
 
   MenuBarService({
-    required this.timerStateMachine,
+    required this.dayRecorder,
     required this.database,
     MethodChannel? channel,
     int Function()? nowUtcMs,
@@ -65,8 +64,8 @@ class MenuBarService {
            nowUtcMs ?? (() => DateTime.now().toUtc().millisecondsSinceEpoch),
        _displayMode = initialMode {
     _initChannelHandler();
-    timerStateMachine.activeTimerNotifier.addListener(_onActiveTimerChanged);
-    _onActiveTimerChanged();
+    dayRecorder.lapListenable.addListener(_onLapChanged);
+    _onLapChanged();
   }
 
   // ==========================================
@@ -181,50 +180,27 @@ class MenuBarService {
   }
 
   Future<void> _defaultToggle() async {
-    final active = timerStateMachine.activeTimer;
-    if (active == null) {
-      // Idle: start first pinned habit or default
-      final activities = await database.getAllActivities();
-      if (activities.isNotEmpty) {
-        final pinned = activities.firstWhere(
-          (a) => a.isPinned,
-          orElse: () => activities.first,
-        );
-        await timerStateMachine.start(pinned.id);
-      }
-    } else if (active.isPaused) {
-      await timerStateMachine.resume();
-    } else {
-      await timerStateMachine.pause();
+    // `start` now means "label the open Lap".
+    final activities = await database.getAllActivities();
+    if (activities.isNotEmpty) {
+      final pinned = activities.firstWhere(
+        (a) => a.isPinned,
+        orElse: () => activities.first,
+      );
+      await dayRecorder.label(pinned.id);
     }
   }
 
-  Future<void> _onActiveTimerChanged() async {
-    final timer = timerStateMachine.activeTimer;
-
-    if (timer == null) {
+  Future<void> _onLapChanged() async {
+    final lap = dayRecorder.lap;
+    if (lap == null) {
       _stopTicker();
-      _currentActivityId = null;
-      _currentActivityName = null;
       await _refreshTitle();
       return;
     }
 
-    // Cache activity name on change
-    if (timer.activityId != _currentActivityId ||
-        _currentActivityName == null) {
-      final act = await database.getActivityById(timer.activityId);
-      _currentActivityName = act?.name ?? '';
-      _currentActivityId = timer.activityId;
-    }
-
-    if (timer.isPaused) {
-      _stopTicker();
-      await _refreshTitle();
-    } else {
-      await _refreshTitle();
-      _startTicker();
-    }
+    await _refreshTitle();
+    _startTicker();
   }
 
   void _startTicker() {
@@ -241,19 +217,17 @@ class MenuBarService {
 
   /// 1-second in-memory tick: Evaluates elapsed time from UTC epoch math without SQLite queries.
   void _onSecondTick() {
-    final timer = timerStateMachine.activeTimer;
-    if (timer == null || timer.isPaused) {
+    final lap = dayRecorder.lap;
+    if (lap == null) {
       _stopTicker();
       return;
     }
 
-    final elapsedMs = timer.calculateDurationMs(_nowUtcMs());
+    final elapsedMs = lap.elapsedMs(_nowUtcMs());
     final elapsed = Duration(milliseconds: elapsedMs);
     final title = formatTitle(
       mode: _displayMode,
       isIdle: false,
-      isPaused: false,
-      activityName: _currentActivityName,
       elapsed: elapsed,
       brackets: includeBrackets,
     );
@@ -262,8 +236,8 @@ class MenuBarService {
   }
 
   Future<void> _refreshTitle() async {
-    final timer = timerStateMachine.activeTimer;
-    if (timer == null) {
+    final lap = dayRecorder.lap;
+    if (lap == null) {
       final title = formatTitle(
         mode: _displayMode,
         isIdle: true,
@@ -273,25 +247,16 @@ class MenuBarService {
       return;
     }
 
-    if (_currentActivityName == null ||
-        _currentActivityId != timer.activityId) {
-      final act = await database.getActivityById(timer.activityId);
-      _currentActivityName = act?.name ?? '';
-      _currentActivityId = timer.activityId;
-    }
-
-    final elapsedMs = timer.calculateDurationMs(_nowUtcMs());
+    final elapsedMs = lap.elapsedMs(_nowUtcMs());
     final elapsed = Duration(milliseconds: elapsedMs);
     final title = formatTitle(
       mode: _displayMode,
       isIdle: false,
-      isPaused: timer.isPaused,
-      activityName: _currentActivityName,
       elapsed: elapsed,
       brackets: includeBrackets,
     );
 
-    _updateTitle(title, isTracking: !timer.isPaused);
+    _updateTitle(title, isTracking: true);
   }
 
   void _updateTitle(String title, {required bool isTracking}) {
@@ -309,7 +274,7 @@ class MenuBarService {
   /// Closes ticker and cleans up notifiers.
   void dispose() {
     _stopTicker();
-    timerStateMachine.activeTimerNotifier.removeListener(_onActiveTimerChanged);
+    dayRecorder.lapListenable.removeListener(_onLapChanged);
     _titleNotifier.dispose();
   }
 }

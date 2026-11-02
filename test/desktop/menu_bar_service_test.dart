@@ -1,7 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:tempo/core/state/timer_state_machine.dart';
+import 'package:tempo/core/state/day_recorder.dart';
 import 'package:tempo/data/database/tempo_database.dart';
 import 'package:tempo/data/models/models.dart';
 import 'package:tempo/desktop/menu_bar_service.dart';
@@ -256,7 +256,7 @@ void main() {
 
   group('MenuBarService - Reactive Service Lifecycle', () {
     late TempoDatabase db;
-    late TimerStateMachine stateMachine;
+    late DayRecorder dayRecorder;
     late int mockTime;
     final channelCalls = <MethodCall>[];
 
@@ -274,12 +274,13 @@ void main() {
         ),
       );
 
-      stateMachine = TimerStateMachine(
+      dayRecorder = DayRecorder(
         database: db,
         nowUtcMs: () => mockTime,
         generateId: () => 'id-1',
         getTimezoneId: () => 'UTC',
       );
+      await dayRecorder.initialize();
 
       channelCalls.clear();
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -293,7 +294,7 @@ void main() {
     });
 
     tearDown(() async {
-      stateMachine.dispose();
+      dayRecorder.dispose();
       await db.close();
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(
@@ -302,55 +303,37 @@ void main() {
           );
     });
 
-    test(
-      'initializes with idle title and updates reactively on timer start/stop',
-      () async {
-        final service = MenuBarService(
-          timerStateMachine: stateMachine,
-          database: db,
-          nowUtcMs: () => mockTime,
-        );
-
-        expect(service.currentTitle, equals('[⏱️]'));
-
-        // Start timer
-        await stateMachine.start('act-coding');
-        // Give async DB lookup a cycle
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-
-        expect(service.currentTitle, equals('[🟢 00:00 Coding]'));
-
-        // Advance time by 84 minutes (1 hr 24 min)
-        mockTime += const Duration(hours: 1, minutes: 24).inMilliseconds;
-
-        // Trigger a refresh/tick
-        await service.setDisplayMode(StatusDisplayMode.full);
-        expect(service.currentTitle, equals('[🟢 01:24 Coding]'));
-
-        // Pause timer
-        await stateMachine.pause();
-        expect(service.currentTitle, equals('[⏸️ 01:24 Coding]'));
-
-        // Resume timer
-        await stateMachine.resume();
-        expect(service.currentTitle, equals('[🟢 01:24 Coding]'));
-
-        // Stop timer
-        await stateMachine.stop();
-        expect(service.currentTitle, equals('[⏱️]'));
-
-        service.dispose();
-      },
-    );
-
-    test('switches display modes dynamically', () async {
+    test('shows the Lap elapsed time and resets after a label', () async {
       final service = MenuBarService(
-        timerStateMachine: stateMachine,
+        dayRecorder: dayRecorder,
         database: db,
         nowUtcMs: () => mockTime,
       );
 
-      await stateMachine.start('act-coding');
+      expect(service.currentTitle, equals('[🟢 00:00]'));
+
+      // Advance time by 84 minutes (1 hr 24 min)
+      mockTime += const Duration(hours: 1, minutes: 24).inMilliseconds;
+
+      // Trigger a refresh/tick
+      await service.setDisplayMode(StatusDisplayMode.full);
+      expect(service.currentTitle, equals('[🟢 01:24]'));
+
+      // Labeling the Lap starts a new one at the same instant
+      await dayRecorder.label('act-coding');
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(service.currentTitle, equals('[🟢 00:00]'));
+
+      service.dispose();
+    });
+
+    test('switches display modes dynamically', () async {
+      final service = MenuBarService(
+        dayRecorder: dayRecorder,
+        database: db,
+        nowUtcMs: () => mockTime,
+      );
+
       mockTime += const Duration(hours: 1, minutes: 24).inMilliseconds;
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
@@ -361,22 +344,21 @@ void main() {
       expect(service.currentTitle, equals('[🟢]'));
 
       await service.setDisplayMode(StatusDisplayMode.full);
-      expect(service.currentTitle, equals('[🟢 01:24 Coding]'));
+      expect(service.currentTitle, equals('[🟢 01:24]'));
 
       await service.setIncludeBrackets(false);
-      expect(service.currentTitle, equals('🟢 01:24 Coding'));
+      expect(service.currentTitle, equals('🟢 01:24'));
 
       service.dispose();
     });
 
     test('dispatches updateStatusItem method channel calls', () async {
       final service = MenuBarService(
-        timerStateMachine: stateMachine,
+        dayRecorder: dayRecorder,
         database: db,
         nowUtcMs: () => mockTime,
       );
 
-      await stateMachine.start('act-coding');
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
       final updateCalls = channelCalls
@@ -384,7 +366,7 @@ void main() {
           .toList();
       expect(updateCalls.isNotEmpty, isTrue);
       expect(updateCalls.last.arguments['isTracking'], isTrue);
-      expect(updateCalls.last.arguments['title'], contains('Coding'));
+      expect(updateCalls.last.arguments['title'], startsWith('[🟢 '));
 
       service.dispose();
     });

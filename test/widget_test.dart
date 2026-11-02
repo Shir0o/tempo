@@ -1,6 +1,7 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:tempo/core/state/timer_state_machine.dart';
+import 'package:tempo/core/state/day_recorder.dart';
 import 'package:tempo/data/database/tempo_database.dart';
 import 'package:tempo/data/models/activity.dart';
 import 'package:tempo/ui/tempo_app.dart';
@@ -29,10 +30,10 @@ void main() {
       ),
     );
 
-    final sm = TimerStateMachine(database: db);
-    await sm.initialize();
+    final dayRecorder = DayRecorder(database: db);
+    await dayRecorder.initialize();
 
-    await tester.pumpWidget(TempoApp(timerStateMachine: sm, database: db));
+    await tester.pumpWidget(TempoApp(dayRecorder: dayRecorder, database: db));
 
     // Initial frame + data load
     await tester.pump();
@@ -45,10 +46,12 @@ void main() {
     expect(find.text('History'), findsOneWidget);
     expect(find.text('Settings'), findsOneWidget);
 
-    // Verify pinned activity 'Coding' is rendered
+    // Verify the open Lap and the pinned activity are rendered
+    expect(find.text('Untracked'), findsOneWidget);
     expect(find.text('Coding'), findsOneWidget);
 
-    sm.dispose();
+    await tester.pumpWidget(const SizedBox.shrink());
+    dayRecorder.dispose();
     await db.close();
   });
 }
