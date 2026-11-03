@@ -41,8 +41,8 @@ void main() {
 
     // Verify the Color Blocks dashboard and the bottom navigation tabs
     expect(find.text('What was it?'), findsOneWidget);
-    expect(find.text('Tracking'), findsOneWidget);
-    expect(find.text('Statistics'), findsOneWidget);
+    expect(find.text('Today'), findsOneWidget);
+    expect(find.text('Totals'), findsOneWidget);
     expect(find.text('History'), findsOneWidget);
     expect(find.text('Settings'), findsOneWidget);
 

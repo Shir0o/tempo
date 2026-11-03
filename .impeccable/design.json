@@ -1,0 +1,173 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-02T17:10:00-08:00",
+  "title": "Design System: Tempo",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Highlighter Lime"
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ledger Ink"
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Ledger Paper"
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Insert Paper"
+      },
+      "track": {
+        "role": "neutral",
+        "displayName": "Strip Track"
+      },
+      "background": {
+        "role": "neutral",
+        "displayName": "Night"
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Night Card"
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Hairline"
+      },
+      "text-muted": {
+        "role": "neutral",
+        "displayName": "Fog"
+      }
+    },
+    "typographyMeta": {
+      "lap-timer": {
+        "displayName": "Lap timer",
+        "purpose": "The open Lap's elapsed time; one per screen."
+      },
+      "screen-title": {
+        "displayName": "Screen title",
+        "purpose": "History, Totals, Settings, Activities."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "undo-countdown",
+        "value": "1s steps",
+        "purpose": "Undo bar counts 3→0 then disappears."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Ink pill on paper; the main action.",
+      "html": "<button class=\"ds-btn\">Same as last: Errands</button>",
+      "css": ".ds-btn{font-family:'Space Grotesk',system-ui,sans-serif;height:52px;padding:0 22px;border:none;border-radius:999px;background:#121210;color:#fff;font-weight:700;font-size:15px}.ds-btn:focus-visible{outline:2px solid #C6F432;outline-offset:2px}"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "Secondary action on paper.",
+      "html": "<button class=\"ds-out\">Split</button>",
+      "css": ".ds-out{font-family:'Space Grotesk',system-ui,sans-serif;height:52px;padding:0 22px;border:2px solid #121210;border-radius:999px;background:#E9E9E2;color:#121210;font-weight:700;font-size:15px}.ds-out:hover{background:#F7F7F4}.ds-out:focus-visible{outline:2px solid #C6F432;outline-offset:2px}"
+    },
+    {
+      "name": "Activity Block",
+      "kind": "card",
+      "refersTo": "activity-block",
+      "description": "Tap to label the open Lap.",
+      "html": "<button class=\"ds-block\"><span>1h 24m</span><strong>Errands</strong></button>",
+      "css": ".ds-block{font-family:'Space Grotesk',system-ui,sans-serif;width:110px;aspect-ratio:1;border:none;border-radius:20px;background:#C6F432;color:#121210;padding:12px;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-start;text-align:left}.ds-block span{font-size:13px;font-weight:600}.ds-block strong{font-size:16px}.ds-block:active{transform:scale(.97)}"
+    },
+    {
+      "name": "Undo Bar",
+      "kind": "custom",
+      "refersTo": "undo-bar",
+      "description": "Three-second undo after a label.",
+      "html": "<div class=\"ds-undo\"><span>Logged <b>Errands</b> 08:42–10:06</span><button>Undo · 3</button></div>",
+      "css": ".ds-undo{font-family:'Space Grotesk',system-ui,sans-serif;background:#1B1B18;color:#fff;border-radius:16px;padding:12px 14px;display:flex;align-items:center;gap:12px;font-size:14px;width:340px}.ds-undo span{flex:1}.ds-undo button{border:none;background:none;color:#C6F432;font:700 14px 'Space Grotesk'}"
+    },
+    {
+      "name": "Navigation",
+      "kind": "nav",
+      "refersTo": "nav-pill-selected",
+      "description": "Bottom tabs; lime pill marks the current tab.",
+      "html": "<nav class=\"ds-nav\"><a>Today</a><a class=\"on\"><i></i>History</a><a>Totals</a><a>Settings</a></nav>",
+      "css": ".ds-nav{font-family:'Space Grotesk',system-ui,sans-serif;display:flex;justify-content:space-around;background:#0B0B0A;padding:10px;width:360px}.ds-nav a{color:#A8A8A8;font-size:12px;font-weight:600;display:flex;flex-direction:column;align-items:center;gap:4px}.ds-nav a.on{color:#fff;font-weight:700}.ds-nav i{display:block;width:56px;height:32px;border-radius:16px;background:#C6F432}"
+    },
+    {
+      "name": "Field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "Text input on paper.",
+      "html": "<input class=\"ds-field\" placeholder=\"Add a note\">",
+      "css": ".ds-field{font-family:'Space Grotesk',system-ui,sans-serif;background:#F7F7F4;border:none;border-radius:16px;padding:14px;font-size:15px;color:#121210;width:300px}.ds-field:focus-visible{outline:2px solid #121210}"
+    },
+    {
+      "name": "Untracked Record",
+      "kind": "custom",
+      "refersTo": "",
+      "description": "Hatched block awaiting a label.",
+      "html": "<div class=\"ds-un\"><span>Untracked · 20m</span><b>What was it?</b></div>",
+      "css": ".ds-un{font-family:'Space Grotesk',system-ui,sans-serif;width:320px;border-radius:16px;padding:8px 8px 8px 14px;display:flex;justify-content:space-between;align-items:center;font-weight:700;color:#121210;background:repeating-linear-gradient(135deg,#E4E4DF 0 10px,#D9D9D3 10px 20px)}.ds-un b{background:#121210;color:#fff;border-radius:16px;padding:7px 12px;font-size:13px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Day Ledger",
+    "overview": "Tempo is a plain, honest page of the day. Light paper for what is open or being edited, solid colour for time that is known, diagonal hatching for time not yet labeled, all on near-black. The ledger describes, it never judges. The system is flat; depth comes from tone, never shadow.",
+    "keyCharacteristics": [
+      "Near-black canvas, light paper panels, saturated pastel Activity blocks.",
+      "Hatching always and only means Untracked.",
+      "One accent, lime #C6F432, used sparingly for \"you are here\" and \"act now\".",
+      "Space Grotesk everywhere, tabular figures for every time and duration.",
+      "Big rounded shapes; pills for actions.",
+      "Chronological 00–24 strips instead of charts that rank or score."
+    ],
+    "rules": [
+      {
+        "name": "The Hatch Means Unknown Rule",
+        "body": "Diagonal hatching is reserved for Untracked time and the open Lap's panel. Never use it as decoration.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Lime Rule",
+        "body": "Lime marks the current place or the one action that matters now. At most one lime fill per screen besides Activity colours.",
+        "section": "colors"
+      },
+      {
+        "name": "The Paper Is Live Rule",
+        "body": "Light paper surfaces hold what is open or being changed. Settled lists live on Night.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tabular Time Rule",
+        "body": "Every clock time and duration uses tabular figures so columns of times align and live timers don't jitter.",
+        "section": "typography"
+      },
+      {
+        "name": "The No-Shadow Rule",
+        "body": "Do not add box shadows, elevation tints or glows. If something needs to stand forward, put it on paper.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do use the Activity's own colour for its block, strip segment and swatch; ink text on top.",
+      "Do show every time in the zone it was lived in, and both zones when a Record crosses them.",
+      "Do keep copy descriptive: \"Logged Errands 08:42–10:06\", \"7h 27m a day\", \"Untracked · 20m\".",
+      "Do keep touch targets at least 48dp and give strips and blocks screen-reader labels."
+    ],
+    "donts": [
+      "Don't use evaluative or framing words: habit, session, streak, goal, focus, productive, work, most active, score.",
+      "Don't add shadows, gradients (other than hatching), glassmorphism or glow.",
+      "Don't use hatching for anything but Untracked time and the open Lap.",
+      "Don't load fonts from Google Fonts or any CDN; Space Grotesk ships in assets/fonts.",
+      "Don't rank Activities or show \"top\" lists outside the watch tile's three slots."
+    ]
+  }
+}
