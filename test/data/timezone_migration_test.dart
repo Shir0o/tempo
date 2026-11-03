@@ -75,6 +75,11 @@ void main() {
     await tempDir.delete(recursive: true);
   });
 
+  // Recent instants, so the gap fill and the running timer span only a few
+  // Days once they are split at midnight.
+  final base = DateTime.now().toUtc().millisecondsSinceEpoch - 3 * 3600000;
+  final timerStart = base + 2000;
+
   Future<void> createV1Database() async {
     final db = await databaseFactory.openDatabase(
       dbPath,
@@ -104,19 +109,19 @@ void main() {
       await db.insert('records', {
         'id': entry.key,
         'activity_id': 'act',
-        'started_at_epoch_ms': 1000,
-        'ended_at_epoch_ms': 2000,
+        'started_at_epoch_ms': base,
+        'ended_at_epoch_ms': base + 1000,
         'duration_ms': 1000,
         'timezone_id': entry.value,
-        'created_at_epoch_ms': 1000,
-        'updated_at_epoch_ms': 2000,
+        'created_at_epoch_ms': base,
+        'updated_at_epoch_ms': base + 1000,
       });
     }
     await db.insert('active_timer', {
       'id': 1,
       'activity_id': 'act',
-      'started_at_epoch_ms': 3000,
-      'last_heartbeat_epoch_ms': 4000,
+      'started_at_epoch_ms': timerStart,
+      'last_heartbeat_epoch_ms': timerStart + 1000,
     });
     await db.close();
   }
@@ -166,11 +171,22 @@ void main() {
       expect(lap, isNotNull);
       expect(lap!.startedTimezoneId, isNotEmpty);
 
-      final records = await db.getRecords();
-      final closed = records.where((r) => r.activityId == 'act').toList();
-      expect(closed.length, equals(6));
-      final timerRecord = closed.firstWhere((r) => r.startedAtEpochMs == 3000);
-      expect(timerRecord.endedAtEpochMs, equals(lap.startedAtEpochMs));
+      final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+      // The running timer is closed up to the Lap, one Record per Day.
+      final timerParts = records
+          .where(
+            (r) => r.activityId == 'act' && r.startedAtEpochMs >= timerStart,
+          )
+          .toList();
+      expect(timerParts, isNotEmpty);
+      expect(timerParts.first.startedAtEpochMs, equals(timerStart));
+      expect(timerParts.last.endedAtEpochMs, equals(lap.startedAtEpochMs));
+      for (var i = 1; i < timerParts.length; i++) {
+        expect(
+          timerParts[i].startedAtEpochMs,
+          equals(timerParts[i - 1].endedAtEpochMs),
+        );
+      }
     },
   );
 }
