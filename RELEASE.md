@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/Shir0o/tempo/compare/v1.2.0...v1.3.0) (2026-11-03)
+
+
+### Features
+
+* **sync:** wire Google Drive sign-in for Android and macOS ([#37](https://github.com/Shir0o/tempo/issues/37)) ([cf5e9cc](https://github.com/Shir0o/tempo/commit/cf5e9cc14ff4855f14b0b016122d9a8a82f84417))
+
 ## [1.2.0](https://github.com/Shir0o/tempo/compare/v1.1.0...v1.2.0) (2026-11-03)
 
 
