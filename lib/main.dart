@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
@@ -10,6 +11,7 @@ import 'package:uuid/uuid.dart';
 import 'core/export/csv_export_engine.dart';
 import 'core/state/day_recorder.dart';
 import 'core/sync/google_drive_sync_service.dart';
+import 'core/sync/google_oauth_config.dart';
 import 'data/database/tempo_database.dart';
 import 'data/models/models.dart';
 import 'desktop/deep_link_service.dart';
@@ -56,6 +58,7 @@ Future<void> main() async {
   await dayRecorder.initialize();
 
   // 5. Initialize Google Drive Sync Service
+  await _initializeGoogleSignIn();
   final driveSyncService = GoogleDriveSyncService(database: database);
   driveSyncService.attachToExportEngine(exportEngine);
 
@@ -87,6 +90,26 @@ Future<void> main() async {
       exportEngine: exportEngine,
     ),
   );
+}
+
+/// Prepares the shared [GoogleSignIn] instance before the sync service uses it.
+///
+/// Android identifies the app through the registered package + signing
+/// fingerprints but still needs the web client ID as `serverClientId`. macOS
+/// uses the iOS-type client, whose reversed ID is registered as a URL scheme
+/// in `macos/Runner/Info.plist`.
+Future<void> _initializeGoogleSignIn() async {
+  if (kIsWeb) return;
+  try {
+    await GoogleSignIn.instance.initialize(
+      clientId: Platform.isMacOS ? googleMacosClientId : null,
+      serverClientId: Platform.isAndroid ? googleWebClientId : null,
+    );
+  } catch (e) {
+    // Sign-in will report the failure through Settings rather than blocking
+    // app startup on a cloud configuration problem.
+    debugPrint('GoogleSignIn initialization failed: $e');
+  }
 }
 
 Future<void> _seedDefaultActivitiesIfEmpty(TempoDatabase db) async {
