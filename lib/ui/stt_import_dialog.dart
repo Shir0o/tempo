@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -61,7 +62,8 @@ class _SttImportDialogState extends State<SttImportDialog> {
   void initState() {
     super.initState();
     _activeTimezone = widget.importService.getTimezoneId();
-    _isBackupFormat = widget.fileName.toLowerCase().endsWith('.backup') ||
+    _isBackupFormat =
+        widget.fileName.toLowerCase().endsWith('.backup') ||
         widget.fileContent.contains('recordType\t') ||
         widget.fileContent.contains('recordType,');
 
@@ -86,10 +88,17 @@ class _SttImportDialogState extends State<SttImportDialog> {
           maxEpoch = math.max(maxEpoch, interval.endedAtEpochMs);
         }
 
-        final minDate = DateTime.fromMillisecondsSinceEpoch(minEpoch, isUtc: true);
-        final maxDate = DateTime.fromMillisecondsSinceEpoch(maxEpoch, isUtc: true);
+        final minDate = DateTime.fromMillisecondsSinceEpoch(
+          minEpoch,
+          isUtc: true,
+        );
+        final maxDate = DateTime.fromMillisecondsSinceEpoch(
+          maxEpoch,
+          isUtc: true,
+        );
         final formatter = DateFormat('MMM yyyy');
-        _dateSpanBadge = '${formatter.format(minDate)} – ${formatter.format(maxDate)}';
+        _dateSpanBadge =
+            '${formatter.format(minDate)} – ${formatter.format(maxDate)}';
 
         // Default to full history if records exist
         _selectedScope = SttImportScope.fullHistory;
@@ -145,11 +154,14 @@ class _SttImportDialogState extends State<SttImportDialog> {
         constraints: const BoxConstraints(maxWidth: 480),
         child: Padding(
           padding: const EdgeInsets.all(20),
-          child: _errorMessage != null && _envelope.activities.isEmpty && _envelope.categories.isEmpty
+          child:
+              _errorMessage != null &&
+                  _envelope.activities.isEmpty &&
+                  _envelope.categories.isEmpty
               ? _buildErrorView()
               : _isImporting
-                  ? _buildImportingView()
-                  : _buildDialogContent(),
+              ? _buildImportingView()
+              : _buildDialogContent(),
         ),
       ),
     );
@@ -160,7 +172,11 @@ class _SttImportDialogState extends State<SttImportDialog> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 40),
+        const Icon(
+          Icons.error_outline_rounded,
+          color: Colors.redAccent,
+          size: 40,
+        ),
         const SizedBox(height: 12),
         const Text(
           'Unable to Parse File',
@@ -382,7 +398,10 @@ class _SttImportDialogState extends State<SttImportDialog> {
               // Date Span Badge
               if (_dateSpanBadge != null)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFF4CAF50).withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(6),
@@ -402,12 +421,21 @@ class _SttImportDialogState extends State<SttImportDialog> {
           // Counts row
           Row(
             children: [
-              _buildCountItem('Categories', _envelope.categories.length.toString()),
+              _buildCountItem(
+                'Categories',
+                _envelope.categories.length.toString(),
+              ),
               _buildCountDivider(),
-              _buildCountItem('Activities', _envelope.activities.length.toString()),
+              _buildCountItem(
+                'Activities',
+                _envelope.activities.length.toString(),
+              ),
               if (_envelope.rawIntervals.isNotEmpty) ...[
                 _buildCountDivider(),
-                _buildCountItem('Records', _envelope.rawIntervals.length.toString()),
+                _buildCountItem(
+                  'Records',
+                  _envelope.rawIntervals.length.toString(),
+                ),
               ],
             ],
           ),
@@ -426,10 +454,7 @@ class _SttImportDialogState extends State<SttImportDialog> {
               Expanded(
                 child: Text(
                   'Timestamps will be reconciled in $_activeTimezone',
-                  style: const TextStyle(
-                    color: Colors.white38,
-                    fontSize: 11,
-                  ),
+                  style: const TextStyle(color: Colors.white38, fontSize: 11),
                 ),
               ),
             ],
@@ -455,10 +480,7 @@ class _SttImportDialogState extends State<SttImportDialog> {
           const SizedBox(height: 2),
           Text(
             label,
-            style: const TextStyle(
-              color: Colors.white38,
-              fontSize: 11,
-            ),
+            style: const TextStyle(color: Colors.white38, fontSize: 11),
           ),
         ],
       ),
@@ -500,8 +522,8 @@ class _SttImportDialogState extends State<SttImportDialog> {
               color: isSelected
                   ? const Color(0xFF4CAF50)
                   : enabled
-                      ? Colors.white.withValues(alpha: 0.06)
-                      : Colors.white.withValues(alpha: 0.02),
+                  ? Colors.white.withValues(alpha: 0.06)
+                  : Colors.white.withValues(alpha: 0.02),
             ),
           ),
           child: Row(
@@ -544,7 +566,9 @@ class _SttImportDialogState extends State<SttImportDialog> {
                           icon,
                           size: 16,
                           color: enabled
-                              ? (isSelected ? const Color(0xFF4CAF50) : Colors.white70)
+                              ? (isSelected
+                                    ? const Color(0xFF4CAF50)
+                                    : Colors.white70)
                               : Colors.white24,
                         ),
                         const SizedBox(width: 6),

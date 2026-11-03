@@ -164,7 +164,9 @@ void main() {
     // Category deletion recorded a tombstone
     final tombstones = await tempoDb.getTombstones();
     expect(
-      tombstones.any((t) => t.entityId == 'cat-1' && t.entityType == 'category'),
+      tombstones.any(
+        (t) => t.entityId == 'cat-1' && t.entityType == 'category',
+      ),
       isTrue,
     );
 

@@ -19,11 +19,26 @@ activity name,time started,time ended,comment,categories,record tags,duration,du
     });
 
     test('mapIconName maps STT drawable tokens to Material icon names', () {
-      expect(SttFormatParser.mapIconName('ic_fitness_center_24px'), equals('fitness_center'));
-      expect(SttFormatParser.mapIconName('ic_directions_walk_24px'), equals('directions_walk'));
-      expect(SttFormatParser.mapIconName('ic_restaurant_menu_24px'), equals('restaurant_menu'));
-      expect(SttFormatParser.mapIconName('ic_airline_seat_individual_suite_24px'), equals('bed'));
-      expect(SttFormatParser.mapIconName('ic_unknown_foo_24px'), equals('schedule'));
+      expect(
+        SttFormatParser.mapIconName('ic_fitness_center_24px'),
+        equals('fitness_center'),
+      );
+      expect(
+        SttFormatParser.mapIconName('ic_directions_walk_24px'),
+        equals('directions_walk'),
+      );
+      expect(
+        SttFormatParser.mapIconName('ic_restaurant_menu_24px'),
+        equals('restaurant_menu'),
+      );
+      expect(
+        SttFormatParser.mapIconName('ic_airline_seat_individual_suite_24px'),
+        equals('bed'),
+      );
+      expect(
+        SttFormatParser.mapIconName('ic_unknown_foo_24px'),
+        equals('schedule'),
+      );
       expect(SttFormatParser.mapIconName(null), equals('schedule'));
     });
 
@@ -70,7 +85,9 @@ record\t102\t3\t1700001800000\t1700005400000\tResting\t
       expect(envelope.categories[1].id, equals('cat-2'));
 
       expect(envelope.activities.length, equals(2));
-      final prayerAct = envelope.activities.firstWhere((a) => a.name == 'Prayer');
+      final prayerAct = envelope.activities.firstWhere(
+        (a) => a.name == 'Prayer',
+      );
       expect(prayerAct.categoryId, equals('cat-1'));
       expect(prayerAct.iconName, equals('sports_bar'));
 
@@ -90,34 +107,43 @@ record\t102\t3\t1700001800000\t1700005400000\tResting\t
       expect(envelope.rawIntervals[1].comment, equals('Resting'));
     });
 
-    test('parses STT .csv file synthesizing categories and resolving intervals', () {
-      const csvData = '''
+    test(
+      'parses STT .csv file synthesizing categories and resolving intervals',
+      () {
+        const csvData = '''
 activity name,time started,time ended,comment,categories,record tags,duration,duration minutes
 "Ministry",2025-01-07 11:50:23,2025-01-07 11:57:23,"Outreach","Spiritual","tag1, tag2",0:7:0,7
 "Commute",2025-01-07 11:57:23,2025-01-07 12:00:24,"","Transportation ","",0:3:1,3
 ''';
 
-      final envelope = SttFormatParser.parse(
-        content: csvData,
-        wallClockToEpochMs: (dt) => dt.millisecondsSinceEpoch,
-        nowEpochMs: 1700000000000,
-      );
+        final envelope = SttFormatParser.parse(
+          content: csvData,
+          wallClockToEpochMs: (dt) => dt.millisecondsSinceEpoch,
+          nowEpochMs: 1700000000000,
+        );
 
-      expect(envelope.categories.length, equals(2));
-      expect(envelope.categories.map((c) => c.name), containsAll(['Spiritual', 'Transportation']));
+        expect(envelope.categories.length, equals(2));
+        expect(
+          envelope.categories.map((c) => c.name),
+          containsAll(['Spiritual', 'Transportation']),
+        );
 
-      expect(envelope.activities.length, equals(2));
-      expect(envelope.activities.map((a) => a.name), containsAll(['Ministry', 'Commute']));
+        expect(envelope.activities.length, equals(2));
+        expect(
+          envelope.activities.map((a) => a.name),
+          containsAll(['Ministry', 'Commute']),
+        );
 
-      expect(envelope.rawIntervals.length, equals(2));
-      expect(envelope.rawIntervals[0].activityName, equals('Ministry'));
-      expect(envelope.rawIntervals[0].categoryName, equals('Spiritual'));
-      expect(envelope.rawIntervals[0].comment, equals('Outreach'));
-      expect(envelope.rawIntervals[0].tagNames, equals(['tag1', 'tag2']));
+        expect(envelope.rawIntervals.length, equals(2));
+        expect(envelope.rawIntervals[0].activityName, equals('Ministry'));
+        expect(envelope.rawIntervals[0].categoryName, equals('Spiritual'));
+        expect(envelope.rawIntervals[0].comment, equals('Outreach'));
+        expect(envelope.rawIntervals[0].tagNames, equals(['tag1', 'tag2']));
 
-      expect(envelope.rawIntervals[1].activityName, equals('Commute'));
-      expect(envelope.rawIntervals[1].categoryName, equals('Transportation'));
-    });
+        expect(envelope.rawIntervals[1].activityName, equals('Commute'));
+        expect(envelope.rawIntervals[1].categoryName, equals('Transportation'));
+      },
+    );
 
     test('handles empty or corrupted lines gracefully', () {
       const corruptedBackup = '''

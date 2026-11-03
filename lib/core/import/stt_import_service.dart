@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:uuid/uuid.dart';
 
@@ -9,10 +10,7 @@ import '../time/timezone_id.dart';
 import 'stt_format_parser.dart';
 
 /// Scope for STT data import.
-enum SttImportScope {
-  catalogOnly,
-  fullHistory,
-}
+enum SttImportScope { catalogOnly, fullHistory }
 
 /// Result summary of an import execution.
 class SttImportResult {
@@ -49,7 +47,8 @@ class SttImportService {
     int Function()? nowUtcMs,
     String Function()? generateId,
     String Function()? getTimezoneId,
-  }) : nowUtcMs = nowUtcMs ?? (() => DateTime.now().toUtc().millisecondsSinceEpoch),
+  }) : nowUtcMs =
+           nowUtcMs ?? (() => DateTime.now().toUtc().millisecondsSinceEpoch),
        generateId = generateId ?? (() => const Uuid().v4()),
        getTimezoneId = getTimezoneId ?? localTimezoneId;
 
@@ -84,7 +83,8 @@ class SttImportService {
     var syntheticCount = 0;
     var skippedCollisions = 0;
 
-    if (scope == SttImportScope.fullHistory && envelope.rawIntervals.isNotEmpty) {
+    if (scope == SttImportScope.fullHistory &&
+        envelope.rawIntervals.isNotEmpty) {
       final reconciliation = await _reconcileAndInsertHistory(
         intervals: envelope.rawIntervals,
         activityMapping: activityMapping,
@@ -162,7 +162,9 @@ class SttImportService {
     for (final imp in imported) {
       final key = imp.name.trim().toLowerCase();
       final match = existingByName[key];
-      final targetCatId = imp.categoryId != null ? categoryMapping[imp.categoryId] : null;
+      final targetCatId = imp.categoryId != null
+          ? categoryMapping[imp.categoryId]
+          : null;
 
       if (match != null) {
         // If existing activity has no category, but imported one has, link it non-destructively
@@ -289,9 +291,19 @@ class SttImportService {
     // 5. Combine nonColliding with existingRecords to synthesize gaps
     final allEvents = <_IntervalSpan>[
       for (final r in existingRecords)
-        _IntervalSpan(r.startedAtEpochMs, r.endedAtEpochMs, isExisting: true, record: r),
+        _IntervalSpan(
+          r.startedAtEpochMs,
+          r.endedAtEpochMs,
+          isExisting: true,
+          record: r,
+        ),
       for (final r in nonColliding)
-        _IntervalSpan(r.startedAtEpochMs, r.endedAtEpochMs, isExisting: false, record: r),
+        _IntervalSpan(
+          r.startedAtEpochMs,
+          r.endedAtEpochMs,
+          isExisting: false,
+          record: r,
+        ),
     ]..sort((a, b) => a.start.compareTo(b.start));
 
     // Deduplicate/chain spans and synthesize Untracked Records (activity_id: null)
@@ -380,7 +392,9 @@ class SttImportService {
       });
     }
 
-    final trackedImported = recordsToInsert.where((r) => r.activityId != null).length;
+    final trackedImported = recordsToInsert
+        .where((r) => r.activityId != null)
+        .length;
     return _ReconciliationSummary(
       trackedImported,
       syntheticCount,
@@ -406,7 +420,12 @@ class _IntervalSpan {
   final bool isExisting;
   final Record? record;
 
-  const _IntervalSpan(this.start, this.end, {required this.isExisting, this.record});
+  const _IntervalSpan(
+    this.start,
+    this.end, {
+    required this.isExisting,
+    this.record,
+  });
 }
 
 class _ReconciliationSummary {

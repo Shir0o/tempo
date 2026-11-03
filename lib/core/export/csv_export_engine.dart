@@ -205,8 +205,9 @@ class CsvExportEngine {
 
       final activity = activityMap[record.activityId];
       final activityName = activity?.name ?? '';
-      final categoryName =
-          activity?.categoryId != null ? (categoryMap[activity!.categoryId] ?? '') : '';
+      final categoryName = activity?.categoryId != null
+          ? (categoryMap[activity!.categoryId] ?? '')
+          : '';
       final tagNames = record.tagIds
           .map((id) => tagMap[id])
           .whereType<String>()

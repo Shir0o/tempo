@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:crypto/crypto.dart';
 import 'package:csv/csv.dart';
 
@@ -173,10 +174,9 @@ class SttFormatParser {
 
   /// Detects whether input is `.backup` (tab-delimited lines starting with tags or app header) or `.csv`.
   static bool isBackupFormat(String content) {
-    final firstLine = content.split('\n').firstWhere(
-      (l) => l.trim().isNotEmpty,
-      orElse: () => '',
-    );
+    final firstLine = content
+        .split('\n')
+        .firstWhere((l) => l.trim().isNotEmpty, orElse: () => '');
     if (firstLine.startsWith('app simple time tracker') ||
         firstLine.startsWith('recordType\t') ||
         firstLine.startsWith('category\t') ||
@@ -258,7 +258,9 @@ class SttFormatParser {
 
         if (startMs != null && endMs != null && endMs > startMs) {
           final typeData = rawTypes[typeId];
-          final activityName = typeData != null ? typeData['name'] as String : 'Activity $typeId';
+          final activityName = typeData != null
+              ? typeData['name'] as String
+              : 'Activity $typeId';
           final catId = typeToCategory[typeId];
           final catData = catId != null ? rawCategories[catId] : null;
           final catName = catData != null ? catData['name'] as String : '';
@@ -335,9 +337,7 @@ class SttFormatParser {
     int Function(DateTime wallClock) wallClockToEpochMs,
     int nowEpochMs,
   ) {
-    final rows = Csv(
-      autoDetect: false,
-    ).decode(content);
+    final rows = Csv(autoDetect: false).decode(content);
 
     if (rows.isEmpty) {
       return SttParsedEnvelope(
@@ -348,7 +348,9 @@ class SttFormatParser {
     }
 
     // Header checking: find column indexes
-    final header = rows.first.map((e) => e.toString().trim().toLowerCase()).toList();
+    final header = rows.first
+        .map((e) => e.toString().trim().toLowerCase())
+        .toList();
     var actIndex = header.indexOf('activity name');
     var startIdx = header.indexOf('time started');
     var endIdx = header.indexOf('time ended');
@@ -400,10 +402,10 @@ class SttFormatParser {
       final tagList = tagsStr.isEmpty
           ? const <String>[]
           : tagsStr
-              .split(',')
-              .map((t) => t.trim())
-              .where((t) => t.isNotEmpty)
-              .toList();
+                .split(',')
+                .map((t) => t.trim())
+                .where((t) => t.isNotEmpty)
+                .toList();
 
       if (categoryStr.isNotEmpty) {
         categoryNames.add(categoryStr);

@@ -344,4 +344,3 @@ CREATE TABLE IF NOT EXISTS categories (
     'CREATE INDEX IF NOT EXISTS idx_activities_category_id ON activities(category_id);',
   );
 }
-
