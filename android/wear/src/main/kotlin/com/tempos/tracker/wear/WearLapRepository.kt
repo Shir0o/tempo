@@ -131,10 +131,9 @@ class WearLapRepository private constructor(private val context: Context) {
     }
 
     private fun defaultActivities(): List<WearActivity> = listOf(
-        WearActivity(id = "act_coding", name = "Coding", colorHex = "#2563EB", isPinned = true),
-        WearActivity(id = "act_workout", name = "Workout", colorHex = "#10B981", isPinned = true),
-        WearActivity(id = "act_reading", name = "Reading", colorHex = "#F59E0B", isPinned = true),
-        WearActivity(id = "act_meeting", name = "Meeting", colorHex = "#8B5CF6", isPinned = false)
+        WearActivity(id = "act_sleep", name = "Sleep", colorHex = "#9AA5C8", isPinned = true),
+        WearActivity(id = "act_meals", name = "Meals", colorHex = "#FFC94A", isPinned = true),
+        WearActivity(id = "act_errands", name = "Errands", colorHex = "#C6F432", isPinned = true)
     )
 
     /**

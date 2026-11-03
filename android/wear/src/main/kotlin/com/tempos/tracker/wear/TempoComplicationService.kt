@@ -26,7 +26,7 @@ import java.time.Instant
  * TempoComplicationService:
  * Supports SHORT_TEXT, RANGED_VALUE, and SMALL_IMAGE complications.
  * - Open Lap: renders the Lap's elapsed time from its start epoch with the
- *   system TimeDifferenceComplicationText stopwatch (zero watch battery drain,
+ *   system TimeDifferenceComplicationText (zero watch battery drain,
  *   no polling loop). Tapping opens the QuickLog list to label it.
  * - Before the first sync from the phone: renders "Track"; the same tap opens
  *   the list.
