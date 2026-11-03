@@ -1,0 +1,280 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:tempo/core/import/stt_import_service.dart';
+import 'package:tempo/data/database/tempo_database.dart';
+import 'package:tempo/data/models/models.dart';
+
+void main() {
+  setUpAll(() {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  });
+
+  late TempoDatabase db;
+
+  setUp(() async {
+    db = await TempoDatabase.openInMemory();
+  });
+
+  tearDown(() async {
+    await db.close();
+  });
+
+  group('SttImportService', () {
+    test('Catalog Only import upserts categories and activities without creating records', () async {
+      final service = SttImportService(
+        database: db,
+        getTimezoneId: () => 'UTC',
+        nowUtcMs: () => 1700000000000,
+      );
+
+      const backupContent = '''
+app simple time tracker
+category\t1\tSpiritual\t3\t\t
+category\t2\tEssentials\t7\t\t
+typeCategory\t10\t1
+typeCategory\t11\t2
+recordType\t10\tMorning Time\tic_lightbulb_outline_24px\t3\t0\t\t\t\t\t\t0\t
+recordType\t11\tLunch\tic_restaurant_24px\t7\t0\t\t\t\t\t\t0\t
+record\t1\t10\t1699990000000\t1699991000000\tNote\t
+''';
+
+      final result = await service.import(
+        content: backupContent,
+        scope: SttImportScope.catalogOnly,
+      );
+
+      expect(result.categoriesImported, equals(2));
+      expect(result.activitiesImported, equals(2));
+      expect(result.recordsImported, equals(0));
+      expect(result.syntheticRecordsCreated, equals(0));
+
+      final categories = await db.getCategories();
+      expect(categories.length, equals(2));
+      expect(
+        categories.map((c) => c.name),
+        containsAll(['Spiritual', 'Essentials']),
+      );
+
+      final activities = await db.getAllActivities();
+      expect(activities.length, equals(2));
+      final morning = activities.firstWhere((a) => a.name == 'Morning Time');
+      final spiritual = categories.firstWhere((c) => c.name == 'Spiritual');
+      expect(morning.categoryId, equals(spiritual.id));
+
+      final records = await db.getRecords();
+      expect(records, isEmpty);
+    });
+
+    test(
+      'Full History import synthesizes untracked gaps and splits at midnight',
+      () async {
+        // Day 1: 1700006400000 is 2023-11-15 00:00:00 UTC
+        const day1Midnight = 1700006400000;
+        // Interval 1: 01:00 to 02:00 (3600000 to 7200000 after midnight)
+        final start1 = day1Midnight + 3600000;
+        final end1 = day1Midnight + 7200000;
+        // Interval 2: 04:00 to 05:00 (14400000 to 18000000 after midnight)
+        final start2 = day1Midnight + 14400000;
+        final end2 = day1Midnight + 18000000;
+        // Lap starts at 06:00 (21600000 after midnight)
+        final lapStart = day1Midnight + 21600000;
+
+        await db.setLap(
+          Lap(
+            id: 1,
+            startedAtEpochMs: lapStart,
+            startedTimezoneId: 'UTC',
+            revision: 1,
+          ),
+        );
+
+        final service = SttImportService(
+          database: db,
+          getTimezoneId: () => 'UTC',
+          nowUtcMs: () => lapStart + 10000,
+        );
+
+        final backupContent =
+            '''
+app simple time tracker
+category\t1\tSpiritual\t3\t\t
+typeCategory\t10\t1
+recordType\t10\tPrayer\tic_sports_bar_24px\t3\t0\t\t\t\t\t\t0\t
+record\t1\t10\t$start1\t$end1\tPrayer 1\t
+record\t2\t10\t$start2\t$end2\tPrayer 2\t
+''';
+
+        final result = await service.import(
+          content: backupContent,
+          scope: SttImportScope.fullHistory,
+        );
+
+        expect(result.recordsImported, equals(2));
+        // Gaps:
+        // 1. [day1Midnight, start1] -> synthetic untracked (1 hour)
+        // 2. [end1, start2] -> synthetic untracked (2 hours)
+        // 3. [end2, lapStart] -> synthetic untracked (1 hour)
+        expect(result.syntheticRecordsCreated, equals(3));
+
+        final allRecords = await db.getRecords(
+          orderBy: 'started_at_epoch_ms ASC',
+        );
+        expect(allRecords.length, equals(5));
+
+        // 00:00 - 01:00: Untracked
+        expect(allRecords[0].activityId, isNull);
+        expect(allRecords[0].startedAtEpochMs, equals(day1Midnight));
+        expect(allRecords[0].endedAtEpochMs, equals(start1));
+
+        // 01:00 - 02:00: Prayer 1
+        expect(allRecords[1].activityId, isNotNull);
+        expect(allRecords[1].startedAtEpochMs, equals(start1));
+        expect(allRecords[1].endedAtEpochMs, equals(end1));
+
+        // 02:00 - 04:00: Untracked
+        expect(allRecords[2].activityId, isNull);
+        expect(allRecords[2].startedAtEpochMs, equals(end1));
+        expect(allRecords[2].endedAtEpochMs, equals(start2));
+
+        // 04:00 - 05:00: Prayer 2
+        expect(allRecords[3].activityId, isNotNull);
+        expect(allRecords[3].startedAtEpochMs, equals(start2));
+        expect(allRecords[3].endedAtEpochMs, equals(end2));
+
+        // 05:00 - 06:00: Untracked (up to Lap)
+        expect(allRecords[4].activityId, isNull);
+        expect(allRecords[4].startedAtEpochMs, equals(end2));
+        expect(allRecords[4].endedAtEpochMs, equals(lapStart));
+      },
+    );
+
+    test('Existing Tempo records take absolute precedence over imported colliding intervals', () async {
+      const dayMidnight = 1700006400000;
+      final start = dayMidnight + 3600000; // 01:00
+      final end = dayMidnight + 7200000; // 02:00
+      final lapStart = dayMidnight + 10800000; // 03:00
+
+      await db.setLap(
+        Lap(
+          id: 1,
+          startedAtEpochMs: lapStart,
+          startedTimezoneId: 'UTC',
+          revision: 1,
+        ),
+      );
+
+      // Pre-existing Tempo record: 01:00 - 02:00
+      final existingActivity = Activity(
+        id: 'act-existing',
+        name: 'Work',
+        createdAtEpochMs: dayMidnight,
+        updatedAtEpochMs: dayMidnight,
+      );
+      await db.insertActivity(existingActivity);
+
+      final existingRecord = Record(
+        id: 'rec-existing',
+        activityId: 'act-existing',
+        startedAtEpochMs: start,
+        endedAtEpochMs: end,
+        comment: 'Existing work',
+        timezoneId: 'UTC',
+        createdAtEpochMs: dayMidnight,
+        updatedAtEpochMs: dayMidnight,
+      );
+      await db.insertRecord(existingRecord);
+
+      final service = SttImportService(
+        database: db,
+        getTimezoneId: () => 'UTC',
+        nowUtcMs: () => lapStart + 5000,
+      );
+
+      // Import interval that collides directly with 01:00 - 02:00
+      final collidingBackup =
+          '''
+app simple time tracker
+category\t1\tSpiritual\t3\t\t
+typeCategory\t10\t1
+recordType\t10\tPrayer\tic_sports_bar_24px\t3\t0\t\t\t\t\t\t0\t
+record\t1\t10\t$start\t$end\tConflicting prayer\t
+''';
+
+      final result = await service.import(
+        content: collidingBackup,
+        scope: SttImportScope.fullHistory,
+      );
+
+      expect(result.skippedDueToCollision, equals(1));
+      expect(result.recordsImported, equals(0));
+
+      final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+      // Should have:
+      // [dayMidnight, start] -> Untracked
+      // [start, end] -> Existing Work record preserved!
+      // [end, lapStart] -> Untracked
+      expect(records.length, equals(3));
+      expect(records[1].id, equals('rec-existing'));
+      expect(records[1].activityId, equals('act-existing'));
+      expect(records[1].comment, equals('Existing work'));
+    });
+
+    test(
+      'Splits multi-day spans across local midnight into distinct records',
+      () async {
+        // 2023-11-15 00:00:00 UTC = 1700006400000
+        const day1Midnight = 1700006400000;
+        const day2Midnight = day1Midnight + 86400000; // 2023-11-16 00:00:00 UTC
+        final start = day1Midnight + 22 * 3600000; // 22:00 on Day 1
+        final end = day2Midnight + 2 * 3600000; // 02:00 on Day 2
+        final lapStart = day2Midnight + 3 * 3600000; // 03:00 on Day 2
+
+        await db.setLap(
+          Lap(
+            id: 1,
+            startedAtEpochMs: lapStart,
+            startedTimezoneId: 'UTC',
+            revision: 1,
+          ),
+        );
+
+        final service = SttImportService(
+          database: db,
+          getTimezoneId: () => 'UTC',
+          nowUtcMs: () => lapStart + 1000,
+        );
+
+        final multiDayBackup =
+            '''
+app simple time tracker
+recordType\t10\tSleep\tic_airline_seat_individual_suite_24px\t7\t0\t\t\t\t\t\t0\t
+record\t1\t10\t$start\t$end\tOvernight sleep\t
+''';
+
+        final result = await service.import(
+          content: multiDayBackup,
+          scope: SttImportScope.fullHistory,
+        );
+
+        // The interval was split into 2 records across midnight
+        expect(result.recordsImported, equals(2));
+
+        final records = await db.getRecords(
+          trackedOnly: true,
+          orderBy: 'started_at_epoch_ms ASC',
+        );
+        expect(records.length, equals(2));
+        // First part: 22:00 -> 00:00 midnight
+        expect(records[0].startedAtEpochMs, equals(start));
+        expect(records[0].endedAtEpochMs, equals(day2Midnight));
+        expect(records[0].isMidnightSplit, isTrue);
+
+        // Second part: 00:00 -> 02:00
+        expect(records[1].startedAtEpochMs, equals(day2Midnight));
+        expect(records[1].endedAtEpochMs, equals(end));
+        expect(records[1].isMidnightSplit, isFalse);
+      },
+    );
+  });
+}

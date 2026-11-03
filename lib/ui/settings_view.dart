@@ -1,11 +1,17 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/export/csv_export_engine.dart';
+import '../../core/import/stt_import_service.dart';
 import '../../core/sync/google_drive_sync_service.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
 import 'activity_manager_view.dart';
 import 'helpers/ui_helpers.dart';
+import 'stt_import_dialog.dart';
 import 'theme/tempo_theme.dart';
 
 /// Settings screen for managing Google Drive cloud synchronization,
@@ -176,6 +182,49 @@ class _SettingsViewState extends State<SettingsView> {
     }
   }
 
+  Future<void> _handleImportSimpleTimeTracker() async {
+    try {
+      final files = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['csv', 'backup', 'txt'],
+      );
+
+      if (files.isEmpty) return;
+      final pickedPath = files.first.path;
+      if (pickedPath == null) return;
+
+      final file = File(pickedPath);
+      final rawContent = await file.readAsString(encoding: utf8);
+      if (!mounted) return;
+
+      final importService = SttImportService(
+        database: widget.database,
+        csvExportEngine: widget.exportEngine,
+      );
+
+      final importResult = await SttImportDialog.show(
+        context,
+        fileContent: rawContent,
+        fileName: files.first.name,
+        database: widget.database,
+        importService: importService,
+      );
+
+      if (importResult != null && mounted) {
+        _loadActivities();
+        final recordNote = importResult.recordsImported > 0
+            ? ', ${importResult.recordsImported} records'
+            : '';
+        _setStatus(
+          'Imported ${importResult.categoriesImported} categories, '
+          '${importResult.activitiesImported} activities$recordNote.',
+        );
+      }
+    } catch (e) {
+      _setStatus('Import failed: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final syncService = widget.syncService;
@@ -220,13 +269,13 @@ class _SettingsViewState extends State<SettingsView> {
               ]),
             ],
             const SizedBox(height: 24),
-            _buildSectionHeader('DATA'),
+            _buildSectionHeader('HABITS & DATA'),
             _buildGroup([
               _SettingsRow(
                 title: 'Activities',
                 subtitle: _activities.isEmpty
                     ? null
-                    : '${active.length} active · $archivedCount archived',
+                    : '${active.length} active \u00b7 $archivedCount archived',
                 leading: _ColourBars(
                   colors: [
                     for (final a in active.take(3))
@@ -242,6 +291,11 @@ class _SettingsViewState extends State<SettingsView> {
                   );
                   _loadActivities();
                 },
+              ),
+              _SettingsRow(
+                title: 'Import from Simple Time Tracker',
+                subtitle: 'Ingest catalog or history from .backup or .csv',
+                onTap: _isProcessing ? null : _handleImportSimpleTimeTracker,
               ),
               _SettingsRow(
                 title: 'Export CSV to this device',
