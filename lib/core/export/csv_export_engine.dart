@@ -183,6 +183,9 @@ class CsvExportEngine {
     final activities = await database.getAllActivities(includeArchived: true);
     final activityMap = {for (final a in activities) a.id: a};
 
+    final categories = await database.getCategories();
+    final categoryMap = {for (final c in categories) c.id: c.name};
+
     final allTags = await database.getAllTags();
     final tagMap = {for (final t in allTags) t.id: t.name};
 
@@ -202,6 +205,8 @@ class CsvExportEngine {
 
       final activity = activityMap[record.activityId];
       final activityName = activity?.name ?? '';
+      final categoryName =
+          activity?.categoryId != null ? (categoryMap[activity!.categoryId] ?? '') : '';
       final tagNames = record.tagIds
           .map((id) => tagMap[id])
           .whereType<String>()
@@ -211,6 +216,7 @@ class CsvExportEngine {
         record: record,
         activityName: activityName,
         tagNames: tagNames,
+        categories: categoryName,
       );
       buffer.write(row);
     }

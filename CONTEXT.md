@@ -11,8 +11,12 @@ The span from local midnight to the next local midnight in the zone the user is 
 _Avoid_: Workday, session, period
 
 **Activity**:
-A named, color-coded kind of thing that fills part of a day (e.g., "Sleep", "Meals", "Commute", "Reading"). No Activity is privileged over another.
-_Avoid_: Task, category, job, habit, project
+A named, color-coded kind of thing that fills part of a day (e.g., "Sleep", "Meals", "Commute", "Reading"). No Activity is privileged over another. An Activity belongs optionally to exactly one Category (1:1 classification).
+_Avoid_: Task, job, habit, project
+
+**Category**:
+A primary organizational grouping classifying one or more Activities into high-level routines (e.g., "Essentials", "Productivity", "Leisure", "Transportation"). Categories provide color/icon defaults and group activities across reports and exports without imposing priority or goal mechanics.
+_Avoid_: Bucket, goal, folder
 
 **Record**:
 A labeled, closed span of a Day for one Activity, containing a start timestamp, end timestamp, start time zone, end time zone, duration, optional comment, and tags. Duration is always UTC epoch arithmetic; start and end are displayed in their own zones (e.g., "13:05 LAX → 16:05 JFK · 6h 00m").
@@ -79,3 +83,7 @@ _Avoid_: Dump, backup, sync feed
 **MCPBridge**:
 A local Model Context Protocol server exposing read-only descriptive tools (timelines, time per Activity, comparisons across days) and guarded write tools over the local SQLite store to external AI assistants. It describes how time was spent; it never scores or judges it.
 _Avoid_: AI agent, plugin, cloud assistant
+
+**Import Continuous Coverage Reconciliation**:
+The non-destructive ingestion pipeline that bridges external tracking files (Simple Time Tracker `.backup` or `.csv`) into Tempo's zero-gap midnight-to-midnight model. Multi-day spans are partitioned at local 00:00 midnight boundaries, unrecorded historical spans between the first and last imported timestamps are synthesized into Untracked Records (`activity_id: null`), historical timestamps resolve using the device's local timezone DST rules on that historical date, and existing Tempo records strictly take precedence over imported records.
+_Avoid_: Direct bulk insert, loose import, gap-tolerant ingest

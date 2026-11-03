@@ -1,10 +1,15 @@
+import 'dart:convert';
+import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/export/csv_export_engine.dart';
+import '../../core/import/stt_import_service.dart';
 import '../../core/sync/google_drive_sync_service.dart';
 import '../../data/database/tempo_database.dart';
 import 'activity_manager_view.dart';
 import 'helpers/ui_helpers.dart';
+import 'stt_import_dialog.dart';
 
 /// Settings screen for managing Google Drive cloud synchronization,
 /// manual exports, database backups, and activity customization.
@@ -157,6 +162,56 @@ class _SettingsViewState extends State<SettingsView> {
       _setStatus('Export failed: $e');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
+    }
+  }
+
+  Future<void> _handleImportSimpleTimeTracker() async {
+    try {
+      final pickedFiles = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['csv', 'backup', 'txt'],
+      );
+
+      if (pickedFiles.isEmpty) return;
+
+      final pickedFile = pickedFiles.first;
+      String? content;
+
+      if (pickedFile.path != null) {
+        content = await File(pickedFile.path!).readAsString();
+      } else {
+        final bytes = await pickedFile.readAsBytes();
+        content = utf8.decode(bytes);
+      }
+
+      if (content.trim().isEmpty) {
+        _setStatus('Selected file was empty or could not be read.');
+        return;
+      }
+
+      final fileName = pickedFile.name;
+      final importService = SttImportService(
+        database: widget.database,
+        csvExportEngine: widget.exportEngine,
+      );
+
+      if (!mounted) return;
+      final importResult = await SttImportDialog.show(
+        context,
+        fileContent: content,
+        fileName: fileName,
+        database: widget.database,
+        importService: importService,
+      );
+
+      if (importResult != null && mounted) {
+        final summary = importResult.recordsImported > 0
+            ? 'Imported ${importResult.categoriesImported} categories, ${importResult.activitiesImported} activities, and ${importResult.recordsImported} records (${importResult.syntheticRecordsCreated} synthetic).'
+            : 'Imported ${importResult.categoriesImported} categories and ${importResult.activitiesImported} activities.';
+        _setStatus(summary);
+      }
+    } catch (e) {
+      _setStatus('Import failed: $e');
     }
   }
 
@@ -383,6 +438,28 @@ class _SettingsViewState extends State<SettingsView> {
                     size: 18,
                   ),
                   onTap: _isProcessing ? null : _handleExportCsvNow,
+                ),
+                const Divider(color: Colors.white10, height: 1),
+                ListTile(
+                  leading: const Icon(
+                    Icons.system_update_alt_rounded,
+                    color: Color(0xFF4CAF50),
+                    size: 20,
+                  ),
+                  title: const Text(
+                    'Import from Simple Time Tracker',
+                    style: TextStyle(color: Colors.white, fontSize: 13),
+                  ),
+                  subtitle: const Text(
+                    'Ingest activities, categories, and past records (.backup or .csv)',
+                    style: TextStyle(color: Colors.white38, fontSize: 11),
+                  ),
+                  trailing: const Icon(
+                    Icons.chevron_right,
+                    color: Colors.white38,
+                    size: 18,
+                  ),
+                  onTap: _isProcessing ? null : _handleImportSimpleTimeTracker,
                 ),
               ],
             ),

@@ -284,3 +284,26 @@ Future<void> migrateV4ToV5(DatabaseExecutor db) async {
     'ALTER TABLE records ADD COLUMN is_midnight_split INTEGER NOT NULL DEFAULT 0',
   );
 }
+
+/// Version 6: Introduces first-class Category entity and classifies Activities
+/// with a nullable category_id foreign key.
+Future<void> migrateV5ToV6(DatabaseExecutor db) async {
+  await db.execute('''
+CREATE TABLE IF NOT EXISTS categories (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL UNIQUE,
+    color_hex TEXT NOT NULL,
+    icon_name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at_epoch_ms INTEGER NOT NULL,
+    updated_at_epoch_ms INTEGER NOT NULL
+);
+''');
+  await db.execute(
+    'ALTER TABLE activities ADD COLUMN category_id TEXT REFERENCES categories(id) ON DELETE SET NULL',
+  );
+  await db.execute(
+    'CREATE INDEX IF NOT EXISTS idx_activities_category_id ON activities(category_id);',
+  );
+}
+

@@ -17,15 +17,28 @@ class TempoDatabase {
 
   Database get db => _db;
 
-  static const int databaseVersion = 5;
+  static const int databaseVersion = 6;
   static const String databaseFileName = 'tempo.db';
 
-  // --- DDL Constants (schema v4) ---
+  // --- DDL Constants (schema v6) ---
+
+  static const String createCategoriesTable = '''
+CREATE TABLE IF NOT EXISTS categories (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL UNIQUE,
+    color_hex TEXT NOT NULL,
+    icon_name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at_epoch_ms INTEGER NOT NULL,
+    updated_at_epoch_ms INTEGER NOT NULL
+);
+''';
 
   static const String createActivitiesTable = '''
 CREATE TABLE IF NOT EXISTS activities (
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
+    category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
     color_hex TEXT NOT NULL DEFAULT '#4CAF50',
     icon_name TEXT NOT NULL DEFAULT 'schedule',
     is_pinned INTEGER NOT NULL DEFAULT 0,
@@ -79,6 +92,7 @@ CREATE TABLE IF NOT EXISTS tombstones (
 ''';
 
   static const List<String> createIndexes = [
+    'CREATE INDEX IF NOT EXISTS idx_activities_category_id ON activities(category_id);',
     'CREATE INDEX IF NOT EXISTS idx_records_started ON records(started_at_epoch_ms);',
     'CREATE INDEX IF NOT EXISTS idx_records_activity ON records(activity_id);',
     'CREATE INDEX IF NOT EXISTS idx_records_updated ON records(updated_at_epoch_ms);',
@@ -86,6 +100,7 @@ CREATE TABLE IF NOT EXISTS tombstones (
   ];
 
   static Future<void> createSchema(DatabaseExecutor db) async {
+    await db.execute(createCategoriesTable);
     await db.execute(createActivitiesTable);
     await db.execute(createTagsTable);
     await db.execute(createRecordsTable);
@@ -139,6 +154,9 @@ CREATE TABLE IF NOT EXISTS tombstones (
           }
           if (oldVersion < 5) {
             await migrateV4ToV5(db);
+          }
+          if (oldVersion < 6) {
+            await migrateV5ToV6(db);
           }
         },
       ),
@@ -247,6 +265,54 @@ CREATE TABLE IF NOT EXISTS tombstones (
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
       }
+    });
+  }
+
+  // ==========================================
+  // Categories CRUD
+  // ==========================================
+
+  Future<void> upsertCategory(Category category) async {
+    await _db.insert(
+      'categories',
+      category.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<Category?> getCategoryById(String id) async {
+    final results = await _db.query(
+      'categories',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (results.isEmpty) return null;
+    return Category.fromMap(results.first);
+  }
+
+  Future<List<Category>> getCategories() async {
+    final results = await _db.query(
+      'categories',
+      orderBy: 'sort_order ASC, name ASC',
+    );
+    return results.map(Category.fromMap).toList();
+  }
+
+  Future<void> deleteCategory(String id, {int? deletedAtEpochMs}) async {
+    final deletedAt =
+        deletedAtEpochMs ?? DateTime.now().toUtc().millisecondsSinceEpoch;
+    await _db.transaction((txn) async {
+      await txn.delete('categories', where: 'id = ?', whereArgs: [id]);
+      await txn.insert(
+        'tombstones',
+        Tombstone(
+          entityId: id,
+          entityType: 'category',
+          deletedAtEpochMs: deletedAt,
+        ).toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
     });
   }
 

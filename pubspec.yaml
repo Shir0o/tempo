@@ -22,6 +22,7 @@ dependencies:
   extension_google_sign_in_as_googleapis_auth: ^3.0.0
   timezone: ^0.11.2
   flutter_timezone: ^5.1.1
+  file_picker: ^13.3.2
 dev_dependencies:
   flutter_test:
     sdk: flutter

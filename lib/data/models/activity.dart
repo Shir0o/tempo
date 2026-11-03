@@ -1,6 +1,7 @@
 class Activity {
   final String id;
   final String name;
+  final String? categoryId;
   final String colorHex;
   final String iconName;
   final bool isPinned;
@@ -12,6 +13,7 @@ class Activity {
   const Activity({
     required this.id,
     required this.name,
+    this.categoryId,
     this.colorHex = '#4CAF50',
     this.iconName = 'schedule',
     this.isPinned = false,
@@ -24,6 +26,7 @@ class Activity {
   Map<String, dynamic> toMap() => {
     'id': id,
     'name': name,
+    'category_id': categoryId,
     'color_hex': colorHex,
     'icon_name': iconName,
     'is_pinned': isPinned ? 1 : 0,
@@ -36,6 +39,7 @@ class Activity {
   factory Activity.fromMap(Map<String, dynamic> map) => Activity(
     id: map['id'] as String,
     name: map['name'] as String,
+    categoryId: map['category_id'] as String?,
     colorHex: map['color_hex'] as String? ?? '#4CAF50',
     iconName: map['icon_name'] as String? ?? 'schedule',
     isPinned: (map['is_pinned'] as int? ?? 0) == 1,
@@ -48,6 +52,8 @@ class Activity {
   Activity copyWith({
     String? id,
     String? name,
+    String? categoryId,
+    bool clearCategoryId = false,
     String? colorHex,
     String? iconName,
     bool? isPinned,
@@ -58,6 +64,7 @@ class Activity {
   }) => Activity(
     id: id ?? this.id,
     name: name ?? this.name,
+    categoryId: clearCategoryId ? null : (categoryId ?? this.categoryId),
     colorHex: colorHex ?? this.colorHex,
     iconName: iconName ?? this.iconName,
     isPinned: isPinned ?? this.isPinned,
@@ -74,6 +81,7 @@ class Activity {
           runtimeType == other.runtimeType &&
           id == other.id &&
           name == other.name &&
+          categoryId == other.categoryId &&
           colorHex == other.colorHex &&
           iconName == other.iconName &&
           isPinned == other.isPinned &&
@@ -86,6 +94,7 @@ class Activity {
   int get hashCode =>
       id.hashCode ^
       name.hashCode ^
+      categoryId.hashCode ^
       colorHex.hashCode ^
       iconName.hashCode ^
       isPinned.hashCode ^
@@ -96,5 +105,5 @@ class Activity {
 
   @override
   String toString() =>
-      'Activity(id: $id, name: $name, colorHex: $colorHex, iconName: $iconName, isPinned: $isPinned, sortOrder: $sortOrder, isArchived: $isArchived, createdAtEpochMs: $createdAtEpochMs, updatedAtEpochMs: $updatedAtEpochMs)';
+      'Activity(id: $id, name: $name, categoryId: $categoryId, colorHex: $colorHex, iconName: $iconName, isPinned: $isPinned, sortOrder: $sortOrder, isArchived: $isArchived, createdAtEpochMs: $createdAtEpochMs, updatedAtEpochMs: $updatedAtEpochMs)';
 }
