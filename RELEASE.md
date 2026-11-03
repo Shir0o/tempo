@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.2.0](https://github.com/Shir0o/tempo/compare/v1.1.0...v1.2.0) (2026-11-03)
+
+
+### Features
+
+* **dashboard:** build Color Blocks dashboard (design D) ([#28](https://github.com/Shir0o/tempo/issues/28)) ([463cb1b](https://github.com/Shir0o/tempo/commit/463cb1b8f75c3d4a8b42feee4f3ade13870fd931)), closes [#19](https://github.com/Shir0o/tempo/issues/19)
+* **desktop:** label the Lap from the menu bar and deep links ([#32](https://github.com/Shir0o/tempo/issues/32)) ([89f7dc5](https://github.com/Shir0o/tempo/commit/89f7dc5f41fe61ae14f54aa7335bd3bb43deb1c2))
+* **mcp:** describe days and gate write tools ([#22](https://github.com/Shir0o/tempo/issues/22)) ([#33](https://github.com/Shir0o/tempo/issues/33)) ([9cfddec](https://github.com/Shir0o/tempo/commit/9cfddec6db98c5c245b7231759a7ee8cba4897c6))
+* **records:** add Split, Untracked Records and undo ([#16](https://github.com/Shir0o/tempo/issues/16)) ([#27](https://github.com/Shir0o/tempo/issues/27)) ([ee3ae5e](https://github.com/Shir0o/tempo/commit/ee3ae5e3b201ddaa0b614d67454a849b6e42dac5))
+* **records:** correct past Records by editing their boundaries ([#30](https://github.com/Shir0o/tempo/issues/30)) ([508041a](https://github.com/Shir0o/tempo/commit/508041af4800e9e83dabbbfeba8ff739c93b6a64))
+* **records:** split Laps and Records at local midnight ([#17](https://github.com/Shir0o/tempo/issues/17)) ([#29](https://github.com/Shir0o/tempo/issues/29)) ([82fc49e](https://github.com/Shir0o/tempo/commit/82fc49e936997579ebee4abb95618508abb84d72))
+* **records:** store real time zones on Records ([#25](https://github.com/Shir0o/tempo/issues/25)) ([eff1778](https://github.com/Shir0o/tempo/commit/eff177822bd74b0ae1f33225fec26c2dd051fa23))
+* **state:** replace the active timer with an always-running Lap ([#26](https://github.com/Shir0o/tempo/issues/26)) ([266174d](https://github.com/Shir0o/tempo/commit/266174d15629f76d7f4e6d719e71d8e077827237))
+* **ui:** restyle remaining screens to design D ([#36](https://github.com/Shir0o/tempo/issues/36)) ([d2ae65e](https://github.com/Shir0o/tempo/commit/d2ae65e815f91e7722a18fb8a0944a2cf12a8582))
+* **wear:** label and exit from the watch ([#31](https://github.com/Shir0o/tempo/issues/31)) ([96dd874](https://github.com/Shir0o/tempo/commit/96dd87460be22426ea787a85e7e873f6576f2a68)), closes [#20](https://github.com/Shir0o/tempo/issues/20)
+
+
+### Bug Fixes
+
+* close spec 08 correctness gaps from review ([#35](https://github.com/Shir0o/tempo/issues/35)) ([b3a7aba](https://github.com/Shir0o/tempo/commit/b3a7aba4061cf9c6a9b8824c36d0fa06b78123fe))
+* **export:** write CSV times in each record's own time zone ([#11](https://github.com/Shir0o/tempo/issues/11)) ([5eb5729](https://github.com/Shir0o/tempo/commit/5eb5729834e210c33e4485de04c5c0ad5e44abb1))
+
+
+### Refactoring
+
+* **state:** remove the old timer model ([#34](https://github.com/Shir0o/tempo/issues/34)) ([6be7287](https://github.com/Shir0o/tempo/commit/6be7287df1697ccfe913d5278b891ca53eaa0dd3))
+
 ## [1.1.0](https://github.com/Shir0o/tempo/compare/v1.0.0...v1.1.0) (2026-11-01)
 
 
