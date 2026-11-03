@@ -123,7 +123,6 @@ Future<void> _insert(
       activityId: activity.id,
       startedAtEpochMs: start,
       endedAtEpochMs: end,
-      durationMs: end - start,
       timezoneId: zone ?? localTimezoneId(),
       endTimezoneId: endZone ?? zone ?? localTimezoneId(),
       createdAtEpochMs: start,

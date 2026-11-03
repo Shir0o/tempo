@@ -192,7 +192,6 @@ void main() {
           activityId: 'act-workout',
           startedAtEpochMs: oldStart,
           endedAtEpochMs: oldStart + 60000,
-          durationMs: 60000,
           timezoneId: 'America/Los_Angeles',
           endTimezoneId: 'America/Los_Angeles',
           createdAtEpochMs: oldStart,

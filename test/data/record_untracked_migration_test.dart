@@ -181,6 +181,36 @@ void main() {
     return db;
   }
 
+  test('gap fill writes one Untracked Record per Day', () async {
+    final v3 = await createV3Database();
+    // 06:00 on 3 Jan 1970 in Tokyo: the gap from 7000 crosses two midnights.
+    const lapStart = 162000000;
+    await v3.update('lap', {'started_at_epoch_ms': lapStart});
+    await v3.close();
+
+    final tempo = await TempoDatabase.open(path: dbPath);
+    addTearDown(tempo.close);
+
+    final tail = (await tempo.getRecords(orderBy: 'started_at_epoch_ms ASC'))
+        .where((r) => r.isUntracked && r.startedAtEpochMs >= 7000)
+        .toList();
+
+    const tokyoJan2 = 54000000;
+    const tokyoJan3 = 140400000;
+    expect(
+      tail.map((r) => [r.startedAtEpochMs, r.endedAtEpochMs]).toList(),
+      equals([
+        [7000, tokyoJan2],
+        [tokyoJan2, tokyoJan3],
+        [tokyoJan3, lapStart],
+      ]),
+    );
+    expect(tail.first.timezoneId, 'America/Los_Angeles');
+    expect(tail.map((r) => r.endTimezoneId).toSet(), {'Asia/Tokyo'});
+    expect(tail[1].timezoneId, 'Asia/Tokyo');
+    expect(tail[1].durationMs, 24 * 3600000);
+  });
+
   test(
     'nullable activity_id, gap fill, overlaps preserved, tags kept',
     () async {
@@ -238,7 +268,6 @@ void main() {
           activityId: null,
           startedAtEpochMs: 9000,
           endedAtEpochMs: 9500,
-          durationMs: 500,
           timezoneId: 'Asia/Tokyo',
           endTimezoneId: 'Asia/Tokyo',
           createdAtEpochMs: now,

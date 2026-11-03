@@ -3,7 +3,9 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:tempo/core/time/timezone_id.dart';
 import 'package:tempo/data/database/tempo_database.dart';
+import 'package:tempo/data/models/models.dart';
 
 /// A version-2 database as shipped before the Lap replaced `active_timer`.
 const String _v2Activities = '''
@@ -139,7 +141,8 @@ void main() {
       'started_timezone_id': 'PST',
       'is_paused': 1,
       'paused_at_epoch_ms': pausedAt,
-      'accumulated_pause_ms': 0,
+      // There is no pause in a Record: this must not shorten its duration.
+      'accumulated_pause_ms': 30000,
       'current_comment': 'Napping w/ Sam',
       'initial_tags_json': '["tag-travel"]',
       'last_heartbeat_epoch_ms': pausedAt,
@@ -177,8 +180,78 @@ void main() {
     expect(gap.activityId, isNull);
   });
 
+  /// Every Record follows the previous one and none crosses a local midnight
+  /// in the zone it ended in.
+  void expectContinuousDays(List<Record> records) {
+    for (var i = 0; i < records.length; i++) {
+      final r = records[i];
+      expect(r.durationMs, r.endedAtEpochMs - r.startedAtEpochMs);
+      expect(
+        nextLocalMidnightUtcMs(r.endTimezoneId, r.startedAtEpochMs),
+        greaterThanOrEqualTo(r.endedAtEpochMs),
+        reason: '${r.id} crosses midnight',
+      );
+      if (i > 0) {
+        expect(r.startedAtEpochMs, records[i - 1].endedAtEpochMs);
+      }
+    }
+  }
+
+  test('splits a running timer at every midnight it crossed', () async {
+    final db = await createV2Database();
+    final startedAt =
+        DateTime.now().toUtc().millisecondsSinceEpoch - 50 * 3600000;
+    await db.update(
+      'records',
+      {'started_at_epoch_ms': startedAt - 1000, 'ended_at_epoch_ms': startedAt},
+      where: 'id = ?',
+      whereArgs: ['rec-old'],
+    );
+    await db.insert('active_timer', {
+      'id': 1,
+      'activity_id': 'act-sleep',
+      'started_at_epoch_ms': startedAt,
+      'started_timezone_id': 'Asia/Tokyo',
+      'accumulated_pause_ms': 3600000,
+      'current_comment': 'Long nap',
+      'initial_tags_json': '["tag-travel"]',
+      'last_heartbeat_epoch_ms': startedAt,
+    });
+    await db.close();
+
+    final tempo = await TempoDatabase.open(path: dbPath);
+    addTearDown(tempo.close);
+
+    final lap = await tempo.getLap();
+    final records = await tempo.getRecords(orderBy: 'started_at_epoch_ms ASC');
+    final timerParts = records.skip(1).toList();
+    // 50 hours cross at least two midnights.
+    expect(timerParts.length, greaterThanOrEqualTo(3));
+    expectContinuousDays(records);
+    expect(timerParts.first.startedAtEpochMs, startedAt);
+    expect(timerParts.first.timezoneId, 'Asia/Tokyo');
+    expect(timerParts.last.endedAtEpochMs, lap!.startedAtEpochMs);
+    for (final part in timerParts) {
+      expect(part.activityId, 'act-sleep');
+      expect(part.comment, 'Long nap');
+      expect(part.tagIds, ['tag-travel']);
+    }
+    // The whole span counts: the old pause is not subtracted.
+    final total = timerParts.fold<int>(0, (sum, r) => sum + r.durationMs);
+    expect(total, lap.startedAtEpochMs - startedAt);
+  });
+
   test('opens a Lap at upgrade time when no timer was running', () async {
     final db = await createV2Database();
+    // The last Record ended two days before the upgrade.
+    final lastEnded =
+        DateTime.now().toUtc().millisecondsSinceEpoch - 48 * 3600000;
+    await db.update(
+      'records',
+      {'started_at_epoch_ms': lastEnded - 1000, 'ended_at_epoch_ms': lastEnded},
+      where: 'id = ?',
+      whereArgs: ['rec-old'],
+    );
     await db.close();
 
     final before = DateTime.now().toUtc().millisecondsSinceEpoch;
@@ -193,15 +266,17 @@ void main() {
 
     // Existing Records are untouched.
     final records = await tempo.getRecords(orderBy: 'started_at_epoch_ms ASC');
-    expect(records.length, equals(2));
     expect(records.first.id, equals('rec-old'));
-    expect(records.first.startedAtEpochMs, equals(1000));
-    expect(records.first.endedAtEpochMs, equals(2000));
+    expect(records.first.startedAtEpochMs, equals(lastEnded - 1000));
+    expect(records.first.endedAtEpochMs, equals(lastEnded));
 
-    // Time between the last Record and the open Lap is filled as Untracked.
-    final gap = records.last;
-    expect(gap.activityId, isNull);
-    expect(gap.startedAtEpochMs, equals(2000));
-    expect(gap.endedAtEpochMs, equals(lap.startedAtEpochMs));
+    // Time between the last Record and the open Lap is filled as Untracked,
+    // one Record per Day.
+    final gaps = records.skip(1).toList();
+    expect(gaps.length, greaterThanOrEqualTo(2));
+    expect(gaps.every((r) => r.activityId == null), isTrue);
+    expect(gaps.first.startedAtEpochMs, equals(lastEnded));
+    expect(gaps.last.endedAtEpochMs, equals(lap.startedAtEpochMs));
+    expectContinuousDays(records);
   });
 }

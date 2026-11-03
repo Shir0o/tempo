@@ -307,18 +307,21 @@ class _HistoryViewState extends State<HistoryView> {
         }
 
         Future<void> save() async {
-          final updated = record.copyWith(
-            comment: commentController.text.trim(),
-            updatedAtEpochMs: DateTime.now().toUtc().millisecondsSinceEpoch,
-            tagIds: selectedTagIds,
-          );
+          final comment = commentController.text.trim();
+          final tagIds = List<String>.of(selectedTagIds);
           final activityId = pendingActivityId;
           final startMs = pendingStartMs;
           final endMs = pendingEndMs;
           if (ctx.mounted) Navigator.of(ctx).pop();
 
-          // Note and tags first: they write the Record as it was opened.
-          if (!await _applyEdit(() => widget.database.updateRecord(updated))) {
+          // Note and tags go through DayRecorder so the CSV export follows.
+          if (!await _applyEdit(
+            () => widget.dayRecorder.annotate(
+              record.id,
+              comment: comment,
+              tagIds: tagIds,
+            ),
+          )) {
             return;
           }
           if (activityId != null && activityId != record.activityId) {

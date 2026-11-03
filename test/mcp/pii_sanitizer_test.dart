@@ -119,7 +119,6 @@ void main() {
         activityId: 'act-1',
         startedAtEpochMs: 1000,
         endedAtEpochMs: 2000,
-        durationMs: 1000,
         comment: '1:1 w/ Alice Smith',
         timezoneId: 'UTC',
         createdAtEpochMs: 1000,

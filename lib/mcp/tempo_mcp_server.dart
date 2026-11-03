@@ -37,6 +37,7 @@ class TempoMcpServer {
         database: database,
         nowUtcMs: nowUtcMs,
         getTimezoneId: zoneProvider,
+        csvExportEngine: csvExportEngine,
       );
 
   TempoMcpServer({
@@ -55,6 +56,9 @@ class TempoMcpServer {
 
   Future<DayRecorder> _readyRecorder() async {
     if (!_recorderInitialized) {
+      // The recorder schedules the CSV export after every write.
+      final engine = csvExportEngine;
+      if (engine != null) _recorder.csvExportEngine ??= engine;
       await _recorder.initialize();
       _recorderInitialized = true;
     }
@@ -309,8 +313,9 @@ class TempoMcpServer {
         {
           'name': 'label_lap',
           'description':
-              'Labels the open Lap with an Activity, closing it as a Record '
-              'ending now and opening a new Lap. Requires --allow-writes.',
+              'Labels the open Lap with an existing Activity, closing it as a '
+              'Record ending now and opening a new Lap. Unknown Activities '
+              'are refused. Requires --allow-writes.',
           'inputSchema': {
             'type': 'object',
             'properties': {
@@ -733,7 +738,12 @@ class TempoMcpServer {
         ? rawTags.map((e) => e.toString()).toList()
         : <String>[];
 
-    final activity = await _getOrCreateActivity(activityName);
+    final activity = await _findActivity(activityName);
+    if (activity == null) {
+      // Like the deep links, never create an Activity, so a typo cannot
+      // silently change what the Lap means.
+      throw ArgumentError('Unknown Activity "$activityName".');
+    }
     final tagIds = await _getOrCreateTagIds(tagNames);
 
     final recorder = await _readyRecorder();
@@ -742,9 +752,6 @@ class TempoMcpServer {
       comment: comment,
       tags: tagIds,
     );
-    if (csvExportEngine != null) {
-      await csvExportEngine!.scheduleExport();
-    }
 
     return {'success': true, 'record': await _describeRecord(record)};
   }
@@ -752,9 +759,6 @@ class TempoMcpServer {
   Future<Map<String, dynamic>> _splitLapTool() async {
     final recorder = await _readyRecorder();
     final record = await recorder.split();
-    if (csvExportEngine != null) {
-      await csvExportEngine!.scheduleExport();
-    }
 
     return {'success': true, 'record': await _describeRecord(record)};
   }
@@ -786,9 +790,6 @@ class TempoMcpServer {
 
     final recorder = await _readyRecorder();
     final record = await recorder.moveBoundary(recordId, newInstantMs);
-    if (csvExportEngine != null) {
-      await csvExportEngine!.scheduleExport();
-    }
 
     return {'success': true, 'record': await _describeRecord(record)};
   }
@@ -1032,24 +1033,15 @@ class TempoMcpServer {
   // Shared Helpers
   // ==========================================
 
-  Future<Activity> _getOrCreateActivity(String name) async {
+  /// The Activity named [name], ignoring case, or null when none exists.
+  Future<Activity?> _findActivity(String name) async {
     final all = await database.getAllActivities(includeArchived: true);
     for (final a in all) {
       if (a.name.toLowerCase() == name.trim().toLowerCase()) {
         return a;
       }
     }
-    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final newActivity = Activity(
-      id: const Uuid().v4(),
-      name: name.trim(),
-      colorHex: '#4CAF50',
-      iconName: 'schedule',
-      createdAtEpochMs: now,
-      updatedAtEpochMs: now,
-    );
-    await database.insertActivity(newActivity);
-    return newActivity;
+    return null;
   }
 
   Future<List<String>> _getOrCreateTagIds(List<String> tagNames) async {
