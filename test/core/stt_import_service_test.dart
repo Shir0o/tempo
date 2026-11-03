@@ -169,7 +169,6 @@ record\t2\t10\t$start2\t$end2\tPrayer 2\t
         activityId: 'act-existing',
         startedAtEpochMs: start,
         endedAtEpochMs: end,
-        durationMs: end - start,
         comment: 'Existing work',
         timezoneId: 'UTC',
         createdAtEpochMs: dayMidnight,

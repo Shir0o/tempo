@@ -160,18 +160,15 @@ Future<void> _fillRecordGapsWithUntracked(
 
   Future<void> addGap(int endEpochMs, String endTimezoneId) async {
     if (endEpochMs <= cursorEpochMs) return;
-    await db.insert('records', {
-      'id': const Uuid().v4(),
-      'activity_id': null,
-      'started_at_epoch_ms': cursorEpochMs,
-      'ended_at_epoch_ms': endEpochMs,
-      'duration_ms': endEpochMs - cursorEpochMs,
-      'comment': '',
-      'timezone_id': cursorTimezoneId,
-      'end_timezone_id': endTimezoneId,
-      'created_at_epoch_ms': nowUtc,
-      'updated_at_epoch_ms': nowUtc,
-    });
+    await _insertRecordSplitAtMidnight(
+      db,
+      activityId: null,
+      startedAtEpochMs: cursorEpochMs,
+      endedAtEpochMs: endEpochMs,
+      startTimezoneId: cursorTimezoneId,
+      endTimezoneId: endTimezoneId,
+      nowUtc: nowUtc,
+    );
     cursorEpochMs = endEpochMs;
     cursorTimezoneId = endTimezoneId;
   }
@@ -204,9 +201,11 @@ Future<void> _fillRecordGapsWithUntracked(
 
 /// Version 3: the always-running Lap replaces the active timer.
 ///
-/// A running timer is closed as a Record ending at migration time (its pause
-/// time is already excluded), and the Lap opens at that same instant. A fresh
-/// install has no timer; its Lap opens at migration time too.
+/// A running timer is closed as a Record ending at migration time (a paused
+/// one at the instant it was paused), split at each local midnight it crossed,
+/// and the Lap opens at that same instant. There is no pause in a Record: its
+/// duration is always end - start. A fresh install has no timer; its Lap opens
+/// at migration time too.
 Future<void> migrateV2ToV3(DatabaseExecutor db) async {
   final nowUtc = DateTime.now().toUtc().millisecondsSinceEpoch;
   final currentZone = localTimezoneId();
@@ -222,41 +221,38 @@ Future<void> migrateV2ToV3(DatabaseExecutor db) async {
     final startedAtEpochMs = timer['started_at_epoch_ms'] as int;
     final isPaused = (timer['is_paused'] as int? ?? 0) == 1;
     final pausedAtEpochMs = timer['paused_at_epoch_ms'] as int?;
-    final accumulatedPauseMs = timer['accumulated_pause_ms'] as int? ?? 0;
     final endedAtEpochMs = isPaused && pausedAtEpochMs != null
         ? pausedAtEpochMs
         : nowUtc;
-    final rawDuration = endedAtEpochMs - startedAtEpochMs - accumulatedPauseMs;
 
     final storedZone = timer['started_timezone_id'] as String? ?? '';
     final startTimezoneId = storedZone.isEmpty
         ? currentZone
         : (ianaZoneForAbbreviation(storedZone) ?? storedZone);
 
-    final recordId = const Uuid().v4();
-    await db.insert('records', {
-      'id': recordId,
-      'activity_id': timer['activity_id'] as String,
-      'started_at_epoch_ms': startedAtEpochMs,
-      'ended_at_epoch_ms': endedAtEpochMs,
-      'duration_ms': rawDuration < 0 ? 0 : rawDuration,
-      'comment': timer['current_comment'] as String? ?? '',
-      'timezone_id': startTimezoneId,
-      'end_timezone_id': currentZone,
-      'created_at_epoch_ms': nowUtc,
-      'updated_at_epoch_ms': nowUtc,
-    });
+    final recordIds = await _insertRecordSplitAtMidnight(
+      db,
+      activityId: timer['activity_id'] as String,
+      startedAtEpochMs: startedAtEpochMs,
+      endedAtEpochMs: endedAtEpochMs,
+      comment: timer['current_comment'] as String? ?? '',
+      startTimezoneId: startTimezoneId,
+      endTimezoneId: currentZone,
+      nowUtc: nowUtc,
+    );
 
     final tagsJson = timer['initial_tags_json'] as String? ?? '[]';
     if (tagsJson.isNotEmpty) {
       try {
         final decoded = jsonDecode(tagsJson);
         if (decoded is List) {
-          for (final tagId in decoded) {
-            await db.insert('record_tags', {
-              'record_id': recordId,
-              'tag_id': tagId.toString(),
-            }, conflictAlgorithm: ConflictAlgorithm.replace);
+          for (final recordId in recordIds) {
+            for (final tagId in decoded) {
+              await db.insert('record_tags', {
+                'record_id': recordId,
+                'tag_id': tagId.toString(),
+              }, conflictAlgorithm: ConflictAlgorithm.replace);
+            }
           }
         }
       } catch (_) {}
@@ -274,6 +270,48 @@ Future<void> migrateV2ToV3(DatabaseExecutor db) async {
     'started_timezone_id': lapTimezoneId,
     'revision': 1,
   }, conflictAlgorithm: ConflictAlgorithm.replace);
+}
+
+/// Inserts the span [startedAtEpochMs, endedAtEpochMs) as one Record per Day,
+/// split at each local midnight in [endTimezoneId] (the zone the span ended
+/// in, as for a live MidnightSplit). Every part shares the Activity and
+/// comment; parts after the first start in [endTimezoneId]. Returns the new
+/// Record ids, oldest first. Only columns present since schema v2 are written,
+/// so this works at every migration step.
+Future<List<String>> _insertRecordSplitAtMidnight(
+  DatabaseExecutor db, {
+  required String? activityId,
+  required int startedAtEpochMs,
+  required int endedAtEpochMs,
+  String comment = '',
+  required String startTimezoneId,
+  required String endTimezoneId,
+  required int nowUtc,
+}) async {
+  final ids = <String>[];
+  var cursor = startedAtEpochMs;
+  var cursorTimezoneId = startTimezoneId;
+  while (cursor < endedAtEpochMs) {
+    final midnight = nextLocalMidnightUtcMs(endTimezoneId, cursor);
+    final end = midnight < endedAtEpochMs ? midnight : endedAtEpochMs;
+    final id = const Uuid().v4();
+    await db.insert('records', {
+      'id': id,
+      'activity_id': activityId,
+      'started_at_epoch_ms': cursor,
+      'ended_at_epoch_ms': end,
+      'duration_ms': end - cursor,
+      'comment': comment,
+      'timezone_id': cursorTimezoneId,
+      'end_timezone_id': endTimezoneId,
+      'created_at_epoch_ms': nowUtc,
+      'updated_at_epoch_ms': nowUtc,
+    });
+    ids.add(id);
+    cursor = end;
+    cursorTimezoneId = endTimezoneId;
+  }
+  return ids;
 }
 
 /// Version 5: Records distinguish MidnightSplit halves from explicitly split

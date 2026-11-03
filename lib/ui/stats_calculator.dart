@@ -46,6 +46,37 @@ class ActivityStat {
       'ActivityStat($name: ${durationHours.toStringAsFixed(1)}h, ${percentage.toStringAsFixed(1)}%)';
 }
 
+/// One Record's share of a [DayBucket], in chronological order.
+/// [activityId] is null for an Untracked Record.
+class DaySegment {
+  final String? activityId;
+  final int startedAtEpochMs;
+  final int durationMs;
+
+  const DaySegment({
+    required this.activityId,
+    required this.startedAtEpochMs,
+    required this.durationMs,
+  });
+}
+
+/// One local calendar Day inside a reporting period.
+class DayBucket {
+  final DateTime date;
+
+  /// Real length of this Day (23h/25h on DST changes), from UTC epochs.
+  final int lengthMs;
+  final int totalDurationMs;
+  final List<DaySegment> segments;
+
+  const DayBucket({
+    required this.date,
+    required this.lengthMs,
+    required this.totalDurationMs,
+    required this.segments,
+  });
+}
+
 /// Aggregated report for a given period.
 class StatsReport {
   final StatsPeriod period;
@@ -57,6 +88,13 @@ class StatsReport {
   final ActivityStat? mostActiveHabit;
   final List<ActivityStat> activityBreakdowns;
 
+  /// Untracked Records in the period (shown as "gaps").
+  final int untrackedDurationMs;
+  final int untrackedCount;
+
+  /// One bucket per local Day of the period, in order.
+  final List<DayBucket> days;
+
   const StatsReport({
     required this.period,
     required this.startDate,
@@ -66,6 +104,9 @@ class StatsReport {
     required this.averageSessionDurationMs,
     required this.mostActiveHabit,
     required this.activityBreakdowns,
+    this.untrackedDurationMs = 0,
+    this.untrackedCount = 0,
+    this.days = const [],
   });
 
   double get totalDurationHours => totalDurationMs / (1000 * 60 * 60);
@@ -156,12 +197,20 @@ class StatsCalculator {
     final durationByActivity = <String, int>{};
     final countByActivity = <String, int>{};
 
+    int untrackedDurationMs = 0;
+    int untrackedCount = 0;
+
     for (final r in periodRecords) {
-      totalDurationMs += r.durationMs;
+      // True elapsed time from UTC epochs, never wall-clock subtraction.
+      totalDurationMs += r.elapsedMs;
       final activityId = r.activityId;
-      if (activityId == null) continue;
+      if (activityId == null) {
+        untrackedDurationMs += r.elapsedMs;
+        untrackedCount++;
+        continue;
+      }
       durationByActivity[activityId] =
-          (durationByActivity[activityId] ?? 0) + r.durationMs;
+          (durationByActivity[activityId] ?? 0) + r.elapsedMs;
       countByActivity[activityId] = (countByActivity[activityId] ?? 0) + 1;
     }
 
@@ -200,6 +249,9 @@ class StatsCalculator {
         : 0;
     final mostActiveHabit = breakdowns.isNotEmpty ? breakdowns.first : null;
 
+    // One bucket per local calendar Day, bucketed by the Record's start.
+    final days = _buildDays(range.start, range.end, periodRecords);
+
     return StatsReport(
       period: period,
       startDate: range.start,
@@ -209,6 +261,49 @@ class StatsCalculator {
       averageSessionDurationMs: averageSessionDurationMs,
       mostActiveHabit: mostActiveHabit,
       activityBreakdowns: breakdowns,
+      untrackedDurationMs: untrackedDurationMs,
+      untrackedCount: untrackedCount,
+      days: days,
     );
+  }
+
+  static List<DayBucket> _buildDays(
+    DateTime start,
+    DateTime end,
+    List<Record> periodRecords,
+  ) {
+    final buckets = <DayBucket>[];
+    var day = DateTime(start.year, start.month, start.day);
+    while (!day.isAfter(end)) {
+      final next = DateTime(day.year, day.month, day.day + 1);
+      final dayStartMs = day.millisecondsSinceEpoch;
+      final dayEndMs = next.millisecondsSinceEpoch;
+      final segments =
+          periodRecords
+              .where(
+                (r) =>
+                    r.startedAtEpochMs >= dayStartMs &&
+                    r.startedAtEpochMs < dayEndMs,
+              )
+              .map(
+                (r) => DaySegment(
+                  activityId: r.activityId,
+                  startedAtEpochMs: r.startedAtEpochMs,
+                  durationMs: r.elapsedMs,
+                ),
+              )
+              .toList()
+            ..sort((a, b) => a.startedAtEpochMs.compareTo(b.startedAtEpochMs));
+      buckets.add(
+        DayBucket(
+          date: day,
+          lengthMs: dayEndMs - dayStartMs,
+          totalDurationMs: segments.fold(0, (sum, s) => sum + s.durationMs),
+          segments: segments,
+        ),
+      );
+      day = next;
+    }
+    return buckets;
   }
 }

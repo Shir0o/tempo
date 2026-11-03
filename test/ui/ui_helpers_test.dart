@@ -12,7 +12,6 @@ Record _record({
   activityId: 'act-1',
   startedAtEpochMs: startMs,
   endedAtEpochMs: endMs,
-  durationMs: endMs - startMs,
   timezoneId: timezoneId,
   endTimezoneId: endTimezoneId,
   createdAtEpochMs: endMs,

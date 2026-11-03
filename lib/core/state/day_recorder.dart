@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -37,6 +38,7 @@ class DayRecorder {
   bool _isDisposed = false;
   Timer? _midnightTimer;
   _UndoSnapshot? _lastOperation;
+  String? _lastTimezoneId;
 
   DayRecorder({
     required TempoDatabase database,
@@ -61,6 +63,14 @@ class DayRecorder {
 
   /// Broadcast stream emitting Lap changes.
   Stream<Lap?> get lapStream => _lapStreamController.stream;
+
+  /// The zone the open Lap started in. A Lap persisted before start zones
+  /// existed reads as the zone last reported by the injected zone source,
+  /// which is an IANA id on every platform.
+  String get lapStartTimezoneId {
+    final fallback = _lastTimezoneId ?? localTimezoneId();
+    return lap?.startTimezoneOr(fallback) ?? fallback;
+  }
 
   /// Elapsed time of the open Lap in milliseconds.
   int get currentElapsedMs => lap?.elapsedMs(_nowUtcMs()) ?? 0;
@@ -102,6 +112,7 @@ class DayRecorder {
   /// Passing null turns a labelled Record back into an Untracked Record.
   Future<Record> relabel(String recordId, String? activityId) => _synchronized(
     () async {
+      await _ensureInitializedLocked();
       final record = await _recordOrThrow(recordId);
       if (activityId != null) {
         final activity = await _db.getActivityById(activityId);
@@ -119,13 +130,32 @@ class DayRecorder {
     },
   );
 
+  /// Replaces the comment and tags of [recordId], leaving its time and
+  /// Activity alone.
+  Future<Record> annotate(
+    String recordId, {
+    required String comment,
+    required List<String> tagIds,
+  }) => _synchronized(() async {
+    await _ensureInitializedLocked();
+    final record = await _recordOrThrow(recordId);
+    final updated = record.copyWith(
+      comment: comment,
+      tagIds: List.unmodifiable(tagIds),
+      updatedAtEpochMs: _nowUtcMs(),
+    );
+    await _db.updateRecord(updated);
+    await _requestExport();
+    return updated;
+  });
+
   /// Moves the Boundary at the end of [leftRecordId], resizing that Record and
   /// the one that begins there together. Both keep the start and end zones they
   /// were recorded in; only their instants change.
   ///
   /// Refused when nothing follows the Record (the open Lap starts at that
-  /// edge), or when [newInstantEpochMs] would pass either neighbour's other
-  /// edge.
+  /// edge), when [newInstantEpochMs] would pass either neighbour's other
+  /// edge, or when either Record would then cross a local midnight.
   Future<Record> moveBoundary(String leftRecordId, int newInstantEpochMs) =>
       _synchronized(() async {
         await _ensureInitializedLocked();
@@ -149,14 +179,18 @@ class DayRecorder {
         final now = _nowUtcMs();
         final resizedLeft = left.copyWith(
           endedAtEpochMs: newInstantEpochMs,
-          durationMs: newInstantEpochMs - left.startedAtEpochMs,
           updatedAtEpochMs: now,
         );
         final resizedRight = right.copyWith(
           startedAtEpochMs: newInstantEpochMs,
-          durationMs: right.endedAtEpochMs - newInstantEpochMs,
           updatedAtEpochMs: now,
         );
+        if (_crossesMidnight(resizedLeft) || _crossesMidnight(resizedRight)) {
+          throw const RecordEditRefused(
+            "That would carry a Record across midnight, so the change was not "
+            'made.',
+          );
+        }
 
         await _db.db.transaction((txn) async {
           await _updateRecordInTxn(txn, resizedLeft);
@@ -184,7 +218,6 @@ class DayRecorder {
         final now = _nowUtcMs();
         final earlier = record.copyWith(
           endedAtEpochMs: atEpochMs,
-          durationMs: atEpochMs - record.startedAtEpochMs,
           updatedAtEpochMs: now,
         );
         // The instant a Record crossed from its start zone to its end zone is
@@ -192,7 +225,6 @@ class DayRecorder {
         final later = record.copyWith(
           id: _generateId(),
           startedAtEpochMs: atEpochMs,
-          durationMs: record.endedAtEpochMs - atEpochMs,
           timezoneId: record.endTimezoneId,
           createdAtEpochMs: now,
           updatedAtEpochMs: now,
@@ -211,7 +243,8 @@ class DayRecorder {
   /// Activity, comment and tags and taking the later Record's end. The later
   /// Record disappears with a Tombstone.
   ///
-  /// Refused when the two Records are not directly adjacent.
+  /// Refused when the two Records are not directly adjacent, or when they meet
+  /// at a local midnight: a Record never crosses 00:00.
   Future<Record> merge(String leftRecordId, String rightRecordId) =>
       _synchronized(() async {
         await _ensureInitializedLocked();
@@ -231,10 +264,14 @@ class DayRecorder {
         final now = _nowUtcMs();
         final merged = earlier.copyWith(
           endedAtEpochMs: later.endedAtEpochMs,
-          durationMs: later.endedAtEpochMs - earlier.startedAtEpochMs,
           endTimezoneId: later.endTimezoneId,
           updatedAtEpochMs: now,
         );
+        if (_crossesMidnight(merged)) {
+          throw const RecordEditRefused(
+            "Those Records are on different Days, so they can't be merged.",
+          );
+        }
 
         await _db.db.transaction((txn) async {
           await _updateRecordInTxn(txn, merged);
@@ -335,7 +372,7 @@ class DayRecorder {
     if (current == null) {
       current = Lap(
         startedAtEpochMs: _nowUtcMs(),
-        startedTimezoneId: await _getTimezoneId(),
+        startedTimezoneId: await _currentTimezoneId(),
         revision: 1,
       );
       await _db.setLap(current);
@@ -368,11 +405,15 @@ class DayRecorder {
       }
     }
 
+    // Afterwards the Lap starts at or after the last local midnight, so the
+    // span closed here never crosses 00:00.
     await _applyMidnightSplitsLocked();
 
-    final now = _nowUtcMs();
     final current = _lapNotifier.value!;
-    final endTimezoneId = await _getTimezoneId();
+    // A clock that moved back before the Lap started closes an empty span
+    // instead of writing a Record that ends before it starts.
+    final now = max(_nowUtcMs(), current.startedAtEpochMs);
+    final endTimezoneId = await _currentTimezoneId();
     final startTimezoneId = current.startTimezoneOr(endTimezoneId);
 
     // A label covers the whole unlabeled span, including the MidnightSplit
@@ -382,47 +423,19 @@ class DayRecorder {
         ? const <Record>[]
         : await _trailingMidnightSplits(current.startedAtEpochMs);
 
-    final written = <Record>[];
-    var cursor = current.startedAtEpochMs;
-    var cursorTimezoneId = startTimezoneId;
-    while (true) {
-      final boundary = nextLocalMidnightUtcMs(endTimezoneId, cursor);
-      if (boundary >= now) break;
-      written.add(
-        Record(
-          id: _generateId(),
-          activityId: activityId,
-          startedAtEpochMs: cursor,
-          endedAtEpochMs: boundary,
-          durationMs: boundary - cursor,
-          comment: comment,
-          timezoneId: cursorTimezoneId,
-          endTimezoneId: endTimezoneId,
-          isMidnightSplit: true,
-          createdAtEpochMs: now,
-          updatedAtEpochMs: now,
-          tagIds: List.unmodifiable(tags),
-        ),
-      );
-      cursor = boundary;
-      cursorTimezoneId = endTimezoneId;
-    }
-
-    final durationMs = now - cursor;
     final closing = Record(
       id: _generateId(),
       activityId: activityId,
-      startedAtEpochMs: cursor,
+      startedAtEpochMs: current.startedAtEpochMs,
       endedAtEpochMs: now,
-      durationMs: durationMs < 0 ? 0 : durationMs,
       comment: comment,
-      timezoneId: cursorTimezoneId,
+      timezoneId: startTimezoneId,
       endTimezoneId: endTimezoneId,
       createdAtEpochMs: now,
       updatedAtEpochMs: now,
       tagIds: List.unmodifiable(tags),
     );
-    written.add(closing);
+    final written = [closing];
 
     final labelled = [
       for (final record in absorbed)
@@ -484,7 +497,7 @@ class DayRecorder {
     // "the zone the user was in at that midnight" is the device's current
     // zone; while running, this is the zone at the instant the midnight timer
     // fires.
-    final zoneAtMidnight = await _getTimezoneId();
+    final zoneAtMidnight = await _currentTimezoneId();
     var cursor = current.startedAtEpochMs;
     var cursorTimezoneId = current.startTimezoneOr(zoneAtMidnight);
     var revision = current.revision;
@@ -499,7 +512,6 @@ class DayRecorder {
           activityId: null,
           startedAtEpochMs: cursor,
           endedAtEpochMs: boundary,
-          durationMs: boundary - cursor,
           timezoneId: cursorTimezoneId,
           endTimezoneId: zoneAtMidnight,
           isMidnightSplit: true,
@@ -538,6 +550,12 @@ class DayRecorder {
     }
     await _armMidnightTimer();
   }
+
+  /// Whether [record] spans a local midnight in the zone it ended in, the
+  /// zone each MidnightSplit is taken in.
+  bool _crossesMidnight(Record record) =>
+      nextLocalMidnightUtcMs(record.endTimezoneId, record.startedAtEpochMs) <
+      record.endedAtEpochMs;
 
   Future<Record> _recordOrThrow(String recordId) async {
     final record = await _db.getRecordById(recordId);
@@ -626,7 +644,7 @@ class DayRecorder {
     if (!autoSplitAtMidnight || _isDisposed) return;
 
     final now = _nowUtcMs();
-    final zoneNow = await _getTimezoneId();
+    final zoneNow = await _currentTimezoneId();
     final boundary = nextLocalMidnightUtcMs(zoneNow, now);
     final delayMs = boundary - now;
     if (delayMs <= 0) return;
@@ -641,6 +659,12 @@ class DayRecorder {
         await _armMidnightTimer();
       }
     });
+  }
+
+  Future<String> _currentTimezoneId() async {
+    final zone = await _getTimezoneId();
+    _lastTimezoneId = zone;
+    return zone;
   }
 
   void _updateLap(Lap? lap) {

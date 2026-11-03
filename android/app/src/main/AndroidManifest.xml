@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Google Drive sync needs outbound network access in release builds too. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="tempo"
         android:name="${applicationName}"
@@ -41,6 +43,7 @@
             <intent-filter>
                 <action android:name="app.tempo.action.START_TIMER" />
                 <action android:name="app.timetracker.action.START_TIMER" />
+                <action android:name="app.tempo.action.SPLIT" />
             </intent-filter>
         </receiver>
 

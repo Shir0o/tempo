@@ -15,6 +15,8 @@ class TempoBroadcastReceiver : BroadcastReceiver() {
 
         const val ACTION_START_LEGACY = "app.timetracker.action.START_TIMER"
 
+        const val ACTION_SPLIT_TEMPO = "app.tempo.action.SPLIT"
+
         const val EXTRA_ACTIVITY = "activity"
         const val EXTRA_COMMENT = "comment"
         const val EXTRA_TAGS = "tags"
@@ -48,6 +50,9 @@ class TempoBroadcastReceiver : BroadcastReceiver() {
                 if (tagsExtra.isNotEmpty()) {
                     uriBuilder.appendQueryParameter("tags", tagsExtra)
                 }
+            }
+            ACTION_SPLIT_TEMPO -> {
+                uriBuilder.authority("split")
             }
             else -> {
                 Log.w(TAG, "Unhandled broadcast action: $action")

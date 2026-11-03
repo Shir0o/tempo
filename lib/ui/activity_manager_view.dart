@@ -4,8 +4,9 @@ import 'package:uuid/uuid.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
 import 'helpers/ui_helpers.dart';
+import 'theme/tempo_theme.dart';
 
-/// Management interface for creating, customizing, and organizing habits/activities.
+/// Management interface for creating, customizing, and organizing Activities.
 class ActivityManagerView extends StatefulWidget {
   final TempoDatabase database;
 
@@ -17,43 +18,11 @@ class ActivityManagerView extends StatefulWidget {
 
 class _ActivityManagerViewState extends State<ActivityManagerView> {
   bool _isLoading = true;
+  bool _showArchived = false;
   List<Activity> _activities = [];
 
-  static const List<String> _colorPalette = [
-    '#4CAF50', // Green
-    '#2196F3', // Blue
-    '#9C27B0', // Purple
-    '#FF9800', // Orange
-    '#E91E63', // Pink
-    '#00BCD4', // Cyan
-    '#FF5722', // Deep Orange
-    '#607D8B', // Blue Grey
-    '#3F51B5', // Indigo
-    '#009688', // Teal
-    '#FFC107', // Amber
-    '#795548', // Brown
-  ];
-
-  static const List<String> _iconOptions = [
-    'schedule',
-    'code',
-    'fitness_center',
-    'directions_run',
-    'book',
-    'work',
-    'school',
-    'brush',
-    'music_note',
-    'local_cafe',
-    'sports_esports',
-    'bed',
-    'restaurant',
-    'build',
-    'phone_android',
-    'movie',
-    'pets',
-    'shopping_cart',
-  ];
+  /// Icon stored on new Activities; the icon is not user-facing in design D.
+  static const String _defaultIcon = 'schedule';
 
   @override
   void initState() {
@@ -82,17 +51,14 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
 
   Future<void> _openActivityEditor([Activity? existing]) async {
     final nameController = TextEditingController(text: existing?.name ?? '');
-    String selectedColor = existing?.colorHex ?? _colorPalette.first;
-    String selectedIcon = existing?.iconName ?? _iconOptions.first;
+    String selectedColor =
+        existing?.colorHex ??
+        UiHelpers.toHexColor(TempoColors.activityPalette.first);
     bool isPinned = existing?.isPinned ?? false;
 
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF1C1C24),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
       builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setModalState) {
@@ -101,7 +67,7 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                 bottom: MediaQuery.of(context).viewInsets.bottom,
                 left: 20,
                 right: 20,
-                top: 20,
+                top: 4,
               ),
               child: SingleChildScrollView(
                 child: Column(
@@ -109,194 +75,170 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
-                      existing == null
-                          ? 'New Habit / Activity'
-                          : 'Edit Activity',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+                      existing == null ? 'New activity' : 'Edit activity',
+                      style: TempoText.screenTitle.copyWith(
+                        color: TempoColors.ink,
+                        fontSize: 24,
                       ),
                     ),
                     const SizedBox(height: 16),
-
-                    // Name input
                     TextField(
                       controller: nameController,
-                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                      style: TempoText.body.copyWith(color: TempoColors.ink),
+                      cursorColor: TempoColors.ink,
                       autofocus: existing == null,
                       decoration: InputDecoration(
-                        labelText: 'Activity Name',
-                        labelStyle: const TextStyle(color: Colors.white60),
-                        hintText: 'e.g. Coding, Reading, Workout',
-                        hintStyle: const TextStyle(color: Colors.white24),
+                        hintText: 'e.g. Reading, Meals, Errands',
+                        hintStyle: TempoText.body.copyWith(
+                          color: TempoColors.inkFaint,
+                        ),
                         filled: true,
-                        fillColor: Colors.white.withValues(alpha: 0.05),
+                        fillColor: TempoColors.paper,
+                        contentPadding: const EdgeInsets.all(14),
                         border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
+                          borderRadius: BorderRadius.circular(TempoRadii.row),
                           borderSide: BorderSide.none,
                         ),
                       ),
                     ),
-                    const SizedBox(height: 16),
-
-                    // Pinned Switch
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text(
-                        'Pin to 1-Tap Dashboard',
-                        style: TextStyle(color: Colors.white, fontSize: 14),
-                      ),
-                      subtitle: const Text(
-                        'Pinned habits appear in the quick capture grid',
-                        style: TextStyle(color: Colors.white38, fontSize: 11),
-                      ),
-                      value: isPinned,
-                      activeTrackColor: const Color(0xFF4CAF50),
-                      onChanged: (val) => setModalState(() => isPinned = val),
-                    ),
-                    const SizedBox(height: 12),
-
-                    // Color palette
-                    const Text(
-                      'COLOR',
-                      style: TextStyle(
-                        color: Colors.white38,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
+                    const SizedBox(height: 18),
+                    Text(
+                      'COLOUR',
+                      style: TempoText.overline.copyWith(
+                        color: TempoColors.inkMuted,
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 10),
                     Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: _colorPalette.map((hex) {
-                        final color = UiHelpers.parseHexColor(hex);
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: TempoColors.activityPalette.map((color) {
+                        final hex = UiHelpers.toHexColor(color);
                         final isSelected =
                             hex.toLowerCase() == selectedColor.toLowerCase();
-                        return GestureDetector(
-                          onTap: () => setModalState(() => selectedColor = hex),
-                          child: Container(
-                            width: 34,
-                            height: 34,
-                            decoration: BoxDecoration(
-                              color: color,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: isSelected
-                                    ? Colors.white
-                                    : Colors.transparent,
-                                width: 2.5,
+                        return Semantics(
+                          button: true,
+                          selected: isSelected,
+                          label: 'Colour $hex',
+                          child: GestureDetector(
+                            onTap: () =>
+                                setModalState(() => selectedColor = hex),
+                            child: Container(
+                              width: 40,
+                              height: 40,
+                              padding: const EdgeInsets.all(3),
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: isSelected
+                                      ? TempoColors.ink
+                                      : Colors.transparent,
+                                  width: 2,
+                                ),
                               ),
-                            ),
-                            child: isSelected
-                                ? const Icon(
-                                    Icons.check,
-                                    color: Colors.white,
-                                    size: 18,
-                                  )
-                                : null,
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Icon options
-                    const Text(
-                      'ICON',
-                      style: TextStyle(
-                        color: Colors.white38,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: _iconOptions.map((iconKey) {
-                        final icon = UiHelpers.getIconData(iconKey);
-                        final isSelected = iconKey == selectedIcon;
-                        return GestureDetector(
-                          onTap: () =>
-                              setModalState(() => selectedIcon = iconKey),
-                          child: Container(
-                            width: 38,
-                            height: 38,
-                            decoration: BoxDecoration(
-                              color: isSelected
-                                  ? UiHelpers.parseHexColor(selectedColor)
-                                        .withValues(alpha: 0.3)
-                                  : Colors.white.withValues(alpha: 0.05),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: isSelected
-                                    ? UiHelpers.parseHexColor(selectedColor)
-                                    : Colors.transparent,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: color,
+                                  shape: BoxShape.circle,
+                                ),
                               ),
-                            ),
-                            child: Icon(
-                              icon,
-                              size: 18,
-                              color: isSelected ? Colors.white : Colors.white60,
                             ),
                           ),
                         );
                       }).toList(),
                     ),
-                    const SizedBox(height: 20),
-
-                    // Save Button
-                    ElevatedButton(
-                      onPressed: () async {
-                        final name = nameController.text.trim();
-                        if (name.isEmpty) return;
-
-                        final now = DateTime.now()
-                            .toUtc()
-                            .millisecondsSinceEpoch;
-                        if (existing != null) {
-                          final updated = existing.copyWith(
-                            name: name,
-                            colorHex: selectedColor,
-                            iconName: selectedIcon,
-                            isPinned: isPinned,
-                            updatedAtEpochMs: now,
-                          );
-                          await widget.database.updateActivity(updated);
-                        } else {
-                          final newAct = Activity(
-                            id: const Uuid().v4(),
-                            name: name,
-                            colorHex: selectedColor,
-                            iconName: selectedIcon,
-                            isPinned: isPinned,
-                            sortOrder: _activities.length,
-                            isArchived: false,
-                            createdAtEpochMs: now,
-                            updatedAtEpochMs: now,
-                          );
-                          await widget.database.insertActivity(newAct);
-                        }
-
-                        if (ctx.mounted) Navigator.of(ctx).pop();
-                        _loadActivities();
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF4CAF50),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Show on Today',
+                                style: TempoText.body.copyWith(
+                                  color: TempoColors.ink,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Pinned activities appear as one-tap blocks',
+                                style: TempoText.label.copyWith(
+                                  color: TempoColors.inkMuted,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      child: Text(
-                        existing != null ? 'Save Changes' : 'Create Activity',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
+                        Switch(
+                          value: isPinned,
+                          onChanged: (val) =>
+                              setModalState(() => isPinned = val),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        if (existing != null) ...[
+                          Expanded(
+                            child: _SheetPill(
+                              label: existing.isArchived
+                                  ? 'Unarchive'
+                                  : 'Archive',
+                              filled: false,
+                              onTap: () async {
+                                await _toggleArchive(existing);
+                                if (ctx.mounted) Navigator.of(ctx).pop();
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                        ],
+                        Expanded(
+                          child: _SheetPill(
+                            label: 'Save',
+                            filled: true,
+                            onTap: () async {
+                              final name = nameController.text.trim();
+                              if (name.isEmpty) return;
+
+                              final now = DateTime.now()
+                                  .toUtc()
+                                  .millisecondsSinceEpoch;
+                              if (existing != null) {
+                                final updated = existing.copyWith(
+                                  name: name,
+                                  colorHex: selectedColor,
+                                  isPinned: isPinned,
+                                  updatedAtEpochMs: now,
+                                );
+                                await widget.database.updateActivity(updated);
+                              } else {
+                                final newAct = Activity(
+                                  id: const Uuid().v4(),
+                                  name: name,
+                                  colorHex: selectedColor,
+                                  iconName: _defaultIcon,
+                                  isPinned: isPinned,
+                                  sortOrder: _activities.length,
+                                  isArchived: false,
+                                  createdAtEpochMs: now,
+                                  updatedAtEpochMs: now,
+                                );
+                                await widget.database.insertActivity(newAct);
+                              }
+
+                              if (ctx.mounted) Navigator.of(ctx).pop();
+                              _loadActivities();
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
                   ],
                 ),
               ),
@@ -305,6 +247,7 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
         );
       },
     );
+    nameController.dispose();
   }
 
   Future<void> _toggleArchive(Activity activity) async {
@@ -318,129 +261,343 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
 
   @override
   Widget build(BuildContext context) {
+    final active = _activities.where((a) => !a.isArchived).toList();
+    final archived = _activities.where((a) => a.isArchived).toList();
+    final pinnedIds = active.where((a) => a.isPinned).map((a) => a.id).toList();
+
     return Scaffold(
-      backgroundColor: const Color(0xFF121216),
-      appBar: AppBar(
-        title: const Text(
-          'Habits & Activities',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
+      backgroundColor: TempoColors.background,
+      body: SafeArea(
+        child: _isLoading
+            ? const Center(
+                child: CircularProgressIndicator(color: TempoColors.accent),
+              )
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+                children: [
+                  _buildHeader(context),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Shown on Today in this order.',
+                    style: TempoText.body.copyWith(
+                      color: TempoColors.textMuted,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  GridView.count(
+                    crossAxisCount: 3,
+                    mainAxisSpacing: 10,
+                    crossAxisSpacing: 10,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    children: [
+                      for (final a in active)
+                        _ActivityBlock(
+                          activity: a,
+                          keyNumber: pinnedIds.take(9).contains(a.id)
+                              ? pinnedIds.indexOf(a.id) + 1
+                              : null,
+                          onTap: () => _openActivityEditor(a),
+                        ),
+                      _NewBlock(onTap: () => _openActivityEditor()),
+                    ],
+                  ),
+                  if (archived.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    _buildArchivedRow(archived),
+                    if (_showArchived) ...[
+                      const SizedBox(height: 10),
+                      GridView.count(
+                        crossAxisCount: 3,
+                        mainAxisSpacing: 10,
+                        crossAxisSpacing: 10,
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        children: [
+                          for (final a in archived)
+                            _ActivityBlock(
+                              activity: a,
+                              onTap: () => _openActivityEditor(a),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ],
+              ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(BuildContext context) {
+    return Row(
+      children: [
+        Semantics(
+          button: true,
+          label: 'Back',
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: () => Navigator.of(context).maybePop(),
+            child: Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: TempoColors.line),
+              ),
+              child: const Icon(
+                Icons.arrow_back_rounded,
+                color: Colors.white,
+                size: 20,
+              ),
+            ),
           ),
         ),
-        backgroundColor: const Color(0xFF121216),
-        elevation: 0,
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _openActivityEditor(),
-        backgroundColor: const Color(0xFF4CAF50),
-        child: const Icon(Icons.add, color: Colors.white),
-      ),
-      body: _isLoading
-          ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFF4CAF50)),
-            )
-          : ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              itemCount: _activities.length,
-              itemBuilder: (context, index) {
-                final activity = _activities[index];
-                final color = UiHelpers.parseHexColor(activity.colorHex);
-                final icon = UiHelpers.getIconData(activity.iconName);
+        const SizedBox(width: 14),
+        Expanded(
+          child: Text(
+            'Activities',
+            style: TempoText.screenTitle.copyWith(
+              color: Colors.white,
+              fontSize: 28,
+            ),
+          ),
+        ),
+        Material(
+          color: TempoColors.accent,
+          shape: const StadiumBorder(),
+          child: InkWell(
+            customBorder: const StadiumBorder(),
+            onTap: () => _openActivityEditor(),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Text(
+                '+ New',
+                style: TempoText.label.copyWith(
+                  color: TempoColors.ink,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Material(
-                    color: const Color(0xFF1A1A22),
-                    clipBehavior: Clip.antiAlias,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      side: BorderSide(
-                        color: Colors.white.withValues(alpha: 0.05),
-                      ),
-                    ),
-                    child: ListTile(
-                      onTap: () => _openActivityEditor(activity),
-                      leading: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: color.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(8),
+  Widget _buildArchivedRow(List<Activity> archived) {
+    return Material(
+      color: TempoColors.surface,
+      borderRadius: BorderRadius.circular(TempoRadii.row),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(TempoRadii.row),
+        onTap: () => setState(() => _showArchived = !_showArchived),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Archived · ${archived.length}',
+                  style: TempoText.body.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Icon(
+                _showArchived
+                    ? Icons.keyboard_arrow_up_rounded
+                    : Icons.keyboard_arrow_down_rounded,
+                color: TempoColors.textMuted,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ActivityBlock extends StatelessWidget {
+  final Activity activity;
+  final int? keyNumber;
+  final VoidCallback onTap;
+
+  const _ActivityBlock({
+    required this.activity,
+    required this.onTap,
+    this.keyNumber,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = UiHelpers.parseHexColor(activity.colorHex);
+    final meta = activity.isArchived
+        ? 'Archived'
+        : (activity.isPinned ? 'Pinned' : '');
+    return Opacity(
+      opacity: activity.isArchived ? 0.55 : 1,
+      child: Material(
+        color: color,
+        borderRadius: BorderRadius.circular(TempoRadii.block),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(TempoRadii.block),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Stack(
+              children: [
+                if (meta.isNotEmpty)
+                  Align(
+                    alignment: Alignment.topLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 3),
+                      child: Text(
+                        meta,
+                        style: TempoText.overline.copyWith(
+                          color: TempoColors.inkMuted,
+                          fontSize: 10,
                         ),
-                        child: Icon(icon, color: color, size: 20),
-                      ),
-                      title: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              activity.name,
-                              style: TextStyle(
-                                color: activity.isArchived
-                                    ? Colors.white38
-                                    : Colors.white,
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
-                                decoration: activity.isArchived
-                                    ? TextDecoration.lineThrough
-                                    : null,
-                              ),
-                            ),
-                          ),
-                          if (activity.isPinned)
-                            const Icon(
-                              Icons.push_pin,
-                              color: Color(0xFF4CAF50),
-                              size: 16,
-                            ),
-                        ],
-                      ),
-                      subtitle: Text(
-                        activity.isArchived
-                            ? 'Archived'
-                            : (activity.isPinned
-                                  ? 'Pinned to dashboard'
-                                  : 'Standard habit'),
-                        style: const TextStyle(
-                          color: Colors.white38,
-                          fontSize: 11,
-                        ),
-                      ),
-                      trailing: PopupMenuButton<String>(
-                        icon: const Icon(
-                          Icons.more_vert,
-                          color: Colors.white54,
-                        ),
-                        color: const Color(0xFF22222C),
-                        onSelected: (val) {
-                          if (val == 'edit') {
-                            _openActivityEditor(activity);
-                          } else if (val == 'archive') {
-                            _toggleArchive(activity);
-                          }
-                        },
-                        itemBuilder: (_) => [
-                          const PopupMenuItem(
-                            value: 'edit',
-                            child: Text(
-                              'Edit',
-                              style: TextStyle(color: Colors.white),
-                            ),
-                          ),
-                          PopupMenuItem(
-                            value: 'archive',
-                            child: Text(
-                              activity.isArchived ? 'Unarchive' : 'Archive',
-                              style: const TextStyle(color: Colors.white70),
-                            ),
-                          ),
-                        ],
                       ),
                     ),
                   ),
-                );
-              },
+                if (keyNumber != null)
+                  Align(
+                    alignment: Alignment.topRight,
+                    child: Container(
+                      width: 22,
+                      height: 22,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: TempoColors.ink,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '$keyNumber',
+                        style: TempoText.numeral.copyWith(
+                          color: Colors.white,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ),
+                Align(
+                  alignment: Alignment.bottomLeft,
+                  child: Text(
+                    activity.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TempoText.title.copyWith(
+                      color: TempoColors.ink,
+                      fontSize: 15,
+                    ),
+                  ),
+                ),
+              ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NewBlock extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _NewBlock({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(TempoRadii.block),
+      onTap: onTap,
+      child: CustomPaint(
+        painter: _DashedRRectPainter(
+          color: const Color(0x40FFFFFF),
+          radius: TempoRadii.block,
+        ),
+        child: Center(
+          child: Text(
+            '+ New',
+            style: TempoText.label.copyWith(color: TempoColors.textMuted),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DashedRRectPainter extends CustomPainter {
+  final Color color;
+  final double radius;
+
+  const _DashedRRectPainter({required this.color, required this.radius});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path()
+      ..addRRect(
+        RRect.fromRectAndRadius(
+          (Offset.zero & size).deflate(0.75),
+          Radius.circular(radius),
+        ),
+      );
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    for (final metric in path.computeMetrics()) {
+      double d = 0;
+      while (d < metric.length) {
+        canvas.drawPath(metric.extractPath(d, d + 6), paint);
+        d += 11;
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DashedRRectPainter old) =>
+      old.color != color || old.radius != radius;
+}
+
+class _SheetPill extends StatelessWidget {
+  final String label;
+  final bool filled;
+  final VoidCallback onTap;
+
+  const _SheetPill({
+    required this.label,
+    required this.filled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: filled ? TempoColors.ink : Colors.transparent,
+      shape: StadiumBorder(
+        side: filled
+            ? BorderSide.none
+            : const BorderSide(color: TempoColors.ink, width: 1.5),
+      ),
+      child: InkWell(
+        customBorder: const StadiumBorder(),
+        onTap: onTap,
+        child: SizedBox(
+          height: 52,
+          child: Center(
+            child: Text(
+              label,
+              style: TempoText.body.copyWith(
+                color: filled ? Colors.white : TempoColors.ink,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

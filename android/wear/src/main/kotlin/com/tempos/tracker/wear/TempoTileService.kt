@@ -32,15 +32,22 @@ class ImmediateFuture<V>(private val value: V) : ListenableFuture<V> {
 /**
  * TempoTileService:
  * Non-scrolling circular tile built with ProtoLayout.
- * - Header: the open Lap's elapsed time; tapping it opens the full Activity list.
- * - Three slots: the most-used Activities over the last 14 days, most used
- *   first. Tapping a slot labels the open Lap with that Activity and exits
- *   straight back to the watch face.
+ * - Ledger Paper background (solid; ProtoLayout can't draw the Untracked hatching).
+ * - Header: "Untracked" and the open Lap's elapsed time; tapping it opens the
+ *   full Activity list.
+ * - Three rounded-square slots: the most-used Activities over the last 14 days,
+ *   most used first, each in its colour with ink initials. Tapping a slot labels
+ *   the open Lap with that Activity and exits straight back to the watch face.
  */
 class TempoTileService : TileService() {
 
     companion object {
         private const val RESOURCES_VERSION = "1"
+
+        // Design D tokens (DESIGN.md).
+        private const val LEDGER_PAPER = 0xFFE9E9E2.toInt()
+        private const val INK = 0xFF121210.toInt()
+        private const val FOG = 0xFFA8A8A8.toInt()
 
         fun requestUpdate(context: Context) {
             getUpdater(context).requestUpdate(TempoTileService::class.java)
@@ -76,46 +83,52 @@ class TempoTileService : TileService() {
         lap: LapState,
         slots: List<WearActivity>
     ): LayoutElementBuilders.LayoutElement {
-        val columnBuilder = LayoutElementBuilders.Column.Builder()
-            .setWidth(expand())
-            .setHeight(expand())
-            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
-
-        columnBuilder.addContent(buildHeaderElement(lap))
-        columnBuilder.addContent(buildSpacer(6))
-
+        val slotRow = LayoutElementBuilders.Row.Builder()
+            .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
         slots.forEachIndexed { index, activity ->
-            columnBuilder.addContent(buildSlotButton(activity, isPrimary = index == 0))
-            columnBuilder.addContent(buildSpacer(4))
+            if (index > 0) slotRow.addContent(buildGap(8))
+            slotRow.addContent(buildSlotButton(activity))
         }
 
+        val column = LayoutElementBuilders.Column.Builder()
+            .setWidth(wrap())
+            .setHeight(wrap())
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .addContent(buildHeaderElement(lap))
+            .addContent(buildSpacer(10))
+            .addContent(slotRow.build())
+            .build()
+
+        // Ledger Paper: the open Lap is live, so the tile sits on paper.
         return LayoutElementBuilders.Box.Builder()
             .setWidth(expand())
             .setHeight(expand())
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
             .setModifiers(
                 ModifiersBuilders.Modifiers.Builder()
                     .setBackground(
                         ModifiersBuilders.Background.Builder()
-                            .setColor(argb(0xFF000000.toInt()))
+                            .setColor(argb(LEDGER_PAPER))
                             .build()
                     )
                     .build()
             )
-            .addContent(columnBuilder.build())
+            .addContent(column)
             .build()
     }
 
-    /** Lap elapsed, tapping opens the list of every Activity. */
+    /** "Untracked" over the Lap's elapsed time; tapping opens every Activity. */
     private fun buildHeaderElement(lap: LapState): LayoutElementBuilders.LayoutElement {
         val elapsed = if (lap.isOpen) formatElapsed(lap.startedAtEpochMs) else "--:--"
 
         val label = LayoutElementBuilders.Text.Builder()
-            .setText(TypeBuilders.StringProp.Builder("LAP ").build())
+            .setText(TypeBuilders.StringProp.Builder("Untracked").build())
             .setFontStyle(
                 LayoutElementBuilders.FontStyle.Builder()
-                    .setSize(sp(11f))
-                    .setWeight(LayoutElementBuilders.FONT_WEIGHT_MEDIUM)
-                    .setColor(argb(0xFF94A3B8.toInt()))
+                    .setSize(sp(12f))
+                    .setWeight(LayoutElementBuilders.FONT_WEIGHT_BOLD)
+                    .setColor(argb(INK))
                     .build()
             )
             .build()
@@ -124,34 +137,23 @@ class TempoTileService : TileService() {
             .setText(TypeBuilders.StringProp.Builder(elapsed).build())
             .setFontStyle(
                 LayoutElementBuilders.FontStyle.Builder()
-                    .setSize(sp(13f))
-                    .setWeight(LayoutElementBuilders.FONT_WEIGHT_BOLD)
-                    .setColor(argb(0xFF4ADE80.toInt()))
+                    .setSize(sp(28f))
+                    .setWeight(LayoutElementBuilders.FONT_WEIGHT_MEDIUM)
+                    .setColor(argb(INK))
                     .build()
             )
             .build()
 
-        val row = LayoutElementBuilders.Row.Builder()
-            .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
-            .addContent(label)
-            .addContent(value)
-            .build()
-
-        return LayoutElementBuilders.Box.Builder()
+        return LayoutElementBuilders.Column.Builder()
             .setWidth(wrap())
-            .setHeight(dp(24f))
+            .setHeight(wrap())
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
             .setModifiers(
                 ModifiersBuilders.Modifiers.Builder()
                     .setClickable(
                         ModifiersBuilders.Clickable.Builder()
                             .setId("open_quick_log")
                             .setOnClick(launchQuickLog())
-                            .build()
-                    )
-                    .setBackground(
-                        ModifiersBuilders.Background.Builder()
-                            .setColor(argb(0xFF1E293B.toInt()))
-                            .setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(12f)).build())
                             .build()
                     )
                     .setPadding(
@@ -162,34 +164,27 @@ class TempoTileService : TileService() {
                     )
                     .build()
             )
-            .addContent(row)
+            .addContent(label)
+            .addContent(value)
             .build()
     }
 
-    /** One Activity slot: a single tap labels the open Lap and exits. */
-    private fun buildSlotButton(activity: WearActivity, isPrimary: Boolean): LayoutElementBuilders.LayoutElement {
-        val heightDp = if (isPrimary) 52f else 36f
-
+    /** One Activity slot: a rounded square in its colour; a tap labels the open Lap and exits. */
+    private fun buildSlotButton(activity: WearActivity): LayoutElementBuilders.LayoutElement {
         val text = LayoutElementBuilders.Text.Builder()
-            .setText(TypeBuilders.StringProp.Builder(activity.name).build())
+            .setText(TypeBuilders.StringProp.Builder(initials(activity.name)).build())
             .setFontStyle(
                 LayoutElementBuilders.FontStyle.Builder()
-                    .setSize(sp(if (isPrimary) 15f else 12f))
-                    .setWeight(
-                        if (isPrimary) {
-                            LayoutElementBuilders.FONT_WEIGHT_BOLD
-                        } else {
-                            LayoutElementBuilders.FONT_WEIGHT_MEDIUM
-                        }
-                    )
-                    .setColor(argb(0xFFFFFFFF.toInt()))
+                    .setSize(sp(15f))
+                    .setWeight(LayoutElementBuilders.FONT_WEIGHT_BOLD)
+                    .setColor(argb(INK))
                     .build()
             )
             .build()
 
         return LayoutElementBuilders.Box.Builder()
-            .setWidth(dp(156f))
-            .setHeight(dp(heightDp)) // >= 36dp, primary >= 52dp touch target
+            .setWidth(dp(48f))
+            .setHeight(dp(48f)) // 48dp touch target
             .setModifiers(
                 ModifiersBuilders.Modifiers.Builder()
                     .setClickable(
@@ -200,8 +195,13 @@ class TempoTileService : TileService() {
                     )
                     .setBackground(
                         ModifiersBuilders.Background.Builder()
-                            .setColor(argb(0xFF1E3A8A.toInt()))
-                            .setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(heightDp / 2f)).build())
+                            .setColor(argb(parseColor(activity.colorHex)))
+                            .setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(16f)).build())
+                            .build()
+                    )
+                    .setSemantics(
+                        ModifiersBuilders.Semantics.Builder()
+                            .setContentDescription(activity.name)
                             .build()
                     )
                     .build()
@@ -238,17 +238,33 @@ class TempoTileService : TileService() {
             .build()
     }
 
+    private fun buildGap(widthDp: Int): LayoutElementBuilders.LayoutElement {
+        return LayoutElementBuilders.Spacer.Builder()
+            .setWidth(dp(widthDp.toFloat()))
+            .setHeight(dp(1f))
+            .build()
+    }
+
+    /** "Errands" -> "Er": two letters, so three slots fit across a round face. */
+    private fun initials(name: String): String {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return "?"
+        return trimmed.take(2).lowercase(Locale.getDefault())
+            .replaceFirstChar { it.titlecase(Locale.getDefault()) }
+    }
+
+    private fun parseColor(hex: String): Int {
+        return try {
+            android.graphics.Color.parseColor(hex)
+        } catch (_: Exception) {
+            FOG
+        }
+    }
+
+    /** The minute-resolution elapsed time ("0:37"); the tile refreshes once a minute. */
     private fun formatElapsed(startedAt: Long): String {
         if (startedAt <= 0) return "--:--"
-        val totalSec = ((System.currentTimeMillis() - startedAt) / 1000).coerceAtLeast(0)
-        val seconds = totalSec % 60
-        val totalMinutes = totalSec / 60
-        val minutes = totalMinutes % 60
-        val hours = totalMinutes / 60
-        return if (hours > 0) {
-            String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            String.format(Locale.US, "%02d:%02d", minutes, seconds)
-        }
+        val totalMinutes = ((System.currentTimeMillis() - startedAt) / 60_000).coerceAtLeast(0)
+        return String.format(Locale.US, "%d:%02d", totalMinutes / 60, totalMinutes % 60)
     }
 }

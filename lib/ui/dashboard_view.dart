@@ -10,6 +10,7 @@ import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
 import 'activity_manager_view.dart';
 import 'helpers/ui_helpers.dart';
+import 'theme/tempo_theme.dart';
 
 /// Phone home screen, laid out as design D (Color Blocks): a hatched Lap panel
 /// over a 00–24 strip of the Day, then a 3-column grid of Activity blocks.
@@ -32,37 +33,19 @@ class DashboardView extends StatefulWidget {
   State<DashboardView> createState() => _DashboardViewState();
 }
 
-const Color _ink = Color(0xFF121210);
-const Color _inkMuted = Color(0x8A121210);
-const Color _inkFaint = Color(0x5C121210);
-const Color _panel = Color(0xFFE9E9E2);
-const Color _track = Color(0xFFD2D2C8);
-const Color _accent = Color(0xFFC6F432);
-const Color _background = Color(0xFF0B0B0A);
-const Color _surface = Color(0xFF1B1B18);
-const String _fontFamily = 'SpaceGrotesk';
+const Color _ink = TempoColors.ink;
+const Color _inkMuted = TempoColors.inkMuted;
+const Color _inkFaint = TempoColors.inkFaint;
+const Color _panel = TempoColors.panel;
+const Color _track = TempoColors.track;
+const Color _accent = TempoColors.accent;
+const Color _background = TempoColors.background;
+const Color _surface = TempoColors.surface;
+const String _fontFamily = tempoFontFamily;
 
 /// The three-second window an undo bar offers, matching
 /// [DayRecorder.defaultUndoGraceWindow].
 const Duration _undoWindow = DayRecorder.defaultUndoGraceWindow;
-
-class _Span {
-  final double start;
-  final double end;
-  final Color color;
-  final bool hatched;
-  final String semanticsLabel;
-  final bool marksZoneChange;
-
-  const _Span({
-    required this.start,
-    required this.end,
-    required this.color,
-    required this.hatched,
-    required this.semanticsLabel,
-    this.marksZoneChange = false,
-  });
-}
 
 class _UndoState {
   final String message;
@@ -324,7 +307,7 @@ class _DashboardViewState extends State<DashboardView>
         ? '--:--'
         : DateFormat('HH:mm').format(
             wallClockAt(
-              lap.startTimezoneOr(localTimezoneId()),
+              widget.dayRecorder.lapStartTimezoneId,
               lap.startedAtEpochMs,
             ),
           );
@@ -336,7 +319,7 @@ class _DashboardViewState extends State<DashboardView>
       child: Container(
         color: _panel,
         child: CustomPaint(
-          painter: const _HatchPainter(),
+          painter: const HatchPainter(),
           child: Padding(
             padding: EdgeInsets.fromLTRB(20, topInset + 14, 20, 20),
             child: Column(
@@ -461,7 +444,7 @@ class _DashboardViewState extends State<DashboardView>
                     children: [
                       Positioned.fill(
                         child: CustomPaint(
-                          painter: _DayStripPainter(
+                          painter: DayStripPainter(
                             spans: spans,
                             trackColor: _track,
                             markerColor: _ink,
@@ -586,13 +569,13 @@ class _DashboardViewState extends State<DashboardView>
     );
   }
 
-  List<_Span> _buildSpans() {
+  List<DayStripSpan> _buildSpans() {
     final dayLength = _dayEndMs - _dayStartMs;
     if (dayLength <= 0) return const [];
     double fraction(int epochMs) =>
         ((epochMs - _dayStartMs) / dayLength).clamp(0.0, 1.0);
 
-    final spans = <_Span>[];
+    final spans = <DayStripSpan>[];
     for (final r in _todayRecords) {
       final start = fraction(r.startedAtEpochMs);
       final end = math.max(fraction(r.endedAtEpochMs), start);
@@ -607,7 +590,7 @@ class _DashboardViewState extends State<DashboardView>
                 ' to ${zoneAbbreviationAt(r.endTimezoneId, r.endedAtEpochMs)}'
           : '';
       spans.add(
-        _Span(
+        DayStripSpan(
           start: start,
           end: end,
           color: activity == null
@@ -627,14 +610,14 @@ class _DashboardViewState extends State<DashboardView>
       final start = fraction(lap.startedAtEpochMs);
       final end = fraction(DateTime.now().toUtc().millisecondsSinceEpoch);
       spans.add(
-        _Span(
+        DayStripSpan(
           start: start,
           end: math.max(end, start),
           color: _ink,
           hatched: false,
           semanticsLabel:
               'Open Lap since '
-              '${DateFormat('HH:mm').format(wallClockAt(lap.startTimezoneOr(localTimezoneId()), lap.startedAtEpochMs))}, '
+              '${DateFormat('HH:mm').format(wallClockAt(widget.dayRecorder.lapStartTimezoneId, lap.startedAtEpochMs))}, '
               '${UiHelpers.formatDurationHuman(widget.dayRecorder.currentElapsedMs)}',
         ),
       );
@@ -650,7 +633,7 @@ class _DashboardViewState extends State<DashboardView>
         ? '--:--'
         : DateFormat('HH:mm').format(
             wallClockAt(
-              lap.startTimezoneOr(localTimezoneId()),
+              widget.dayRecorder.lapStartTimezoneId,
               lap.startedAtEpochMs,
             ),
           );
@@ -891,96 +874,3 @@ const TextStyle _stripLabelStyle = TextStyle(
   letterSpacing: 0.4,
   fontFeatures: [FontFeature.tabularFigures()],
 );
-
-/// Diagonal hatching over the light Lap panel.
-class _HatchPainter extends CustomPainter {
-  const _HatchPainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = const Color(0x0F000000)
-      ..strokeWidth = 1;
-    const spacing = 9.0;
-    for (double x = -size.height; x < size.width; x += spacing) {
-      canvas.drawLine(
-        Offset(x, size.height),
-        Offset(x + size.height, 0),
-        paint,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-/// Draws the midnight-to-midnight strip: Records in their Activity colours,
-/// Untracked Records hatched, the open Lap in black, zone changes marked.
-class _DayStripPainter extends CustomPainter {
-  final List<_Span> spans;
-  final Color trackColor;
-  final Color markerColor;
-
-  const _DayStripPainter({
-    required this.spans,
-    required this.trackColor,
-    required this.markerColor,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (size.width <= 0 || size.height <= 0) return;
-
-    final track = RRect.fromRectAndRadius(
-      Rect.fromLTWH(0, 0, size.width, size.height),
-      const Radius.circular(4),
-    );
-    canvas.drawRRect(track, Paint()..color = trackColor);
-
-    canvas.save();
-    canvas.clipRRect(track);
-    for (final span in spans) {
-      final left = span.start * size.width;
-      final width = math.max(1.0, (span.end - span.start) * size.width);
-      final rect = Rect.fromLTWH(left, 0, width, size.height);
-      canvas.drawRect(rect, Paint()..color = span.color);
-      if (span.hatched) {
-        final hatch = Paint()
-          ..color = const Color(0x26000000)
-          ..strokeWidth = 1;
-        for (double x = rect.left - size.height; x < rect.right; x += 6) {
-          canvas.drawLine(
-            Offset(x, size.height),
-            Offset(x + size.height, 0),
-            hatch,
-          );
-        }
-      }
-      // A hairline between neighbours keeps the boundaries legible.
-      canvas.drawRect(
-        Rect.fromLTWH(left, 0, 1, size.height),
-        Paint()..color = const Color(0x1AFFFFFF),
-      );
-    }
-    canvas.restore();
-
-    for (final span in spans.where((s) => s.marksZoneChange)) {
-      final x = (span.end * size.width).clamp(0.0, size.width - 2);
-      canvas.drawRect(
-        Rect.fromLTWH(x, 0, 2, size.height),
-        Paint()..color = markerColor,
-      );
-      final marker = Path()
-        ..moveTo(x - 3, 0)
-        ..lineTo(x + 2, 0)
-        ..lineTo(x - 0.5, 5)
-        ..close();
-      canvas.drawPath(marker, Paint()..color = markerColor);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _DayStripPainter oldDelegate) =>
-      oldDelegate.spans != spans || oldDelegate.trackColor != trackColor;
-}

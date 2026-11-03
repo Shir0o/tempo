@@ -15,7 +15,6 @@ class Record {
   final String? activityId;
   final int startedAtEpochMs;
   final int endedAtEpochMs;
-  final int durationMs;
   final String comment;
 
   /// IANA zone the Record started in.
@@ -39,7 +38,6 @@ class Record {
     required this.activityId,
     required this.startedAtEpochMs,
     required this.endedAtEpochMs,
-    required this.durationMs,
     this.comment = '',
     required this.timezoneId,
     String? endTimezoneId,
@@ -58,6 +56,10 @@ class Record {
     final elapsed = endedAtEpochMs - startedAtEpochMs;
     return elapsed < 0 ? 0 : elapsed;
   }
+
+  /// The stored duration, always derived from [elapsedMs] so it can never
+  /// disagree with the Record's epochs. There is no pause.
+  int get durationMs => elapsedMs;
 
   /// Whether the Record started and ended in different zones.
   bool get crossesTimezones => endTimezoneId != timezoneId;
@@ -87,7 +89,6 @@ class Record {
       activityId: map['activity_id'] as String?,
       startedAtEpochMs: map['started_at_epoch_ms'] as int,
       endedAtEpochMs: map['ended_at_epoch_ms'] as int,
-      durationMs: map['duration_ms'] as int,
       comment: map['comment'] as String? ?? '',
       timezoneId: timezoneId,
       endTimezoneId: (storedEndZone == null || storedEndZone.isEmpty)
@@ -105,7 +106,6 @@ class Record {
     String? activityId,
     int? startedAtEpochMs,
     int? endedAtEpochMs,
-    int? durationMs,
     String? comment,
     String? timezoneId,
     String? endTimezoneId,
@@ -118,7 +118,6 @@ class Record {
     activityId: activityId ?? this.activityId,
     startedAtEpochMs: startedAtEpochMs ?? this.startedAtEpochMs,
     endedAtEpochMs: endedAtEpochMs ?? this.endedAtEpochMs,
-    durationMs: durationMs ?? this.durationMs,
     comment: comment ?? this.comment,
     timezoneId: timezoneId ?? this.timezoneId,
     endTimezoneId: endTimezoneId ?? this.endTimezoneId,
@@ -135,7 +134,6 @@ class Record {
     activityId: activityId,
     startedAtEpochMs: startedAtEpochMs,
     endedAtEpochMs: endedAtEpochMs,
-    durationMs: durationMs,
     comment: comment,
     timezoneId: timezoneId,
     endTimezoneId: endTimezoneId,
@@ -154,7 +152,6 @@ class Record {
           activityId == other.activityId &&
           startedAtEpochMs == other.startedAtEpochMs &&
           endedAtEpochMs == other.endedAtEpochMs &&
-          durationMs == other.durationMs &&
           comment == other.comment &&
           timezoneId == other.timezoneId &&
           endTimezoneId == other.endTimezoneId &&
@@ -169,7 +166,6 @@ class Record {
       activityId.hashCode ^
       startedAtEpochMs.hashCode ^
       endedAtEpochMs.hashCode ^
-      durationMs.hashCode ^
       comment.hashCode ^
       timezoneId.hashCode ^
       endTimezoneId.hashCode ^

@@ -44,7 +44,7 @@
             </intent-filter>
         </service>
 
-        <!-- Watch Face Complication Data Source Service (Lap stopwatch elapsed ticker) -->
+        <!-- Watch Face Complication Data Source Service (open Lap elapsed time) -->
         <service
             android:name=".TempoComplicationService"
             android:exported="true"

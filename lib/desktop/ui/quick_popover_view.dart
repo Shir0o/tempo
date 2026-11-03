@@ -1,12 +1,17 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/state/day_recorder.dart';
+import '../../core/time/timezone_id.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
+import '../../ui/helpers/ui_helpers.dart';
+import '../../ui/theme/tempo_theme.dart';
 
 /// The three-second window an undo bar offers after a label or Split.
 const Duration _undoWindow = DayRecorder.defaultUndoGraceWindow;
@@ -15,7 +20,16 @@ class _UndoState {
   final String message;
   final DateTime deadline;
 
-  const _UndoState({required this.message, required this.deadline});
+  /// Optional pieces for the "Logged X HH:MM–HH:MM" form of the bar.
+  final String? subject;
+  final String? range;
+
+  const _UndoState({
+    required this.message,
+    required this.deadline,
+    this.subject,
+    this.range,
+  });
 
   int get secondsLeft {
     final ms = deadline.difference(DateTime.now()).inMilliseconds;
@@ -72,7 +86,12 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
   _UndoState? _undo;
   List<Activity> _pinnedActivities = [];
   List<Activity> _recentActivities = [];
-  Map<String, int> _weeklyDurations = {};
+  Map<String, int> _todayDurations = {};
+  Map<String, Activity> _activitiesById = {};
+  List<Record> _todayRecords = [];
+  Color? _lastActivityColor;
+  int _dayStartMs = 0;
+  int _dayEndMs = 0;
   String _searchQuery = '';
   bool _isLoading = true;
 
@@ -119,18 +138,56 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
     final allActivities = await widget.database.getAllActivities();
     final pinned = allActivities.where((a) => a.isPinned).toList();
 
-    // Compute weekly durations from records since start of week
-    final startOfWeekMs = _getStartOfWeekEpochMs();
-    final weekRecords = await widget.database.getRecords(
-      startedAfter: startOfWeekMs,
+    // Today's Records (local midnight to midnight), including one that began
+    // yesterday and crossed midnight into today.
+    final now = DateTime.now();
+    final dayStartMs = DateTime(
+      now.year,
+      now.month,
+      now.day,
+    ).millisecondsSinceEpoch;
+    final dayEndMs = DateTime(
+      now.year,
+      now.month,
+      now.day + 1,
+    ).millisecondsSinceEpoch;
+    final candidates = await widget.database.getRecords(
+      startedAfter: dayStartMs - const Duration(days: 2).inMilliseconds,
+      startedBefore: dayEndMs,
+      orderBy: 'started_at_epoch_ms ASC',
     );
+    final todayRecords = candidates
+        .where(
+          (r) => r.startedAtEpochMs < dayEndMs && r.endedAtEpochMs > dayStartMs,
+        )
+        .toList();
 
     final durations = <String, int>{};
-    for (final r in weekRecords) {
+    for (final r in todayRecords) {
       final activityId = r.activityId;
       if (activityId == null) continue;
-      durations[activityId] = (durations[activityId] ?? 0) + r.durationMs;
+      final int ms = math.max<int>(
+        0,
+        math.min(r.endedAtEpochMs, dayEndMs) -
+            math.max<int>(r.startedAtEpochMs, dayStartMs),
+      );
+      durations[activityId] = (durations[activityId] ?? 0) + ms;
     }
+
+    final everyActivity = {
+      for (final a in await widget.database.getAllActivities(
+        includeArchived: true,
+      ))
+        a.id: a,
+    };
+    final lastTracked = await widget.database.getRecords(
+      trackedOnly: true,
+      limit: 1,
+      orderBy: 'ended_at_epoch_ms DESC, rowid DESC',
+    );
+    final lastActivity = lastTracked.isEmpty
+        ? null
+        : everyActivity[lastTracked.first.activityId];
 
     // Determine recent activities from latest records
     final recentRecords = await widget.database.getRecords(limit: 30);
@@ -156,17 +213,17 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
       setState(() {
         _pinnedActivities = pinned;
         _recentActivities = recent;
-        _weeklyDurations = durations;
+        _todayDurations = durations;
+        _activitiesById = everyActivity;
+        _todayRecords = todayRecords;
+        _lastActivityColor = lastActivity == null
+            ? null
+            : UiHelpers.parseHexColor(lastActivity.colorHex);
+        _dayStartMs = dayStartMs;
+        _dayEndMs = dayEndMs;
         _isLoading = false;
       });
     }
-  }
-
-  int _getStartOfWeekEpochMs() {
-    final now = DateTime.now();
-    final daysSinceMonday = (now.weekday - 1);
-    final monday = DateTime(now.year, now.month, now.day - daysSinceMonday);
-    return monday.toUtc().millisecondsSinceEpoch;
   }
 
   Future<void> _onLapChanged() async {
@@ -244,7 +301,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
     if (keyChar.length == 1 && RegExp(r'^[1-9]$').hasMatch(keyChar)) {
       final idx = int.parse(keyChar) - 1;
       if (idx < _pinnedActivities.length) {
-        _startHabit(_pinnedActivities[idx]);
+        _labelWith(_pinnedActivities[idx]);
         return KeyEventResult.handled;
       }
     }
@@ -256,7 +313,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
   // Actions
   // ==========================================
 
-  Future<void> _startHabit(Activity activity) async {
+  Future<void> _labelWith(Activity activity) async {
     final comment = _commentController.text.trim();
     final record = await widget.dayRecorder.label(
       activity.id,
@@ -264,7 +321,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
     );
     _commentController.clear();
     await _loadData();
-    _showUndo('Logged ${activity.name}', record);
+    _showUndo('Logged ${activity.name}', record, subject: activity.name);
   }
 
   Future<void> _labelSameAsLast() async {
@@ -272,7 +329,11 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
     _commentController.clear();
     await _loadData();
     if (record != null) {
-      _showUndo('Logged same as last', record);
+      _showUndo(
+        'Logged same as last',
+        record,
+        subject: _activitiesById[record.activityId]?.name,
+      );
     }
   }
 
@@ -291,12 +352,18 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
     }
   }
 
-  void _showUndo(String message, Record record) {
+  void _showUndo(String message, Record record, {String? subject}) {
     if (!mounted) return;
+    final fmt = DateFormat('HH:mm');
+    final range =
+        '${fmt.format(wallClockAt(record.timezoneId, record.startedAtEpochMs))}'
+        '–${fmt.format(wallClockAt(record.endTimezoneId, record.endedAtEpochMs))}';
     setState(() {
       _undo = _UndoState(
         message: message,
         deadline: DateTime.now().add(_undoWindow),
+        subject: subject,
+        range: range,
       );
     });
   }
@@ -337,7 +404,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
     final all = await widget.database.getAllActivities(includeArchived: true);
     for (final a in all) {
       if (a.name.toLowerCase() == trimmed.toLowerCase()) {
-        await _startHabit(a);
+        await _labelWith(a);
         _searchController.clear();
         setState(() => _searchQuery = '');
         return;
@@ -358,7 +425,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
       updatedAtEpochMs: now,
     );
     await widget.database.insertActivity(newActivity);
-    await _startHabit(newActivity);
+    await _labelWith(newActivity);
     _searchController.clear();
     setState(() => _searchQuery = '');
   }
@@ -369,24 +436,58 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
 
   String _formatElapsedDuration(int durationMs) {
     final dur = Duration(milliseconds: durationMs);
-    final hours = dur.inHours;
-    final minutes = dur.inMinutes.remainder(60);
-    final seconds = dur.inSeconds.remainder(60);
-    final hh = hours.toString().padLeft(2, '0');
-    final mm = minutes.toString().padLeft(2, '0');
-    final ss = seconds.toString().padLeft(2, '0');
-    return '$hh:$mm:$ss';
+    final mm = dur.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final ss = dur.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '${dur.inHours}:$mm:$ss';
   }
 
-  String _formatWeeklySummary(int durationMs) {
+  String _formatTodayTotal(int durationMs) {
+    if (durationMs <= 0) return '—';
     final minutes = (durationMs / 60000).round();
     final hours = minutes ~/ 60;
     final remMin = minutes % 60;
-    if (hours > 0) {
-      return '${hours}h ${remMin.toString().padLeft(2, '0')}m/wk';
-    } else {
-      return '${remMin}m/wk';
+    return hours > 0 ? '${hours}h ${remMin}m' : '${remMin}m';
+  }
+
+  List<DayStripSpan> _buildStripSpans() {
+    final dayLength = _dayEndMs - _dayStartMs;
+    if (dayLength <= 0) return const [];
+    double fraction(int epochMs) =>
+        ((epochMs - _dayStartMs) / dayLength).clamp(0.0, 1.0);
+
+    final spans = <DayStripSpan>[];
+    for (final r in _todayRecords) {
+      final start = fraction(r.startedAtEpochMs);
+      final end = math.max(fraction(r.endedAtEpochMs), start);
+      final activity = _activitiesById[r.activityId];
+      spans.add(
+        DayStripSpan(
+          start: start,
+          end: end,
+          color: activity == null
+              ? TempoColors.track
+              : UiHelpers.parseHexColor(activity.colorHex),
+          hatched: activity == null,
+          semanticsLabel: activity?.name ?? 'Untracked',
+          marksZoneChange: r.crossesTimezones,
+        ),
+      );
     }
+    final lap = widget.dayRecorder.lap;
+    if (lap != null) {
+      final start = fraction(lap.startedAtEpochMs);
+      final end = fraction(DateTime.now().toUtc().millisecondsSinceEpoch);
+      spans.add(
+        DayStripSpan(
+          start: start,
+          end: math.max(end, start),
+          color: TempoColors.ink,
+          hatched: false,
+          semanticsLabel: 'Open Lap',
+        ),
+      );
+    }
+    return spans;
   }
 
   // ==========================================
@@ -404,12 +505,12 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
       autofocus: true,
       onKeyEvent: _handleKeyEvent,
       child: Container(
-        width: 380,
+        width: 360,
         constraints: const BoxConstraints(maxHeight: 600),
         decoration: BoxDecoration(
-          color: const Color(0xFF1E1E24),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+          color: TempoColors.background,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: TempoColors.line),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.4),
@@ -418,50 +519,45 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
             ),
           ],
         ),
+        clipBehavior: Clip.antiAlias,
         child: Material(
           color: Colors.transparent,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Open Lap Banner (always present)
-              if (lap != null) ...[
-                _buildLapBanner(elapsedMs),
-                const Divider(height: 1, color: Colors.white12),
-              ],
-
-              // Search Bar
-              _buildSearchInput(),
-              const Divider(height: 1, color: Colors.white12),
-
-              // Scrollable Habits & Recent Activities
+              if (lap != null) _buildLapPanel(lap, elapsedMs),
               Flexible(
                 child: _isLoading
                     ? const Padding(
                         padding: EdgeInsets.all(24.0),
                         child: Center(
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: TempoColors.accent,
+                          ),
                         ),
                       )
                     : ListView(
                         shrinkWrap: true,
-                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
                         children: [
-                          _buildPinnedHabitsSection(),
+                          _buildSearchInput(),
+                          const SizedBox(height: 6),
+                          _buildOnTodaySection(),
                           if (_recentActivities.isNotEmpty &&
                               _searchQuery.isEmpty) ...[
                             const SizedBox(height: 8),
                             _buildRecentActivitiesSection(),
                           ],
+                          if (lap != null) ...[
+                            const SizedBox(height: 8),
+                            _buildNoteField(),
+                          ],
                         ],
                       ),
               ),
-
               if (_undo != null) _buildUndoBar(_undo!),
-
-              const Divider(height: 1, color: Colors.white12),
-
-              // Footer Toolbar
               _buildFooter(),
             ],
           ),
@@ -470,135 +566,252 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
     );
   }
 
-  Widget _buildLapBanner(int elapsedMs) {
-    final elapsedStr = _formatElapsedDuration(elapsedMs);
+  Widget _buildLapPanel(Lap lap, int elapsedMs) {
+    final since = DateFormat('HH:mm').format(
+      wallClockAt(lap.startTimezoneOr(localTimezoneId()), lap.startedAtEpochMs),
+    );
+    final dotColor = _lastActivityColor ?? TempoColors.accent;
+    final pillShape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(TempoRadii.pill),
+    );
 
     return Container(
-      padding: const EdgeInsets.all(12),
-      color: const Color(0xFF262630),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
+      decoration: const BoxDecoration(
+        color: TempoColors.panel,
+        borderRadius: BorderRadius.vertical(
+          bottom: Radius.circular(TempoRadii.block),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: CustomPaint(
+        painter: const HatchPainter(spacing: 14),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Container(
-                width: 10,
-                height: 10,
-                decoration: const BoxDecoration(
-                  color: Color(0xFF4CAF50),
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'UNTRACKED ($elapsedStr)',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                    fontFamily: 'monospace',
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          // Inline editable comment field, applied to the next label.
-          TextField(
-            focusNode: _commentFocusNode,
-            controller: _commentController,
-            style: const TextStyle(color: Colors.white70, fontSize: 12),
-            decoration: const InputDecoration(
-              isDense: true,
-              contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              hintText: 'Notes: e.g. w/ Alice - PR Review',
-              hintStyle: TextStyle(color: Colors.white30, fontSize: 12),
-              border: OutlineInputBorder(
-                borderSide: BorderSide(color: Colors.white12),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderSide: BorderSide(color: Colors.white12),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderSide: BorderSide(color: Color(0xFF4CAF50)),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _split,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white70,
-                    side: const BorderSide(color: Colors.white24),
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    minimumSize: const Size(double.infinity, 32),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(6),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Untracked since $since',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TempoText.title.copyWith(
+                        color: TempoColors.ink,
+                        fontSize: 22,
+                        letterSpacing: -0.66,
+                      ),
                     ),
                   ),
-                  child: const Text(
-                    'Split',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  const SizedBox(width: 8),
+                  Text(
+                    DateFormat('EEE d MMM').format(DateTime.now()),
+                    style: TempoText.label.copyWith(
+                      color: TempoColors.ink,
+                      fontSize: 12,
+                    ),
                   ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                _formatElapsedDuration(elapsedMs),
+                style: TempoText.numeral.copyWith(
+                  color: TempoColors.ink,
+                  fontSize: 44,
+                  letterSpacing: -2.2,
+                  height: 1,
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                flex: 2,
-                child: ElevatedButton.icon(
-                  onPressed: _labelSameAsLast,
-                  icon: const Icon(Icons.repeat, size: 16, color: Colors.white),
-                  label: const Text(
-                    'Same as last (Cmd+Enter)',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF4CAF50),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    minimumSize: const Size(double.infinity, 32),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(6),
+              const SizedBox(height: 10),
+              if (_dayEndMs > _dayStartMs)
+                SizedBox(
+                  height: 10,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(5),
+                    child: CustomPaint(
+                      painter: DayStripPainter(
+                        spans: _buildStripSpans(),
+                        trackColor: TempoColors.paper,
+                        markerColor: TempoColors.ink,
+                      ),
                     ),
                   ),
                 ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  OutlinedButton(
+                    onPressed: _split,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: TempoColors.ink,
+                      side: const BorderSide(color: TempoColors.ink, width: 2),
+                      minimumSize: const Size(0, 38),
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      shape: pillShape,
+                      textStyle: TempoText.label.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    child: const Text('Split'),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _labelSameAsLast,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: TempoColors.ink,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        minimumSize: const Size(double.infinity, 38),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        shape: pillShape,
+                        textStyle: TempoText.label.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              color: dotColor,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          const Flexible(
+                            child: Text(
+                              'Same as last',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '⌘↩',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.6),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _buildUndoBar(_UndoState undo) {
+  InputDecoration _fieldDecoration(String hint, {Widget? suffix}) {
+    return InputDecoration(
+      isDense: true,
+      filled: true,
+      fillColor: TempoColors.surface,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      hintText: hint,
+      hintStyle: TempoText.body.copyWith(
+        color: TempoColors.textMuted,
+        fontSize: 14,
+        fontWeight: FontWeight.w400,
+      ),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
+      ),
+      suffixIcon: suffix,
+      suffixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
+    );
+  }
+
+  Widget _keyBadge(String label, {bool selected = false}) {
     return Container(
+      width: 22,
+      height: 22,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: selected ? TempoColors.accent : TempoColors.line,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: TempoText.numeral.copyWith(
+          color: selected ? TempoColors.ink : TempoColors.textMuted,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNoteField() {
+    // Inline editable comment field, applied to the next label.
+    return TextField(
+      focusNode: _commentFocusNode,
+      controller: _commentController,
+      style: TempoText.body.copyWith(color: Colors.white, fontSize: 14),
+      cursorColor: TempoColors.accent,
+      decoration: _fieldDecoration('Add a note'),
+    );
+  }
+
+  Widget _buildUndoBar(_UndoState undo) {
+    final baseStyle = TempoText.label.copyWith(
+      color: Colors.white,
+      fontWeight: FontWeight.w400,
+    );
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
       padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
-      color: const Color(0xFF262630),
+      decoration: BoxDecoration(
+        color: TempoColors.surface,
+        borderRadius: BorderRadius.circular(14),
+      ),
       child: Row(
         children: [
           Expanded(
-            child: Text(
-              undo.message,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
-            ),
+            child: undo.subject != null && undo.range != null
+                ? Text.rich(
+                    TextSpan(
+                      style: baseStyle,
+                      children: [
+                        const TextSpan(text: 'Logged '),
+                        TextSpan(
+                          text: undo.subject,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        TextSpan(text: ' ${undo.range}'),
+                      ],
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  )
+                : Text(
+                    undo.message,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: baseStyle,
+                  ),
           ),
           TextButton(
             onPressed: _undoLast,
             style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFF4CAF50),
+              foregroundColor: TempoColors.accent,
               minimumSize: const Size(0, 32),
               padding: const EdgeInsets.symmetric(horizontal: 10),
-              textStyle: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
               ),
+              textStyle: TempoText.label.copyWith(fontWeight: FontWeight.w700),
             ),
             child: Text('Undo · ${undo.secondsLeft}'),
           ),
@@ -608,44 +821,53 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
   }
 
   Widget _buildSearchInput() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: TextField(
-        focusNode: _searchFocusNode,
-        controller: _searchController,
-        onChanged: (val) => setState(() => _searchQuery = val),
-        onSubmitted: _onSearchSubmitted,
-        style: const TextStyle(color: Colors.white, fontSize: 13),
-        decoration: InputDecoration(
-          isDense: true,
-          contentPadding: const EdgeInsets.symmetric(vertical: 8),
-          prefixIcon: const Icon(Icons.search, size: 18, color: Colors.white54),
-          prefixIconConstraints: const BoxConstraints(
-            minWidth: 32,
-            minHeight: 32,
-          ),
-          hintText: 'Search or create activity... (/)',
-          hintStyle: const TextStyle(color: Colors.white38, fontSize: 13),
-          border: InputBorder.none,
-          suffixIcon: _searchQuery.isNotEmpty
-              ? IconButton(
-                  icon: const Icon(
-                    Icons.clear,
-                    size: 16,
-                    color: Colors.white54,
-                  ),
-                  onPressed: () {
+    return TextField(
+      focusNode: _searchFocusNode,
+      controller: _searchController,
+      onChanged: (val) => setState(() => _searchQuery = val),
+      onSubmitted: _onSearchSubmitted,
+      style: TempoText.body.copyWith(color: Colors.white, fontSize: 14),
+      cursorColor: TempoColors.accent,
+      decoration: _fieldDecoration(
+        'What was it? Search or add',
+        suffix: Padding(
+          padding: const EdgeInsets.only(right: 8),
+          child: _searchQuery.isNotEmpty
+              ? InkWell(
+                  borderRadius: BorderRadius.circular(6),
+                  onTap: () {
                     _searchController.clear();
                     setState(() => _searchQuery = '');
                   },
+                  child: const Padding(
+                    padding: EdgeInsets.all(3),
+                    child: Icon(
+                      Icons.clear,
+                      size: 16,
+                      color: TempoColors.textMuted,
+                    ),
+                  ),
                 )
-              : null,
+              : _keyBadge('/'),
         ),
       ),
     );
   }
 
-  Widget _buildPinnedHabitsSection() {
+  Widget _buildSectionHeading(String text) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 4),
+      child: Text(
+        text.toUpperCase(),
+        style: TempoText.overline.copyWith(
+          color: TempoColors.textMuted,
+          fontSize: 10,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOnTodaySection() {
     final filtered = _searchQuery.isEmpty
         ? _pinnedActivities
         : _pinnedActivities
@@ -656,98 +878,89 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
               .toList();
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-          child: Text(
-            'PINNED HABITS',
-            style: TextStyle(
-              color: Colors.white38,
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 0.8,
-            ),
-          ),
-        ),
+        _buildSectionHeading('On Today'),
         if (filtered.isEmpty)
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             child: Text(
               _searchQuery.isNotEmpty
                   ? '+ Press Enter to create "${_searchQuery.trim()}"'
-                  : 'No pinned habits yet.',
-              style: TextStyle(
+                  : 'No pinned activities yet.',
+              style: TempoText.label.copyWith(
                 color: _searchQuery.isNotEmpty
-                    ? const Color(0xFF4CAF50)
-                    : Colors.white30,
-                fontSize: 12,
+                    ? TempoColors.accent
+                    : TempoColors.textMuted,
+                fontWeight: FontWeight.w500,
               ),
             ),
           )
         else
           for (var i = 0; i < filtered.length; i++)
-            _buildHabitRow(filtered[i], i < 9 ? i + 1 : null),
+            _buildActivityRow(
+              filtered[i],
+              hotkeyNumber: i < 9 ? i + 1 : null,
+              selected: i == 0,
+            ),
       ],
     );
   }
 
-  Widget _buildHabitRow(Activity activity, int? hotkeyNumber) {
-    final durationMs = _weeklyDurations[activity.id] ?? 0;
-    final weeklyText = _formatWeeklySummary(durationMs);
+  Widget _buildActivityRow(
+    Activity activity, {
+    int? hotkeyNumber,
+    bool selected = false,
+    bool showBadge = true,
+  }) {
+    final total = _formatTodayTotal(_todayDurations[activity.id] ?? 0);
 
-    return InkWell(
-      onTap: () => _startHabit(activity),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-        color: Colors.transparent,
-        child: Row(
-          children: [
-            if (hotkeyNumber != null)
+    return Material(
+      color: selected ? TempoColors.surface : Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => _labelWith(activity),
+        child: Container(
+          height: 40,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: Row(
+            children: [
+              if (showBadge && hotkeyNumber != null)
+                _keyBadge('$hotkeyNumber', selected: selected)
+              else
+                const SizedBox(width: 22),
+              const SizedBox(width: 10),
               Container(
-                width: 22,
-                height: 20,
-                alignment: Alignment.center,
+                width: 14,
+                height: 14,
                 decoration: BoxDecoration(
-                  color: Colors.white10,
+                  color: UiHelpers.parseHexColor(activity.colorHex),
                   borderRadius: BorderRadius.circular(4),
                 ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
                 child: Text(
-                  '$hotkeyNumber',
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 11,
-                    fontFamily: 'monospace',
-                    fontWeight: FontWeight.bold,
+                  activity.name,
+                  style: TempoText.body.copyWith(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
                   ),
-                ),
-              )
-            else
-              const SizedBox(width: 22),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                activity.name,
-                style: const TextStyle(color: Colors.white, fontSize: 13),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.05),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                weeklyText,
-                style: const TextStyle(
-                  color: Colors.white54,
-                  fontSize: 11,
-                  fontFamily: 'monospace',
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-            ),
-          ],
+              Text(
+                total,
+                style: TempoText.numeral.copyWith(
+                  color: TempoColors.textMuted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -755,98 +968,49 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
 
   Widget _buildRecentActivitiesSection() {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-          child: Text(
-            'RECENT ACTIVITIES',
-            style: TextStyle(
-              color: Colors.white38,
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 0.8,
-            ),
-          ),
-        ),
+        _buildSectionHeading('Recent'),
         for (final act in _recentActivities)
-          InkWell(
-            onTap: () => _startHabit(act),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-              child: Row(
-                children: [
-                  const Text(
-                    '• ',
-                    style: TextStyle(color: Colors.white38, fontSize: 14),
-                  ),
-                  Expanded(
-                    child: Text(
-                      act.name,
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 12,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          _buildActivityRow(act, showBadge: false),
       ],
     );
   }
 
   Widget _buildFooter() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      color: const Color(0xFF18181D),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          _buildFooterButton('⌘O', 'Open', _openFullWindow),
-          _buildFooterButton('⌘,', 'Settings', () {
-            widget.onOpenSettings?.call();
-          }),
-          _buildFooterButton('⌘Q', 'Quit', _quitApp),
+          Flexible(child: _buildFooterButton('⌘O', 'Open', _openFullWindow)),
+          Flexible(
+            child: _buildFooterButton('⌘,', 'Settings', () {
+              widget.onOpenSettings?.call();
+            }),
+          ),
+          Flexible(child: _buildFooterButton('⌘Q', 'Quit', _quitApp)),
         ],
       ),
     );
   }
 
   Widget _buildFooterButton(String hotkey, String label, VoidCallback onTap) {
+    final style = TempoText.label.copyWith(
+      color: TempoColors.textMuted,
+      fontSize: 12,
+      fontWeight: FontWeight.w500,
+    );
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(4),
+      borderRadius: BorderRadius.circular(8),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-              decoration: BoxDecoration(
-                color: Colors.white10,
-                borderRadius: BorderRadius.circular(3),
-              ),
-              child: Text(
-                hotkey,
-                style: const TextStyle(
-                  color: Colors.white54,
-                  fontSize: 10,
-                  fontFamily: 'monospace',
-                ),
-              ),
-            ),
-            if (label.isNotEmpty) ...[
-              const SizedBox(width: 3),
-              Text(
-                label,
-                style: const TextStyle(color: Colors.white54, fontSize: 10),
-              ),
-            ],
-          ],
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Text(
+          label.isEmpty ? hotkey : '$label  $hotkey',
+          style: style,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
       ),
     );
