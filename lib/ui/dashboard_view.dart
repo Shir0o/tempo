@@ -324,7 +324,7 @@ class _DashboardViewState extends State<DashboardView>
         ? '--:--'
         : DateFormat('HH:mm').format(
             wallClockAt(
-              lap.startTimezoneOr(localTimezoneId()),
+              widget.dayRecorder.lapStartTimezoneId,
               lap.startedAtEpochMs,
             ),
           );
@@ -634,7 +634,7 @@ class _DashboardViewState extends State<DashboardView>
           hatched: false,
           semanticsLabel:
               'Open Lap since '
-              '${DateFormat('HH:mm').format(wallClockAt(lap.startTimezoneOr(localTimezoneId()), lap.startedAtEpochMs))}, '
+              '${DateFormat('HH:mm').format(wallClockAt(widget.dayRecorder.lapStartTimezoneId, lap.startedAtEpochMs))}, '
               '${UiHelpers.formatDurationHuman(widget.dayRecorder.currentElapsedMs)}',
         ),
       );
@@ -650,7 +650,7 @@ class _DashboardViewState extends State<DashboardView>
         ? '--:--'
         : DateFormat('HH:mm').format(
             wallClockAt(
-              lap.startTimezoneOr(localTimezoneId()),
+              widget.dayRecorder.lapStartTimezoneId,
               lap.startedAtEpochMs,
             ),
           );

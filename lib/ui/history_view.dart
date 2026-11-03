@@ -684,16 +684,12 @@ class _HistoryViewState extends State<HistoryView> {
                     // Save Button
                     ElevatedButton(
                       onPressed: () async {
-                        final updated = record.copyWith(
-                          comment: commentController.text.trim(),
-                          updatedAtEpochMs: DateTime.now()
-                              .toUtc()
-                              .millisecondsSinceEpoch,
-                          tagIds: selectedTagIds,
-                        );
-
                         await closeThenApply(
-                          () => widget.database.updateRecord(updated),
+                          () => widget.dayRecorder.annotate(
+                            record.id,
+                            comment: commentController.text.trim(),
+                            tagIds: selectedTagIds,
+                          ),
                         );
                       },
                       style: ElevatedButton.styleFrom(
