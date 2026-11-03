@@ -213,10 +213,7 @@ class HatchPainter extends CustomPainter {
   final Color color;
   final double spacing;
 
-  const HatchPainter({
-    this.color = const Color(0x0F000000),
-    this.spacing = 9,
-  });
+  const HatchPainter({this.color = const Color(0x0F000000), this.spacing = 9});
 
   @override
   void paint(Canvas canvas, Size size) {

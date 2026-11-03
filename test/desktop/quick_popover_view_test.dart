@@ -59,7 +59,7 @@ void main() {
     final lapStart = dayRecorder.lap!.startedAtEpochMs;
 
     await pumpPopover(tester, db, dayRecorder);
-    expect(find.textContaining('UNTRACKED'), findsOneWidget);
+    expect(find.textContaining('Untracked since'), findsOneWidget);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.digit1);
     await tester.pumpAndSettle();

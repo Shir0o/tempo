@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import '../../core/export/csv_export_engine.dart';
 import '../../core/sync/google_drive_sync_service.dart';
 import '../../data/database/tempo_database.dart';
+import '../../data/models/models.dart';
 import 'activity_manager_view.dart';
 import 'helpers/ui_helpers.dart';
+import 'theme/tempo_theme.dart';
 
 /// Settings screen for managing Google Drive cloud synchronization,
 /// manual exports, database backups, and activity customization.
@@ -26,6 +28,22 @@ class SettingsView extends StatefulWidget {
 
 class _SettingsViewState extends State<SettingsView> {
   bool _isProcessing = false;
+  List<Activity> _activities = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadActivities();
+  }
+
+  Future<void> _loadActivities() async {
+    try {
+      final list = await widget.database.getAllActivities(
+        includeArchived: true,
+      );
+      if (mounted) setState(() => _activities = list);
+    } catch (_) {}
+  }
 
   void _setStatus(String msg) {
     if (mounted) {
@@ -102,28 +120,26 @@ class _SettingsViewState extends State<SettingsView> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (dCtx) => AlertDialog(
-        backgroundColor: const Color(0xFF22222C),
-        title: const Text(
-          'Restore Database?',
-          style: TextStyle(color: Colors.white),
-        ),
+        title: const Text('Restore Database?'),
         content: const Text(
           'Restoring from Google Drive will overwrite current local database with the cloud backup.',
-          style: TextStyle(color: Colors.white70),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dCtx).pop(false),
             child: const Text(
               'Cancel',
-              style: TextStyle(color: Colors.white60),
+              style: TextStyle(color: TempoColors.inkMuted),
             ),
           ),
           TextButton(
             onPressed: () => Navigator.of(dCtx).pop(true),
             child: const Text(
               'Restore',
-              style: TextStyle(color: Color(0xFF4CAF50)),
+              style: TextStyle(
+                color: TempoColors.ink,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         ],
@@ -165,284 +181,202 @@ class _SettingsViewState extends State<SettingsView> {
     final syncService = widget.syncService;
     final isSignedIn = syncService?.isSignedIn ?? false;
     final lastSync = syncService?.lastSyncTime;
+    final active = _activities.where((a) => !a.isArchived).toList();
+    final archivedCount = _activities.length - active.length;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF121216),
-      appBar: AppBar(
-        title: const Text(
-          'Settings',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        backgroundColor: const Color(0xFF121216),
-        elevation: 0,
-        centerTitle: false,
-      ),
-      body: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        children: [
-          // Google Drive Sync Group
-          _buildSectionHeader('GOOGLE DRIVE CLOUD SYNC'),
-          Material(
-            color: const Color(0xFF1A1A22),
-            clipBehavior: Clip.antiAlias,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-              side: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
+      backgroundColor: TempoColors.background,
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+          children: [
+            Text(
+              'Settings',
+              style: TempoText.screenTitle.copyWith(color: Colors.white),
             ),
-            child: Column(
-              children: [
-                ListTile(
-                  leading: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: isSignedIn
-                          ? const Color(0xFF4CAF50).withValues(alpha: 0.2)
-                          : Colors.white.withValues(alpha: 0.05),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      Icons.cloud_sync_outlined,
-                      color: isSignedIn
-                          ? const Color(0xFF4CAF50)
-                          : Colors.white54,
-                      size: 22,
-                    ),
-                  ),
-                  title: Text(
-                    isSignedIn
-                        ? 'Connected to Google Drive'
-                        : 'Google Drive Disconnected',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  subtitle: Text(
-                    isSignedIn
-                        ? (lastSync != null
-                              ? 'Last synced: ${UiHelpers.formatDateHeader(lastSync)} ${lastSync.hour}:${lastSync.minute.toString().padLeft(2, '0')}'
-                              : 'Ready for auto-sync')
-                        : 'Connect for BNPB sync & cloud backup',
-                    style: const TextStyle(color: Colors.white38, fontSize: 11),
-                  ),
-                  trailing: TextButton(
-                    onPressed: _isProcessing ? null : _handleGoogleSignInToggle,
-                    child: Text(
-                      isSignedIn ? 'Disconnect' : 'Connect',
-                      style: TextStyle(
-                        color: isSignedIn
-                            ? Colors.redAccent
-                            : const Color(0xFF4CAF50),
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-                if (syncService != null) ...[
-                  const Divider(color: Colors.white10, height: 1),
-                  SwitchListTile(
-                    title: const Text(
-                      'Automatic CSV Cloud Push',
-                      style: TextStyle(color: Colors.white, fontSize: 13),
-                    ),
-                    subtitle: const Text(
-                      'Pushes stt_records_automatic.csv to "Time track" after each label',
-                      style: TextStyle(color: Colors.white38, fontSize: 11),
-                    ),
+            const SizedBox(height: 20),
+            _buildDriveCard(isSignedIn, lastSync, syncService != null),
+            if (syncService != null) ...[
+              const SizedBox(height: 12),
+              _buildGroup([
+                _SettingsRow(
+                  title: 'Send CSV after each label',
+                  subtitle: 'stt_records_automatic.csv',
+                  trailing: Switch(
                     value: syncService.autoSyncEnabled,
-                    activeTrackColor: const Color(0xFF4CAF50),
                     onChanged: (val) {
                       setState(() => syncService.autoSyncEnabled = val);
                     },
                   ),
-                  const Divider(color: Colors.white10, height: 1),
-                  ListTile(
-                    leading: const Icon(
-                      Icons.upload_file,
-                      color: Colors.white70,
-                      size: 20,
-                    ),
-                    title: const Text(
-                      'Sync CSV to Drive Now',
-                      style: TextStyle(color: Colors.white, fontSize: 13),
-                    ),
-                    trailing: const Icon(
-                      Icons.chevron_right,
-                      color: Colors.white38,
-                      size: 18,
-                    ),
-                    onTap: _isProcessing ? null : _handleSyncCsvNow,
-                  ),
-                  const Divider(color: Colors.white10, height: 1),
-                  ListTile(
-                    leading: const Icon(
-                      Icons.backup_outlined,
-                      color: Colors.white70,
-                      size: 20,
-                    ),
-                    title: const Text(
-                      'Backup Database to Drive',
-                      style: TextStyle(color: Colors.white, fontSize: 13),
-                    ),
-                    trailing: const Icon(
-                      Icons.chevron_right,
-                      color: Colors.white38,
-                      size: 18,
-                    ),
-                    onTap: _isProcessing ? null : _handleBackupDatabaseNow,
-                  ),
-                  const Divider(color: Colors.white10, height: 1),
-                  ListTile(
-                    leading: const Icon(
-                      Icons.settings_backup_restore,
-                      color: Colors.white70,
-                      size: 20,
-                    ),
-                    title: const Text(
-                      'Restore Database from Drive',
-                      style: TextStyle(color: Colors.white, fontSize: 13),
-                    ),
-                    trailing: const Icon(
-                      Icons.chevron_right,
-                      color: Colors.white38,
-                      size: 18,
-                    ),
-                    onTap: _isProcessing ? null : _handleRestoreDatabaseNow,
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          // Data & Habits Management
-          _buildSectionHeader('HABITS & DATA'),
-          Material(
-            color: const Color(0xFF1A1A22),
-            clipBehavior: Clip.antiAlias,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-              side: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
-            ),
-            child: Column(
-              children: [
-                ListTile(
-                  leading: const Icon(
-                    Icons.tune_rounded,
-                    color: Color(0xFF4CAF50),
-                    size: 20,
-                  ),
-                  title: const Text(
-                    'Manage Habits & Colors',
-                    style: TextStyle(color: Colors.white, fontSize: 13),
-                  ),
-                  subtitle: const Text(
-                    'Customize activity icons, colors, and pinned status',
-                    style: TextStyle(color: Colors.white38, fontSize: 11),
-                  ),
-                  trailing: const Icon(
-                    Icons.chevron_right,
-                    color: Colors.white38,
-                    size: 18,
-                  ),
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            ActivityManagerView(database: widget.database),
-                      ),
-                    );
-                  },
                 ),
-                const Divider(color: Colors.white10, height: 1),
-                ListTile(
-                  leading: const Icon(
-                    Icons.file_download_outlined,
-                    color: Colors.white70,
-                    size: 20,
-                  ),
-                  title: const Text(
-                    'Export CSV Locally',
-                    style: TextStyle(color: Colors.white, fontSize: 13),
-                  ),
-                  subtitle: Text(
-                    widget.exportEngine != null
-                        ? widget.exportEngine!.targetFile.path
-                        : 'stt_records_automatic.csv',
-                    style: const TextStyle(color: Colors.white38, fontSize: 11),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  trailing: const Icon(
-                    Icons.chevron_right,
-                    color: Colors.white38,
-                    size: 18,
-                  ),
-                  onTap: _isProcessing ? null : _handleExportCsvNow,
+                _SettingsRow(
+                  title: 'Back up database to Drive',
+                  onTap: _isProcessing ? null : _handleBackupDatabaseNow,
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          // About & Privacy
-          _buildSectionHeader('ABOUT TEMPO'),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1A1A22),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Row(
-                  children: [
-                    Icon(
-                      Icons.shield_outlined,
-                      color: Color(0xFF4CAF50),
-                      size: 18,
-                    ),
-                    SizedBox(width: 8),
-                    Text(
-                      '100% Offline-First & Private',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                _SettingsRow(
+                  title: 'Restore database from Drive',
+                  onTap: _isProcessing ? null : _handleRestoreDatabaseNow,
+                ),
+              ]),
+            ],
+            const SizedBox(height: 24),
+            _buildSectionHeader('DATA'),
+            _buildGroup([
+              _SettingsRow(
+                title: 'Activities',
+                subtitle: _activities.isEmpty
+                    ? null
+                    : '${active.length} active · $archivedCount archived',
+                leading: _ColourBars(
+                  colors: [
+                    for (final a in active.take(3))
+                      UiHelpers.parseHexColor(a.colorHex),
                   ],
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Tempo stores all tracking data directly on your hardware in SQLite and CSV formats. No accounts or surveillance telemetry. Cloud sync occurs exclusively via your personal Google Drive or local peer sync.',
-                  style: TextStyle(
-                    color: Colors.white54,
-                    fontSize: 12,
-                    height: 1.4,
+                onTap: () async {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          ActivityManagerView(database: widget.database),
+                    ),
+                  );
+                  _loadActivities();
+                },
+              ),
+              _SettingsRow(
+                title: 'Export CSV to this device',
+                subtitle: 'Simple Time Tracker format',
+                onTap: _isProcessing ? null : _handleExportCsvNow,
+              ),
+            ]),
+            const SizedBox(height: 24),
+            _buildSectionHeader('ABOUT'),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: TempoColors.surface,
+                borderRadius: BorderRadius.circular(TempoRadii.card),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Tempo keeps your record on this device, in SQLite and CSV. No account, no tracking.',
+                    style: TempoText.body.copyWith(
+                      color: Colors.white,
+                      height: 1.4,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  'Tempo v1.0.0 (Build 1)',
-                  style: TextStyle(
-                    color: Colors.white24,
-                    fontSize: 11,
-                    fontFamily: 'monospace',
+                  const SizedBox(height: 10),
+                  Text(
+                    'Tempo v1.0.0 (Build 1)',
+                    style: TempoText.label.copyWith(
+                      color: TempoColors.textMuted,
+                    ),
                   ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDriveCard(bool isSignedIn, DateTime? lastSync, bool hasService) {
+    final String detail;
+    if (!isSignedIn) {
+      detail = 'Connect for BNPB sync & cloud backup';
+    } else if (lastSync != null) {
+      final hh = lastSync.hour.toString().padLeft(2, '0');
+      final mm = lastSync.minute.toString().padLeft(2, '0');
+      detail = 'CSV last sent to \u201cTime track\u201d at $hh:$mm for BNPB';
+    } else {
+      detail = 'Ready to send CSV to \u201cTime track\u201d for BNPB';
+    }
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: TempoColors.panel,
+        borderRadius: BorderRadius.circular(TempoRadii.card),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 14,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: isSignedIn ? TempoColors.ink : TempoColors.track,
+                  shape: BoxShape.circle,
+                  border: isSignedIn
+                      ? Border.all(color: TempoColors.accent, width: 3)
+                      : null,
                 ),
-              ],
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  isSignedIn
+                      ? 'Google Drive connected'
+                      : 'Google Drive not connected',
+                  style: TempoText.title.copyWith(color: TempoColors.ink),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            detail,
+            style: TempoText.label.copyWith(
+              color: TempoColors.inkMuted,
+              fontWeight: FontWeight.w500,
             ),
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              if (isSignedIn && hasService) ...[
+                Expanded(
+                  child: _Pill(
+                    label: 'Send CSV now',
+                    filled: true,
+                    onTap: _isProcessing ? null : _handleSyncCsvNow,
+                  ),
+                ),
+                const SizedBox(width: 10),
+              ],
+              Expanded(
+                child: _Pill(
+                  label: isSignedIn ? 'Disconnect' : 'Connect',
+                  filled: !isSignedIn,
+                  onTap: _isProcessing ? null : _handleGoogleSignInToggle,
+                ),
+              ),
+            ],
+          ),
         ],
       ),
+    );
+  }
+
+  Widget _buildGroup(List<Widget> rows) {
+    final children = <Widget>[];
+    for (var i = 0; i < rows.length; i++) {
+      if (i > 0) {
+        children.add(
+          const Divider(height: 1, thickness: 1, color: TempoColors.line),
+        );
+      }
+      children.add(rows[i]);
+    }
+    return Material(
+      color: TempoColors.surface,
+      clipBehavior: Clip.antiAlias,
+      borderRadius: BorderRadius.circular(TempoRadii.row),
+      child: Column(children: children),
     );
   }
 
@@ -451,13 +385,131 @@ class _SettingsViewState extends State<SettingsView> {
       padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
       child: Text(
         title,
-        style: const TextStyle(
-          color: Colors.white38,
-          fontSize: 11,
-          fontWeight: FontWeight.bold,
-          letterSpacing: 0.8,
+        style: TempoText.overline.copyWith(color: TempoColors.textMuted),
+      ),
+    );
+  }
+}
+
+class _Pill extends StatelessWidget {
+  final String label;
+  final bool filled;
+  final VoidCallback? onTap;
+
+  const _Pill({required this.label, required this.filled, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Opacity(
+      opacity: onTap == null ? 0.5 : 1,
+      child: Material(
+        color: filled ? TempoColors.ink : Colors.transparent,
+        shape: StadiumBorder(
+          side: filled
+              ? BorderSide.none
+              : const BorderSide(color: TempoColors.ink, width: 1.5),
+        ),
+        child: InkWell(
+          customBorder: const StadiumBorder(),
+          onTap: onTap,
+          child: SizedBox(
+            height: 48,
+            child: Center(
+              child: Text(
+                label,
+                style: TempoText.body.copyWith(
+                  color: filled ? Colors.white : TempoColors.ink,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
         ),
       ),
+    );
+  }
+}
+
+class _SettingsRow extends StatelessWidget {
+  final String title;
+  final String? subtitle;
+  final Widget? leading;
+  final Widget? trailing;
+  final VoidCallback? onTap;
+
+  const _SettingsRow({
+    required this.title,
+    this.subtitle,
+    this.leading,
+    this.trailing,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        child: Row(
+          children: [
+            if (leading != null) ...[leading!, const SizedBox(width: 12)],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TempoText.body.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle!,
+                      style: TempoText.label.copyWith(
+                        color: TempoColors.textMuted,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            trailing ??
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: TempoColors.textMuted,
+                ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ColourBars extends StatelessWidget {
+  final List<Color> colors;
+
+  const _ColourBars({required this.colors});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        for (final c in colors)
+          Container(
+            width: 5,
+            height: 22,
+            margin: const EdgeInsets.only(right: 3),
+            decoration: BoxDecoration(
+              color: c,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+      ],
     );
   }
 }
