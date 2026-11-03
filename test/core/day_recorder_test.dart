@@ -250,7 +250,6 @@ void main() {
         activityId: null,
         startedAtEpochMs: now - 60000,
         endedAtEpochMs: now,
-        durationMs: 60000,
         timezoneId: zoneId,
         endTimezoneId: zoneId,
         createdAtEpochMs: now,
@@ -820,6 +819,176 @@ void main() {
       expect(split.endTimezoneId, 'Asia/Tokyo');
       expect(recorder.lap!.startedAtEpochMs, midnight);
       expect(recorder.lap!.startedTimezoneId, 'Asia/Tokyo');
+    });
+  });
+
+  group('Review fixes', () {
+    /// Records 22:00 → 00:00 → 01:00 as Sleep and 01:00 → 02:00 as Meals in
+    /// Los Angeles, so one Boundary sits on midnight.
+    Future<List<Record>> recordAcrossMidnight() async {
+      zoneId = 'America/Los_Angeles';
+      nowUtc = wallMs(zoneId, 2026, 6, 1, 22);
+      await recorder.initialize();
+      nowUtc = wallMs(zoneId, 2026, 6, 2, 1);
+      await recorder.label(sleep.id);
+      nowUtc = wallMs(zoneId, 2026, 6, 2, 2);
+      await recorder.label(meals.id);
+      final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+      expect(records, hasLength(3));
+      expect(records[0].endedAtEpochMs, wallMs(zoneId, 2026, 6, 2, 0));
+      return records;
+    }
+
+    test('moveBoundary refuses to carry a Record across midnight', () async {
+      final records = await recordAcrossMidnight();
+      final beforeMidnight = records[0];
+      final afterMidnight = records[1];
+
+      // The Record ending at midnight would grow past it.
+      expect(
+        () => recorder.moveBoundary(
+          beforeMidnight.id,
+          wallMs(zoneId, 2026, 6, 2, 0, 30),
+        ),
+        throwsA(isA<RecordEditRefused>()),
+      );
+      // The Record starting at midnight would begin the evening before.
+      expect(
+        () => recorder.moveBoundary(
+          beforeMidnight.id,
+          wallMs(zoneId, 2026, 6, 1, 23, 30),
+        ),
+        throwsA(isA<RecordEditRefused>()),
+      );
+      expect(
+        await db.getRecords(orderBy: 'started_at_epoch_ms ASC'),
+        equals(records),
+      );
+
+      // A Boundary inside one Day still moves.
+      final moved = await recorder.moveBoundary(
+        afterMidnight.id,
+        wallMs(zoneId, 2026, 6, 2, 1, 30),
+      );
+      expect(moved.endedAtEpochMs, wallMs(zoneId, 2026, 6, 2, 1, 30));
+    });
+
+    test('merge refuses Records that meet at midnight', () async {
+      final records = await recordAcrossMidnight();
+
+      expect(
+        () => recorder.merge(records[0].id, records[1].id),
+        throwsA(isA<RecordEditRefused>()),
+      );
+      expect(
+        await db.getRecords(orderBy: 'started_at_epoch_ms ASC'),
+        equals(records),
+      );
+
+      final merged = await recorder.merge(records[1].id, records[2].id);
+      expect(merged.startedAtEpochMs, wallMs(zoneId, 2026, 6, 2, 0));
+      expect(merged.endedAtEpochMs, wallMs(zoneId, 2026, 6, 2, 2));
+    });
+
+    test(
+      'a clock moved back never writes a Record ending before it starts',
+      () async {
+        await recorder.initialize();
+        nowUtc += 60000;
+        await recorder.label(sleep.id);
+        final lapStart = recorder.lap!.startedAtEpochMs;
+
+        nowUtc = lapStart - 120000;
+        final closing = await recorder.label(meals.id);
+
+        expect(closing.startedAtEpochMs, lapStart);
+        expect(closing.endedAtEpochMs, lapStart);
+        expect(closing.durationMs, 0);
+        expect(recorder.lap!.startedAtEpochMs, lapStart);
+
+        final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+        for (final record in records) {
+          expect(
+            record.endedAtEpochMs,
+            greaterThanOrEqualTo(record.startedAtEpochMs),
+          );
+        }
+        expect(records.last.endedAtEpochMs, recorder.lap!.startedAtEpochMs);
+      },
+    );
+
+    test('relabel initializes the recorder like every other edit', () async {
+      await recorder.initialize();
+      nowUtc += 60000;
+      final record = await recorder.label(sleep.id);
+
+      final reopened = DayRecorder(
+        database: db,
+        nowUtcMs: () => nowUtc,
+        generateId: () => 'rec-${++idCounter}',
+        getTimezoneId: () => zoneId,
+      );
+      addTearDown(reopened.dispose);
+      expect(reopened.lap, isNull);
+
+      await reopened.relabel(record.id, meals.id);
+      expect(reopened.lap, isNotNull);
+      expect(reopened.lap!.startedAtEpochMs, record.endedAtEpochMs);
+    });
+
+    test('annotate edits comment and tags and schedules an export', () async {
+      final exportDir = await Directory.systemTemp.createTemp('tempo-notes');
+      addTearDown(() => exportDir.delete(recursive: true));
+      final engine = CsvExportEngine(database: db, exportDirectory: exportDir);
+      addTearDown(engine.dispose);
+      recorder.attachExportEngine(engine);
+
+      await recorder.initialize();
+      nowUtc += 60000;
+      final record = await recorder.label(sleep.id);
+      await engine.exportImmediately();
+      expect(engine.isExportScheduled, isFalse);
+
+      final updated = await recorder.annotate(
+        record.id,
+        comment: 'w/ Sam',
+        tagIds: [travelTag.id],
+      );
+      expect(engine.isExportScheduled, isTrue);
+
+      final stored = await db.getRecordById(record.id);
+      expect(stored!.comment, 'w/ Sam');
+      expect(stored.tagIds, [travelTag.id]);
+      expect(stored.activityId, sleep.id);
+      expect(stored.startedAtEpochMs, record.startedAtEpochMs);
+      expect(stored.endedAtEpochMs, record.endedAtEpochMs);
+      expect(updated, equals(stored));
+      await engine.exportImmediately();
+    });
+
+    test('a legacy Lap without a zone reads the injected zone', () async {
+      await db.setLap(
+        Lap(startedAtEpochMs: nowUtc, startedTimezoneId: '', revision: 1),
+      );
+      zoneId = 'Asia/Kolkata';
+      await recorder.initialize();
+
+      expect(recorder.lapStartTimezoneId, 'Asia/Kolkata');
+    });
+
+    test('durationMs is always end - start, whatever was stored', () {
+      final record = Record.fromMap({
+        'id': 'rec-paused',
+        'activity_id': sleep.id,
+        'started_at_epoch_ms': 1000,
+        'ended_at_epoch_ms': 61000,
+        'duration_ms': 30000,
+        'timezone_id': 'UTC',
+        'created_at_epoch_ms': 0,
+        'updated_at_epoch_ms': 0,
+      });
+      expect(record.durationMs, 60000);
+      expect(record.toMap()['duration_ms'], 60000);
     });
   });
 }

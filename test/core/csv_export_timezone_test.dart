@@ -47,7 +47,6 @@ void main() {
       activityId: 'act',
       startedAtEpochMs: start,
       endedAtEpochMs: end,
-      durationMs: length.inMilliseconds,
       timezoneId: timezoneId,
       createdAtEpochMs: end,
       updatedAtEpochMs: end,

@@ -41,6 +41,7 @@
             <intent-filter>
                 <action android:name="app.tempo.action.START_TIMER" />
                 <action android:name="app.timetracker.action.START_TIMER" />
+                <action android:name="app.tempo.action.SPLIT" />
             </intent-filter>
         </receiver>
 

@@ -42,7 +42,7 @@ Tempo describes how a day was spent, without judging it.
 - **Continuous CSV export** in the Simple Time Tracker 8-column schema (`activity name,time started,time ended,comment,categories,record tags,duration,duration minutes`), written with an atomic Write-Flush-Rename sequence and a 1,000 ms debounce.
 - **Times in the Record's own zone**: rows never shift after travel, and subtracting the two times yields the true duration. Untracked Records stay out of the export until labeled.
 - **`w/` and `with ` name markers** plus `"Contact"` tags are preserved for BNPB ingestion.
-- **Android automation**: `app.tempo.action.START_TIMER` broadcast intents mirror `tempo://start` for Tasker, NFC tags, and Bluetooth triggers.
+- **Android automation**: `app.tempo.action.START_TIMER` and `app.tempo.action.SPLIT` broadcast intents mirror `tempo://start` and `tempo://split` for Tasker, NFC tags, and Bluetooth triggers.
 
 ### Private AI Analysis via MCP
 

@@ -95,7 +95,6 @@ void main() {
           activityId: activityId,
           startedAtEpochMs: startMs,
           endedAtEpochMs: endMs,
-          durationMs: endMs - startMs,
           comment: comment,
           timezoneId: zone,
           endTimezoneId: endZone,
@@ -540,7 +539,62 @@ void main() {
       },
     );
 
+    test('label_lap refuses an unknown Activity without creating it', () async {
+      var clock = wallMs(laZone, 2026, 11, 3, 8);
+      final recorder = DayRecorder(
+        database: db,
+        nowUtcMs: () => clock,
+        getTimezoneId: () => laZone,
+        autoSplitAtMidnight: false,
+      );
+      addTearDown(recorder.dispose);
+      await recorder.initialize();
+      final lapStart = recorder.lap!.startedAtEpochMs;
+      final activitiesBefore = await db.getAllActivities(includeArchived: true);
+      final recordsBefore = await db.getRecords();
+
+      final writeServer = TempoMcpServer(
+        database: db,
+        sanitizer: sanitizer,
+        allowWrites: true,
+        zoneProvider: () => laZone,
+        nowUtcMs: () => clock,
+        dayRecorder: recorder,
+      );
+
+      clock += hourMs;
+      final result = await callTool(writeServer, 'label_lap', {
+        'activity_name': 'Reding',
+      });
+      expect(result['isError'], isTrue);
+      expect(
+        result['content'][0]['text'] as String,
+        contains('Unknown Activity "Reding"'),
+      );
+      expect(
+        await db.getAllActivities(includeArchived: true),
+        hasLength(activitiesBefore.length),
+      );
+      expect(await db.getRecords(), hasLength(recordsBefore.length));
+      expect(recorder.lap!.startedAtEpochMs, lapStart);
+
+      // An existing Activity matches regardless of case.
+      final labelled = payloadOf(
+        await callTool(writeServer, 'label_lap', {'activity_name': 'meals'}),
+      );
+      expect((labelled['record'] as Map)['activity'], equals('Meals'));
+    });
+
     test('write tools keep the Day continuous and surface refusals', () async {
+      await db.insertActivity(
+        const Activity(
+          id: 'act-reading',
+          name: 'Reading',
+          colorHex: '#26A69A',
+          createdAtEpochMs: 0,
+          updatedAtEpochMs: 0,
+        ),
+      );
       var clock = wallMs(laZone, 2026, 11, 3, 8);
       final recorder = DayRecorder(
         database: db,
