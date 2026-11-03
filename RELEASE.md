@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/Shir0o/tempo/compare/v1.3.0...v1.4.0) (2026-11-03)
+
+
+### Features
+
+* **import:** import STT catalog and history with categories ([#39](https://github.com/Shir0o/tempo/issues/39)) ([1173ae7](https://github.com/Shir0o/tempo/commit/1173ae735b77f1c387ddc7bb6e9754ccac21128a))
+
 ## [1.3.0](https://github.com/Shir0o/tempo/compare/v1.2.0...v1.3.0) (2026-11-03)
 
 
