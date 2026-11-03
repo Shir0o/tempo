@@ -28,6 +28,8 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>GIDClientID</key>
+	<string>703545478046-ubbsj0r20tnjv2qlq83bm1o1facagmr1.apps.googleusercontent.com</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -39,6 +41,14 @@
 			<array>
 				<string>tempo</string>
 				<string>timetracker</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.703545478046-ubbsj0r20tnjv2qlq83bm1o1facagmr1</string>
 			</array>
 		</dict>
 	</array>
