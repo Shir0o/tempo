@@ -357,49 +357,57 @@ record\t2\t10\t$start2\t$end2\tAfternoon coding\t
       expect(records[3].comment, equals('Afternoon coding'));
     });
 
-    test('CSV import with record tags creates Tag and associates in record_tags', () async {
-      final service = SttImportService(
-        database: db,
-        getTimezoneId: () => 'UTC',
-        nowUtcMs: () => 1700000000000,
-      );
+    test(
+      'CSV import with record tags creates Tag and associates in record_tags',
+      () async {
+        final service = SttImportService(
+          database: db,
+          getTimezoneId: () => 'UTC',
+          nowUtcMs: () => 1700000000000,
+        );
 
-      const csvContent = '''"activity name","time started","time ended","comment","categories","record tags","duration","duration minutes"
+        const csvContent = '''"activity name","time started","time ended","comment","categories","record tags","duration","duration minutes"
 "Meeting","2023-11-14 10:00:00","2023-11-14 11:00:00","1:1 sync","Work","Contact, Important","01:00:00","60"
 ''';
 
-      final result = await service.import(
-        content: csvContent,
-        scope: SttImportScope.fullHistory,
-      );
+        final result = await service.import(
+          content: csvContent,
+          scope: SttImportScope.fullHistory,
+        );
 
-      expect(result.recordsImported, equals(1));
+        expect(result.recordsImported, equals(1));
 
-      // Verify tags created
-      final contactTag = await db.getTagByName('Contact');
-      expect(contactTag, isNotNull);
-      expect(contactTag!.name, equals('Contact'));
-      expect(contactTag.colorHex, equals('#9E9E9E'));
+        // Verify tags created
+        final contactTag = await db.getTagByName('Contact');
+        expect(contactTag, isNotNull);
+        expect(contactTag!.name, equals('Contact'));
+        expect(contactTag.colorHex, equals('#9E9E9E'));
 
-      final importantTag = await db.getTagByName('Important');
-      expect(importantTag, isNotNull);
-      expect(importantTag!.name, equals('Important'));
+        final importantTag = await db.getTagByName('Important');
+        expect(importantTag, isNotNull);
+        expect(importantTag!.name, equals('Important'));
 
-      // Verify record is associated with both tags
-      final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
-      final meetingRecord = records.firstWhere((r) => r.activityId != null);
-      expect(meetingRecord.comment, equals('1:1 sync'));
-      expect(meetingRecord.tagIds, containsAll([contactTag.id, importantTag.id]));
+        // Verify record is associated with both tags
+        final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+        final meetingRecord = records.firstWhere((r) => r.activityId != null);
+        expect(meetingRecord.comment, equals('1:1 sync'));
+        expect(
+          meetingRecord.tagIds,
+          containsAll([contactTag.id, importantTag.id]),
+        );
 
-      // Verify database junction table record_tags has rows
-      final junctionRows = await db.db.query(
-        'record_tags',
-        where: 'record_id = ?',
-        whereArgs: [meetingRecord.id],
-      );
-      expect(junctionRows.length, equals(2));
-      final tagIdsInDb = junctionRows.map((r) => r['tag_id'] as String).toList();
-      expect(tagIdsInDb, containsAll([contactTag.id, importantTag.id]));
-    });
+        // Verify database junction table record_tags has rows
+        final junctionRows = await db.db.query(
+          'record_tags',
+          where: 'record_id = ?',
+          whereArgs: [meetingRecord.id],
+        );
+        expect(junctionRows.length, equals(2));
+        final tagIdsInDb = junctionRows
+            .map((r) => r['tag_id'] as String)
+            .toList();
+        expect(tagIdsInDb, containsAll([contactTag.id, importantTag.id]));
+      },
+    );
   });
 }

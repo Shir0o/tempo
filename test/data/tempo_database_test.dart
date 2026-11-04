@@ -159,30 +159,33 @@ void main() {
       },
     );
 
-    test('createActivity inherits category color when default colorHex is used', () async {
-      await db.upsertCategory(
-        Category(
-          id: 'cat-palette',
-          name: 'Health',
-          colorHex: '#00BCD4',
-          iconName: 'fitness_center',
-          sortOrder: 0,
-          createdAtEpochMs: 1000,
-          updatedAtEpochMs: 1000,
-        ),
-      );
+    test(
+      'createActivity inherits category color when default colorHex is used',
+      () async {
+        await db.upsertCategory(
+          Category(
+            id: 'cat-palette',
+            name: 'Health',
+            colorHex: '#00BCD4',
+            iconName: 'fitness_center',
+            sortOrder: 0,
+            createdAtEpochMs: 1000,
+            updatedAtEpochMs: 1000,
+          ),
+        );
 
-      final created = await db.createActivity(
-        id: 'act-inherited',
-        name: 'Running',
-        categoryId: 'cat-palette',
-      );
-      expect(created.colorHex, equals('#00BCD4'));
+        final created = await db.createActivity(
+          id: 'act-inherited',
+          name: 'Running',
+          categoryId: 'cat-palette',
+        );
+        expect(created.colorHex, equals('#00BCD4'));
 
-      final fromDb = await db.getActivityById('act-inherited');
-      expect(fromDb, isNotNull);
-      expect(fromDb!.colorHex, equals('#00BCD4'));
-    });
+        final fromDb = await db.getActivityById('act-inherited');
+        expect(fromDb, isNotNull);
+        expect(fromDb!.colorHex, equals('#00BCD4'));
+      },
+    );
   });
 
   group('Tags CRUD & Tombstones', () {

@@ -80,30 +80,33 @@ void main() {
       expect(UiHelpers.isEmoji(null), isFalse);
     });
 
-    testWidgets('buildIconOrEmoji renders Text for emoji and Icon for icon name', (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: Column(
-              children: [
-                UiHelpers.buildIconOrEmoji(
-                  iconName: '☕',
-                  color: Colors.brown,
-                  size: 24,
-                ),
-                UiHelpers.buildIconOrEmoji(
-                  iconName: 'fitness_center',
-                  color: Colors.blue,
-                  size: 20,
-                ),
-              ],
+    testWidgets(
+      'buildIconOrEmoji renders Text for emoji and Icon for icon name',
+      (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Column(
+                children: [
+                  UiHelpers.buildIconOrEmoji(
+                    iconName: '☕',
+                    color: Colors.brown,
+                    size: 24,
+                  ),
+                  UiHelpers.buildIconOrEmoji(
+                    iconName: 'fitness_center',
+                    color: Colors.blue,
+                    size: 20,
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
-      );
+        );
 
-      expect(find.text('☕'), findsOneWidget);
-      expect(find.byIcon(Icons.fitness_center), findsOneWidget);
-    });
+        expect(find.text('☕'), findsOneWidget);
+        expect(find.byIcon(Icons.fitness_center), findsOneWidget);
+      },
+    );
   });
 }

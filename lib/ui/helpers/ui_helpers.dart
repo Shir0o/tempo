@@ -51,17 +51,10 @@ class UiHelpers {
     if (isEmoji(iconName)) {
       return Text(
         iconName.trim(),
-        style: TextStyle(
-          fontSize: size,
-          height: 1.0,
-        ),
+        style: TextStyle(fontSize: size, height: 1.0),
       );
     }
-    return Icon(
-      getIconData(iconName),
-      color: color,
-      size: size,
-    );
+    return Icon(getIconData(iconName), color: color, size: size);
   }
 
   /// Resolves an icon name to a Material [IconData].

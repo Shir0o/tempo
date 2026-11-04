@@ -233,81 +233,78 @@ void main() {
     },
   );
 
-  test(
-    'migrating to v9 backfills activities with default color to inherit parent category color',
-    () async {
-      final v8Db = await databaseFactory.openDatabase(
-        dbPath,
-        options: OpenDatabaseOptions(
-          version: 8,
-          onCreate: (db, version) => TempoDatabase.createSchema(db),
-        ),
-      );
+  test('migrating to v9 backfills activities with default color to inherit parent category color', () async {
+    final v8Db = await databaseFactory.openDatabase(
+      dbPath,
+      options: OpenDatabaseOptions(
+        version: 8,
+        onCreate: (db, version) => TempoDatabase.createSchema(db),
+      ),
+    );
 
-      await v8Db.insert('categories', {
-        'id': 'cat-study',
-        'name': 'Study',
-        'color_hex': '#9C27B0',
-        'icon_name': 'folder',
-        'sort_order': 0,
-        'created_at_epoch_ms': 1000,
-        'updated_at_epoch_ms': 1000,
-      });
+    await v8Db.insert('categories', {
+      'id': 'cat-study',
+      'name': 'Study',
+      'color_hex': '#9C27B0',
+      'icon_name': 'folder',
+      'sort_order': 0,
+      'created_at_epoch_ms': 1000,
+      'updated_at_epoch_ms': 1000,
+    });
 
-      // Activity with default color #4CAF50 and category
-      await v8Db.insert('activities', {
-        'id': 'act-default-color',
-        'name': 'Math',
-        'category_id': 'cat-study',
-        'color_hex': '#4CAF50',
-        'icon_name': 'schedule',
-        'is_pinned': 0,
-        'sort_order': 0,
-        'is_archived': 0,
-        'created_at_epoch_ms': 1000,
-        'updated_at_epoch_ms': 1000,
-      });
+    // Activity with default color #4CAF50 and category
+    await v8Db.insert('activities', {
+      'id': 'act-default-color',
+      'name': 'Math',
+      'category_id': 'cat-study',
+      'color_hex': '#4CAF50',
+      'icon_name': 'schedule',
+      'is_pinned': 0,
+      'sort_order': 0,
+      'is_archived': 0,
+      'created_at_epoch_ms': 1000,
+      'updated_at_epoch_ms': 1000,
+    });
 
-      // Activity with custom color and category (should NOT be overwritten if already set)
-      await v8Db.insert('activities', {
-        'id': 'act-custom-color',
-        'name': 'Physics',
-        'category_id': 'cat-study',
-        'color_hex': '#FF9800',
-        'icon_name': 'schedule',
-        'is_pinned': 0,
-        'sort_order': 1,
-        'is_archived': 0,
-        'created_at_epoch_ms': 1000,
-        'updated_at_epoch_ms': 1000,
-      });
+    // Activity with custom color and category (should NOT be overwritten if already set)
+    await v8Db.insert('activities', {
+      'id': 'act-custom-color',
+      'name': 'Physics',
+      'category_id': 'cat-study',
+      'color_hex': '#FF9800',
+      'icon_name': 'schedule',
+      'is_pinned': 0,
+      'sort_order': 1,
+      'is_archived': 0,
+      'created_at_epoch_ms': 1000,
+      'updated_at_epoch_ms': 1000,
+    });
 
-      // Activity with default color but no category
-      await v8Db.insert('activities', {
-        'id': 'act-no-cat',
-        'name': 'Random',
-        'color_hex': '#4CAF50',
-        'icon_name': 'schedule',
-        'is_pinned': 0,
-        'sort_order': 2,
-        'is_archived': 0,
-        'created_at_epoch_ms': 1000,
-        'updated_at_epoch_ms': 1000,
-      });
+    // Activity with default color but no category
+    await v8Db.insert('activities', {
+      'id': 'act-no-cat',
+      'name': 'Random',
+      'color_hex': '#4CAF50',
+      'icon_name': 'schedule',
+      'is_pinned': 0,
+      'sort_order': 2,
+      'is_archived': 0,
+      'created_at_epoch_ms': 1000,
+      'updated_at_epoch_ms': 1000,
+    });
 
-      await v8Db.close();
+    await v8Db.close();
 
-      final tempoDb = await TempoDatabase.open(path: dbPath);
-      addTearDown(tempoDb.close);
+    final tempoDb = await TempoDatabase.open(path: dbPath);
+    addTearDown(tempoDb.close);
 
-      final mathAct = await tempoDb.getActivityById('act-default-color');
-      expect(mathAct!.colorHex, equals('#9C27B0'));
+    final mathAct = await tempoDb.getActivityById('act-default-color');
+    expect(mathAct!.colorHex, equals('#9C27B0'));
 
-      final physicsAct = await tempoDb.getActivityById('act-custom-color');
-      expect(physicsAct!.colorHex, equals('#FF9800'));
+    final physicsAct = await tempoDb.getActivityById('act-custom-color');
+    expect(physicsAct!.colorHex, equals('#FF9800'));
 
-      final noCatAct = await tempoDb.getActivityById('act-no-cat');
-      expect(noCatAct!.colorHex, equals('#4CAF50'));
-    },
-  );
+    final noCatAct = await tempoDb.getActivityById('act-no-cat');
+    expect(noCatAct!.colorHex, equals('#4CAF50'));
+  });
 }

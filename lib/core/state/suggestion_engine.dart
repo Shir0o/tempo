@@ -19,8 +19,9 @@ class ContextualSuggestionEngine {
     int limit = 6,
   }) {
     // 1. Candidate filtering: Filter out archived activities
-    final activeCandidates =
-        candidates.where((activity) => !activity.isArchived).toList();
+    final activeCandidates = candidates
+        .where((activity) => !activity.isArchived)
+        .toList();
     if (activeCandidates.isEmpty || limit <= 0) {
       return const [];
     }
@@ -63,7 +64,10 @@ class ContextualSuggestionEngine {
 
         // Track temporal slot match
         final recordWallClock = record.timezoneId == 'UTC'
-            ? DateTime.fromMillisecondsSinceEpoch(record.startedAtEpochMs, isUtc: true)
+            ? DateTime.fromMillisecondsSinceEpoch(
+                record.startedAtEpochMs,
+                isUtc: true,
+              )
             : wallClockAt(record.timezoneId, record.startedAtEpochMs);
         final recordIsWeekend = _isWeekend(recordWallClock.weekday);
 
@@ -103,29 +107,30 @@ class ContextualSuggestionEngine {
     // 2. Temporal slot count (descending)
     // 3. Historical frequency (descending)
     // 4. Candidate list original order (ascending)
-    final sorted = List<Activity>.from(activeCandidates)..sort((a, b) {
-      if (precedingActivityId != null && markovTotal > 0) {
-        final markovA = markovCounts[a.id] ?? 0;
-        final markovB = markovCounts[b.id] ?? 0;
-        if (markovA != markovB) {
-          return markovB.compareTo(markovA);
+    final sorted = List<Activity>.from(activeCandidates)
+      ..sort((a, b) {
+        if (precedingActivityId != null && markovTotal > 0) {
+          final markovA = markovCounts[a.id] ?? 0;
+          final markovB = markovCounts[b.id] ?? 0;
+          if (markovA != markovB) {
+            return markovB.compareTo(markovA);
+          }
         }
-      }
 
-      final tempA = temporalCounts[a.id] ?? 0;
-      final tempB = temporalCounts[b.id] ?? 0;
-      if (tempA != tempB) {
-        return tempB.compareTo(tempA);
-      }
+        final tempA = temporalCounts[a.id] ?? 0;
+        final tempB = temporalCounts[b.id] ?? 0;
+        if (tempA != tempB) {
+          return tempB.compareTo(tempA);
+        }
 
-      final freqA = frequencyCounts[a.id] ?? 0;
-      final freqB = frequencyCounts[b.id] ?? 0;
-      if (freqA != freqB) {
-        return freqB.compareTo(freqA);
-      }
+        final freqA = frequencyCounts[a.id] ?? 0;
+        final freqB = frequencyCounts[b.id] ?? 0;
+        if (freqA != freqB) {
+          return freqB.compareTo(freqA);
+        }
 
-      return candidateIndex[a.id]!.compareTo(candidateIndex[b.id]!);
-    });
+        return candidateIndex[a.id]!.compareTo(candidateIndex[b.id]!);
+      });
 
     return sorted.take(limit).toList();
   }

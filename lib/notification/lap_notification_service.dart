@@ -162,8 +162,9 @@ class LapNotificationService {
       limit: 1,
       orderBy: 'ended_at_epoch_ms DESC, rowid DESC',
     );
-    final precedingActivityId =
-        lastClosed.isNotEmpty ? lastClosed.first.activityId : null;
+    final precedingActivityId = lastClosed.isNotEmpty
+        ? lastClosed.first.activityId
+        : null;
 
     final suggested = const ContextualSuggestionEngine().rank(
       candidates: activities,
@@ -175,10 +176,7 @@ class LapNotificationService {
     );
 
     final byId = {for (final activity in activities) activity.id: activity};
-    final ids = <String>{
-      for (final s in suggested) s.id,
-      ...byId.keys,
-    };
+    final ids = <String>{for (final s in suggested) s.id, ...byId.keys};
     return [for (final id in ids.take(chipCount)) byId[id]!];
   }
 

@@ -8,7 +8,11 @@ void main() {
     const zoneUtc = 'UTC';
     const zoneNY = 'America/New_York';
 
-    Activity makeActivity(String id, {String name = '', bool isArchived = false}) {
+    Activity makeActivity(
+      String id, {
+      String name = '',
+      bool isArchived = false,
+    }) {
       return Activity(
         id: id,
         name: name.isEmpty ? id : name,
@@ -76,33 +80,66 @@ void main() {
       expect(ranked.map((a) => a.id).toList(), ['act_2', 'act_4']);
     });
 
-    test('Markov transition (A -> B) correctly ranks B first when preceding is A', () {
-      final a = makeActivity('act_A');
-      final b = makeActivity('act_B');
-      final c = makeActivity('act_C');
+    test(
+      'Markov transition (A -> B) correctly ranks B first when preceding is A',
+      () {
+        final a = makeActivity('act_A');
+        final b = makeActivity('act_B');
+        final c = makeActivity('act_C');
 
-      // History: A -> B, A -> B, A -> C
-      final history = [
-        makeRecord(id: 'r1', activityId: 'act_A', startedAtEpochMs: 1000, endedAtEpochMs: 2000),
-        makeRecord(id: 'r2', activityId: 'act_B', startedAtEpochMs: 2000, endedAtEpochMs: 3000),
-        makeRecord(id: 'r3', activityId: 'act_A', startedAtEpochMs: 3000, endedAtEpochMs: 4000),
-        makeRecord(id: 'r4', activityId: 'act_B', startedAtEpochMs: 4000, endedAtEpochMs: 5000),
-        makeRecord(id: 'r5', activityId: 'act_A', startedAtEpochMs: 5000, endedAtEpochMs: 6000),
-        makeRecord(id: 'r6', activityId: 'act_C', startedAtEpochMs: 6000, endedAtEpochMs: 7000),
-      ];
+        // History: A -> B, A -> B, A -> C
+        final history = [
+          makeRecord(
+            id: 'r1',
+            activityId: 'act_A',
+            startedAtEpochMs: 1000,
+            endedAtEpochMs: 2000,
+          ),
+          makeRecord(
+            id: 'r2',
+            activityId: 'act_B',
+            startedAtEpochMs: 2000,
+            endedAtEpochMs: 3000,
+          ),
+          makeRecord(
+            id: 'r3',
+            activityId: 'act_A',
+            startedAtEpochMs: 3000,
+            endedAtEpochMs: 4000,
+          ),
+          makeRecord(
+            id: 'r4',
+            activityId: 'act_B',
+            startedAtEpochMs: 4000,
+            endedAtEpochMs: 5000,
+          ),
+          makeRecord(
+            id: 'r5',
+            activityId: 'act_A',
+            startedAtEpochMs: 5000,
+            endedAtEpochMs: 6000,
+          ),
+          makeRecord(
+            id: 'r6',
+            activityId: 'act_C',
+            startedAtEpochMs: 6000,
+            endedAtEpochMs: 7000,
+          ),
+        ];
 
-      final ranked = engine.rank(
-        candidates: [c, b, a],
-        history: history,
-        precedingActivityId: 'act_A',
-        targetEpochMs: 8000,
-        timezoneId: zoneUtc,
-      );
+        final ranked = engine.rank(
+          candidates: [c, b, a],
+          history: history,
+          precedingActivityId: 'act_A',
+          targetEpochMs: 8000,
+          timezoneId: zoneUtc,
+        );
 
-      // Even though candidate list had c first, B has 2 transitions vs C's 1 transition
-      expect(ranked.first.id, 'act_B');
-      expect(ranked[1].id, 'act_C');
-    });
+        // Even though candidate list had c first, B has 2 transitions vs C's 1 transition
+        expect(ranked.first.id, 'act_B');
+        expect(ranked[1].id, 'act_C');
+      },
+    );
 
     test('Temporal slotting (Activity C at 8am, Activity D at 8pm)', () {
       final actC = makeActivity('act_C');
@@ -118,8 +155,18 @@ void main() {
       final tueEveningMs = DateTime.utc(2026, 11, 3, 20).millisecondsSinceEpoch;
 
       final history = [
-        makeRecord(id: 'r1', activityId: 'act_C', startedAtEpochMs: monMorningMs, endedAtEpochMs: monMorningMs + 3600000),
-        makeRecord(id: 'r2', activityId: 'act_D', startedAtEpochMs: monEveningMs, endedAtEpochMs: monEveningMs + 3600000),
+        makeRecord(
+          id: 'r1',
+          activityId: 'act_C',
+          startedAtEpochMs: monMorningMs,
+          endedAtEpochMs: monMorningMs + 3600000,
+        ),
+        makeRecord(
+          id: 'r2',
+          activityId: 'act_D',
+          startedAtEpochMs: monEveningMs,
+          endedAtEpochMs: monEveningMs + 3600000,
+        ),
       ];
 
       // Query on Tuesday at 8:30am (within 8am +/- 1 hour) on a weekday
@@ -149,7 +196,12 @@ void main() {
 
       // In America/New_York (UTC-5 in winter):
       // 13:00 UTC is 08:00 AM NY time.
-      final nyTargetTimeUtcMs = DateTime.utc(2026, 11, 2, 13).millisecondsSinceEpoch;
+      final nyTargetTimeUtcMs = DateTime.utc(
+        2026,
+        11,
+        2,
+        13,
+      ).millisecondsSinceEpoch;
 
       // History recorded at 08:00 AM in America/New_York (which is 13:00 UTC)
       final history = [
@@ -188,9 +240,25 @@ void main() {
       final t3 = DateTime.utc(2026, 11, 2, 7, 30).millisecondsSinceEpoch;
 
       final history = [
-        makeRecord(id: 'r1', activityId: 'sleep', startedAtEpochMs: t0, endedAtEpochMs: t1, isMidnightSplit: true),
-        makeRecord(id: 'r2', activityId: 'sleep', startedAtEpochMs: t1, endedAtEpochMs: t2),
-        makeRecord(id: 'r3', activityId: 'breakfast', startedAtEpochMs: t2, endedAtEpochMs: t3),
+        makeRecord(
+          id: 'r1',
+          activityId: 'sleep',
+          startedAtEpochMs: t0,
+          endedAtEpochMs: t1,
+          isMidnightSplit: true,
+        ),
+        makeRecord(
+          id: 'r2',
+          activityId: 'sleep',
+          startedAtEpochMs: t1,
+          endedAtEpochMs: t2,
+        ),
+        makeRecord(
+          id: 'r3',
+          activityId: 'breakfast',
+          startedAtEpochMs: t2,
+          endedAtEpochMs: t3,
+        ),
       ];
 
       // When preceding activity is sleep, breakfast should rank top
@@ -211,8 +279,18 @@ void main() {
 
       // History has null -> act_2
       final history = [
-        makeRecord(id: 'r1', activityId: null, startedAtEpochMs: 1000, endedAtEpochMs: 2000),
-        makeRecord(id: 'r2', activityId: 'act_2', startedAtEpochMs: 2000, endedAtEpochMs: 3000),
+        makeRecord(
+          id: 'r1',
+          activityId: null,
+          startedAtEpochMs: 1000,
+          endedAtEpochMs: 2000,
+        ),
+        makeRecord(
+          id: 'r2',
+          activityId: 'act_2',
+          startedAtEpochMs: 2000,
+          endedAtEpochMs: 3000,
+        ),
       ];
 
       // Preceding activity is null: Untracked interval
@@ -267,7 +345,10 @@ void main() {
       sw.stop();
       final avgMicros = sw.elapsedMicroseconds / iterations;
       // Should be well under 1000 microseconds (1 millisecond)
-      expect(avgMicros, lessThan(3000)); // generous buffer for debug mode/shared CI runner
+      expect(
+        avgMicros,
+        lessThan(3000),
+      ); // generous buffer for debug mode/shared CI runner
     });
   });
 }
