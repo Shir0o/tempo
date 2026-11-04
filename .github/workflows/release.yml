@@ -96,8 +96,10 @@ jobs:
         run: |
           set -euo pipefail
           code=$(dart run tool/derive_version_code.dart "$TAG")
+          wear_code=$(dart run tool/derive_version_code.dart "$TAG" 1000000)
           echo "VERSION_CODE=$code" >> "$GITHUB_ENV"
-          echo "Derived versionCode=$code from tag $TAG"
+          echo "WEAR_VERSION_CODE=$wear_code" >> "$GITHUB_ENV"
+          echo "Derived phone versionCode=$code and wear versionCode=$wear_code from tag $TAG"
 
       - name: Build signed release AAB
         run: flutter build appbundle --release --no-tree-shake-icons --build-number="$VERSION_CODE"
@@ -105,18 +107,30 @@ jobs:
       - name: Build signed release APK
         run: flutter build apk --release --no-tree-shake-icons --build-number="$VERSION_CODE"
 
+      - name: Build signed release Wear OS AAB and APK
+        run: |
+          set -euo pipefail
+          tag_clean="${TAG#v}"
+          ver_name="${tag_clean%%-*}"
+          cd android
+          ./gradlew :wear:bundleRelease :wear:assembleRelease -PversionCode="$WEAR_VERSION_CODE" -PversionName="$ver_name"
+
       - name: Locate built artifacts
         id: locate
         run: |
           set -euo pipefail
           AAB=$(find build/app/outputs/bundle/release -name '*.aab' | head -n1)
           APK=$(find build/app/outputs/flutter-apk -name 'app-release.apk' | head -n1)
-          if [ -z "$AAB" ] || [ -z "$APK" ]; then
-            echo "::error::Built artifacts not found."
+          WEAR_AAB=$(find android/wear/build/outputs/bundle/release -name '*.aab' | head -n1)
+          WEAR_APK=$(find android/wear/build/outputs/apk/release -name '*.apk' | head -n1)
+          if [ -z "$AAB" ] || [ -z "$APK" ] || [ -z "$WEAR_AAB" ] || [ -z "$WEAR_APK" ]; then
+            echo "::error::Built artifacts not found (Phone: AAB=$AAB, APK=$APK; Wear: AAB=$WEAR_AAB, APK=$WEAR_APK)."
             exit 1
           fi
           echo "aab=$AAB" >> "$GITHUB_OUTPUT"
           echo "apk=$APK" >> "$GITHUB_OUTPUT"
+          echo "wear_aab=$WEAR_AAB" >> "$GITHUB_OUTPUT"
+          echo "wear_apk=$WEAR_APK" >> "$GITHUB_OUTPUT"
 
       - name: Check if release artifacts are already attached (idempotency)
         id: check-existing
@@ -152,6 +166,8 @@ jobs:
           files: |
             ${{ steps.locate.outputs.aab }}
             ${{ steps.locate.outputs.apk }}
+            ${{ steps.locate.outputs.wear_aab }}
+            ${{ steps.locate.outputs.wear_apk }}
 
       - name: Determine if this is a pre-release tag
         id: prerelease
@@ -236,6 +252,7 @@ jobs:
         if: steps.prerelease.outputs.is_prerelease != 'true'
         env:
           PLAY_SUPPLY_JSON_KEY: ${{ secrets.PLAY_SUPPLY_JSON_KEY }}
+          FASTLANE_WEAR_AAB_PATH: ${{ steps.locate.outputs.wear_aab }}
         run: |
           set -euo pipefail
           echo "$PLAY_SUPPLY_JSON_KEY" > fastlane/play-supply-credentials.json
