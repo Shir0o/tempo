@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.8.0](https://github.com/Shir0o/tempo/compare/v1.7.0...v1.8.0) (2026-11-04)
+
+
+### Features
+
+* smart activity suggestions by pattern, visual coherence, and tag import ([#59](https://github.com/Shir0o/tempo/issues/59)) ([cb15b17](https://github.com/Shir0o/tempo/commit/cb15b1730ef4e19ec3e68b3da5a698213a1355dd))
+
+
+### Bug Fixes
+
+* **release:** upload the Wear OS bundle using absolute paths ([#60](https://github.com/Shir0o/tempo/issues/60)) ([af0fc18](https://github.com/Shir0o/tempo/commit/af0fc18e9f50752127d5db26627b1bd614952a08))
+
 ## [1.7.0](https://github.com/Shir0o/tempo/compare/v1.6.0...v1.7.0) (2026-11-04)
 
 
