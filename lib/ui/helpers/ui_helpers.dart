@@ -30,6 +30,40 @@ class UiHelpers {
     return '#${(color.toARGB32() & 0x00FFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}';
   }
 
+  /// Checks whether [text] consists of or contains Unicode emojis.
+  static final RegExp _emojiRegex = RegExp(
+    r'(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])',
+  );
+
+  /// Returns true if [text] contains an emoji character sequence.
+  static bool isEmoji(String? text) {
+    if (text == null || text.trim().isEmpty) return false;
+    return _emojiRegex.hasMatch(text);
+  }
+
+  /// Builds either a [Text] widget rendering an emoji or an [Icon] widget
+  /// mapped with [getIconData].
+  static Widget buildIconOrEmoji({
+    required String iconName,
+    required Color color,
+    double size = 20,
+  }) {
+    if (isEmoji(iconName)) {
+      return Text(
+        iconName.trim(),
+        style: TextStyle(
+          fontSize: size,
+          height: 1.0,
+        ),
+      );
+    }
+    return Icon(
+      getIconData(iconName),
+      color: color,
+      size: size,
+    );
+  }
+
   /// Resolves an icon name to a Material [IconData].
   static IconData getIconData(String? iconName) {
     switch (iconName?.toLowerCase().trim()) {

@@ -17,7 +17,7 @@ class TempoDatabase {
 
   Database get db => _db;
 
-  static const int databaseVersion = 8;
+  static const int databaseVersion = 9;
   static const String databaseFileName = 'tempo.db';
 
   // --- DDL Constants (schema v6) ---
@@ -172,6 +172,9 @@ CREATE TABLE IF NOT EXISTS settings (
           if (oldVersion < 8) {
             await migrateV7ToV8(db);
           }
+          if (oldVersion < 9) {
+            await migrateV8ToV9(db);
+          }
         },
       ),
     );
@@ -212,6 +215,46 @@ CREATE TABLE IF NOT EXISTS settings (
       normalized.toMap(),
       conflictAlgorithm: ConflictAlgorithm.abort,
     );
+  }
+
+  /// Creates and inserts an activity, looking up and inheriting the parent
+  /// category's color if [colorHex] is default (`#4CAF50`) and [categoryId] is
+  /// non-null.
+  Future<Activity> createActivity({
+    required String id,
+    required String name,
+    String? categoryId,
+    String colorHex = '#4CAF50',
+    String iconName = 'schedule',
+    bool isPinned = false,
+    int sortOrder = 0,
+    bool isArchived = false,
+    int? createdAtEpochMs,
+    int? updatedAtEpochMs,
+  }) async {
+    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+    var effectiveColor = colorHex;
+    if (colorHex == '#4CAF50' && categoryId != null) {
+      final category = await getCategoryById(categoryId);
+      if (category != null && category.colorHex.isNotEmpty) {
+        effectiveColor = category.colorHex;
+      }
+    }
+
+    final activity = Activity(
+      id: id,
+      name: name,
+      categoryId: categoryId,
+      colorHex: effectiveColor,
+      iconName: iconName,
+      isPinned: isPinned,
+      sortOrder: sortOrder,
+      isArchived: isArchived,
+      createdAtEpochMs: createdAtEpochMs ?? now,
+      updatedAtEpochMs: updatedAtEpochMs ?? now,
+    );
+    await insertActivity(activity);
+    return activity;
   }
 
   Future<void> updateActivity(Activity activity) async {

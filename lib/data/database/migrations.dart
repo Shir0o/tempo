@@ -372,3 +372,24 @@ WHERE category_id IS NOT NULL
   );
 ''');
 }
+
+/// Version 9: Backfill activities with default color to inherit their parent
+/// category's color_hex.
+Future<void> migrateV8ToV9(DatabaseExecutor db) async {
+  await db.execute('''
+UPDATE activities
+SET color_hex = (
+    SELECT categories.color_hex
+    FROM categories
+    WHERE categories.id = activities.category_id
+)
+WHERE category_id IS NOT NULL
+  AND color_hex = '#4CAF50'
+  AND EXISTS (
+      SELECT 1 FROM categories
+      WHERE categories.id = activities.category_id
+        AND categories.color_hex IS NOT NULL
+        AND categories.color_hex != ''
+  );
+''');
+}

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/state/day_recorder.dart';
+import '../../core/state/suggestion_engine.dart';
 import '../../core/state/today_order.dart';
 import '../../core/time/timezone_id.dart';
 import '../../data/database/tempo_database.dart';
@@ -81,6 +82,7 @@ class _DashboardViewState extends State<DashboardView>
   List<Category> _categories = [];
   List<Record> _todayRecords = [];
   Map<String, int> _todayActivityDurations = {};
+  List<Activity> _suggestedActivities = [];
   int _loggedTodayMs = 0;
   Activity? _lastActivity;
   _UndoState? _undo;
@@ -196,6 +198,25 @@ class _DashboardViewState extends State<DashboardView>
       final lastActivityId = last.isEmpty ? null : last.first.activityId;
       final activitiesById = {for (final a in archived) a.id: a};
 
+      // Query past 30 days of history for contextual suggestions
+      final thirtyDaysAgoMs =
+          now.millisecondsSinceEpoch - const Duration(days: 30).inMilliseconds;
+      final historyRecords = await widget.database.getRecords(
+        startedAfter: thirtyDaysAgoMs,
+        orderBy: 'started_at_epoch_ms ASC',
+      );
+
+      final suggested = historyRecords.isEmpty
+          ? <Activity>[]
+          : const ContextualSuggestionEngine().rank(
+              candidates: activities,
+              history: historyRecords,
+              precedingActivityId: lastActivityId,
+              targetEpochMs: now.millisecondsSinceEpoch,
+              timezoneId: localTimezoneId(),
+              limit: 4,
+            );
+
       if (mounted) {
         setState(() {
           _activities = activities;
@@ -203,6 +224,7 @@ class _DashboardViewState extends State<DashboardView>
           _categories = categories;
           _todayRecords = todayRecords;
           _todayActivityDurations = durations;
+          _suggestedActivities = suggested;
           _loggedTodayMs = loggedMs;
           _lastActivity = activitiesById[lastActivityId];
           _dayStartMs = dayStartMs;
@@ -308,6 +330,7 @@ class _DashboardViewState extends State<DashboardView>
               slivers: [
                 SliverToBoxAdapter(child: _buildLapPanel()),
                 SliverToBoxAdapter(child: _buildGridHeading()),
+                SliverToBoxAdapter(child: _buildSuggestedActivitiesRow()),
                 _buildActivityGrid(),
                 SliverPadding(
                   padding: EdgeInsets.only(bottom: undo == null ? 32 : 104),
@@ -713,6 +736,73 @@ class _DashboardViewState extends State<DashboardView>
     );
   }
 
+  Widget _buildSuggestedActivitiesRow() {
+    if (_suggestedActivities.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return SizedBox(
+      height: 48,
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+        scrollDirection: Axis.horizontal,
+        itemCount: _suggestedActivities.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final activity = _suggestedActivities[index];
+          final color = UiHelpers.parseHexColor(activity.colorHex);
+          return Semantics(
+            button: true,
+            label: 'Suggested: ${activity.name}. Tap to label untracked time.',
+            child: Material(
+              color: _surface,
+              borderRadius: BorderRadius.circular(18),
+              child: InkWell(
+                key: ValueKey('suggested-chip-${activity.id}'),
+                borderRadius: BorderRadius.circular(18),
+                onTap: () => _labelActivity(activity),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: color,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      if (activity.iconName.isNotEmpty) ...[
+                        const SizedBox(width: 6),
+                        UiHelpers.buildIconOrEmoji(
+                          iconName: activity.iconName,
+                          color: Colors.white,
+                          size: 14,
+                        ),
+                      ],
+                      const SizedBox(width: 6),
+                      Text(
+                        activity.name,
+                        style: const TextStyle(
+                          fontFamily: _fontFamily,
+                          color: Colors.white,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Widget _buildActivityGrid() {
     if (_isLoading) {
       return const SliverToBoxAdapter(
@@ -851,18 +941,33 @@ class _DashboardViewState extends State<DashboardView>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    activity.name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontFamily: _fontFamily,
-                      color: textColor,
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.w600,
-                      height: 1.1,
-                      letterSpacing: -0.2,
-                    ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          activity.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontFamily: _fontFamily,
+                            color: textColor,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                            height: 1.1,
+                            letterSpacing: -0.2,
+                          ),
+                        ),
+                      ),
+                      if (activity.iconName.isNotEmpty) ...[
+                        const SizedBox(width: 4),
+                        UiHelpers.buildIconOrEmoji(
+                          iconName: activity.iconName,
+                          color: textColor.withValues(alpha: 0.8),
+                          size: 16,
+                        ),
+                      ],
+                    ],
                   ),
                   Text(
                     total,

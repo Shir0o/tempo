@@ -114,6 +114,26 @@ void main() {
       expect(ids, ['b', 'c', 'a', 'd', 'e', 'f']);
     });
 
+    test('chips prioritize contextual Markov transitions over raw frequency', () async {
+      // In setUp, we have: c -> b -> b.
+      // Now add: when preceding is 'd', transition to 'e'.
+      await insertRecord('d', lapStart - 50000);
+      await insertRecord('e', lapStart - 40000);
+      await insertRecord('d', lapStart - 30000);
+      await insertRecord('e', lapStart - 20000);
+
+      // Now close current lap as 'd'. So preceding activity is 'd'.
+      mockTime = lapStart + 10000;
+      await dayRecorder.label('d');
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      // The new notification publish should rank 'e' at the top because d -> e has 2 transitions.
+      expect(posted.isNotEmpty, isTrue);
+      final lastNotification = posted.last;
+      final ids = [for (final a in lastNotification['activities'] as List) a['id']];
+      expect(ids.first, 'e');
+    });
+
     test(
       'a chip tap labels the Lap, offers Undo, then shows the new Lap',
       () async {
