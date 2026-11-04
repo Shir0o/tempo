@@ -42,7 +42,7 @@ data class WearActivity(
 
 data class WatchAction(
     val actionId: String = UUID.randomUUID().toString(),
-    val type: String, // "LABEL" or "SPLIT"
+    val type: String, // "LABEL", "SPLIT" or "UNDO"
     val activityId: String? = null,
     val timestampEpochMs: Long = System.currentTimeMillis(),
     val comment: String? = null
@@ -63,6 +63,10 @@ class WearLapRepository private constructor(private val context: Context) {
 
     private val _activities = MutableStateFlow(loadActivities())
     val activities: StateFlow<List<WearActivity>> = _activities.asStateFlow()
+
+    /** The Lap as it was before the last [label], restored by [undo]. */
+    @Volatile
+    private var lapBeforeLabel: LapState? = null
 
     companion object {
         private const val TAG = "WearLapRepository"
@@ -187,6 +191,7 @@ class WearLapRepository private constructor(private val context: Context) {
     /** Labels the open Lap as [activityId]; the phone writes the Record. */
     fun label(activityId: String) {
         val now = System.currentTimeMillis()
+        lapBeforeLabel = _lap.value
         openLapFrom(now)
         dispatchAction(WatchAction(type = "LABEL", activityId = activityId, timestampEpochMs = now))
         notifySurfaces()
@@ -195,8 +200,24 @@ class WearLapRepository private constructor(private val context: Context) {
     /** Closes the open Lap as an Untracked Record; the phone marks the boundary. */
     fun split() {
         val now = System.currentTimeMillis()
+        lapBeforeLabel = null
         openLapFrom(now)
         dispatchAction(WatchAction(type = "SPLIT", timestampEpochMs = now))
+        notifySurfaces()
+    }
+
+    /**
+     * Reverses the last [label] inside the UndoGraceWindow: the Lap goes back
+     * to its previous start here, and the phone deletes the Record it wrote.
+     */
+    fun undo() {
+        val previous = lapBeforeLabel ?: return
+        lapBeforeLabel = null
+        val now = System.currentTimeMillis()
+        val restored = previous.copy(revision = _lap.value.revision + 1, updatedAtEpochMs = now)
+        _lap.value = restored
+        saveLap(restored)
+        dispatchAction(WatchAction(type = "UNDO", timestampEpochMs = now))
         notifySurfaces()
     }
 
@@ -363,6 +384,11 @@ class WearLapRepository private constructor(private val context: Context) {
             TempoTileService.requestUpdate(context)
         } catch (e: Exception) {
             Log.w(TAG, "Tile update notify error: ${e.message}")
+        }
+        try {
+            LapNotification.update(context, this)
+        } catch (e: Exception) {
+            Log.w(TAG, "Lap notification update error: ${e.message}")
         }
     }
 }

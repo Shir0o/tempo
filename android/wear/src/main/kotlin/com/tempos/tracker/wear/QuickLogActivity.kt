@@ -1,9 +1,13 @@
 package com.tempos.tracker.wear
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.view.HapticFeedbackConstants
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -109,6 +113,15 @@ class QuickLogActivity : ComponentActivity() {
                 LabelConfirmationScreen(activity, range) { finish() }
             }
             return
+        }
+
+        // Wear OS 4+: the ongoing Lap notification needs POST_NOTIFICATIONS.
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+                if (granted) repository.notifySurfaces()
+            }.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
         setContent {

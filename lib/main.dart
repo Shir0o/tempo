@@ -1,7 +1,9 @@
 import 'dart:io';
+import 'dart:ui' show DartPluginRegistrant;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:path/path.dart' as p;
@@ -16,12 +18,108 @@ import 'data/database/tempo_database.dart';
 import 'data/models/models.dart';
 import 'desktop/deep_link_service.dart';
 import 'desktop/menu_bar_service.dart';
+import 'notification/lap_notification_service.dart';
 import 'ui/tempo_app.dart';
 import 'wearable/wearable_sync_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // 1-4. Open the database, CSV export and the always-running Lap
+  WearableSyncService? wearableSyncService;
+  final (:database, :exportEngine, :dayRecorder) = await _openDayRecorder(
+    // The watch tile ranks Activities by recent use, so keep its slots current.
+    onRecordCommitted: (_) async {
+      await wearableSyncService?.refreshActivities();
+    },
+  );
+
+  // 5. Initialize Google Drive Sync Service
+  await _initializeGoogleSignIn();
+  final driveSyncService = GoogleDriveSyncService(database: database);
+  driveSyncService.attachToExportEngine(exportEngine);
+
+  // 6. Initialize Universal Deep Link Bus (tempo:// & timetracker://)
+  DeepLinkService(dayRecorder: dayRecorder, database: database);
+
+  // 7. Platform-specific integrations
+  if (!kIsWeb) {
+    if (Platform.isAndroid) {
+      // Connect Wear OS Companion synchronization
+      wearableSyncService = WearableSyncService(
+        dayRecorder: dayRecorder,
+        database: database,
+      );
+      wearableSyncService.initialize();
+      // Sync initial activities to DataClient
+      database.getAllActivities().then(wearableSyncService.syncActivities);
+      // Keep the ongoing Lap notification current and handle its taps
+      final lapNotificationService = LapNotificationService(
+        dayRecorder: dayRecorder,
+        database: database,
+      );
+      lapNotificationService.initialize();
+      lapNotificationService.publish();
+    } else if (Platform.isMacOS) {
+      // Connect macOS menu bar status item
+      MenuBarService(dayRecorder: dayRecorder);
+    }
+  }
+
+  runApp(
+    TempoApp(
+      dayRecorder: dayRecorder,
+      database: database,
+      syncService: driveSyncService,
+      exportEngine: exportEngine,
+    ),
+  );
+}
+
+/// Runs in a headless engine when the ongoing Lap notification is tapped while
+/// the app is not running. The tap goes through the same DayRecorder setup as
+/// [main]; once its UndoGraceWindow has passed and the CSV export is written,
+/// Android destroys the engine.
+@pragma('vm:entry-point')
+Future<void> notificationActionMain() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
+  const channel = MethodChannel(LapNotificationService.channelName);
+
+  final (:database, :exportEngine, :dayRecorder) = await _openDayRecorder();
+  LapNotificationService(
+    dayRecorder: dayRecorder,
+    database: database,
+    onSettled: () async {
+      // The Record must reach the live CSV export before the engine goes.
+      try {
+        if (exportEngine.isExportScheduled) {
+          await exportEngine.exportImmediately();
+        } else {
+          await exportEngine.lastExportFuture;
+        }
+      } catch (e) {
+        debugPrint('CSV export after a notification action failed: $e');
+      }
+      await channel.invokeMethod<void>('headlessSettled');
+    },
+  ).initialize();
+  await channel.invokeMethod<void>('headlessReady');
+}
+
+/// Opens the database and the CSV export engine and starts the DayRecorder
+/// over them, so the app and a headless notification action write the Day
+/// the same way.
+Future<
+  ({
+    TempoDatabase database,
+    CsvExportEngine exportEngine,
+    DayRecorder dayRecorder,
+  })
+>
+_openDayRecorder({
+  Future<void> Function(Record record)? onRecordCommitted,
+}) async {
   // 1. Open local SQLite database
   final database = await TempoDatabase.open();
 
@@ -44,51 +142,18 @@ Future<void> main() async {
   );
 
   // 4. Open the always-running Lap
-  WearableSyncService? wearableSyncService;
   final dayRecorder = DayRecorder(
     database: database,
     csvExportEngine: exportEngine,
     getTimezoneId: () async =>
         (await FlutterTimezone.getLocalTimezone()).identifier,
-    // The watch tile ranks Activities by recent use, so keep its slots current.
-    onRecordCommitted: (_) async {
-      await wearableSyncService?.refreshActivities();
-    },
+    onRecordCommitted: onRecordCommitted,
   );
   await dayRecorder.initialize();
-
-  // 5. Initialize Google Drive Sync Service
-  await _initializeGoogleSignIn();
-  final driveSyncService = GoogleDriveSyncService(database: database);
-  driveSyncService.attachToExportEngine(exportEngine);
-
-  // 6. Initialize Universal Deep Link Bus (tempo:// & timetracker://)
-  DeepLinkService(dayRecorder: dayRecorder, database: database);
-
-  // 7. Platform-specific integrations
-  if (!kIsWeb) {
-    if (Platform.isAndroid) {
-      // Connect Wear OS Companion synchronization
-      wearableSyncService = WearableSyncService(
-        dayRecorder: dayRecorder,
-        database: database,
-      );
-      wearableSyncService.initialize();
-      // Sync initial activities to DataClient
-      database.getAllActivities().then(wearableSyncService.syncActivities);
-    } else if (Platform.isMacOS) {
-      // Connect macOS menu bar status item
-      MenuBarService(dayRecorder: dayRecorder);
-    }
-  }
-
-  runApp(
-    TempoApp(
-      dayRecorder: dayRecorder,
-      database: database,
-      syncService: driveSyncService,
-      exportEngine: exportEngine,
-    ),
+  return (
+    database: database,
+    exportEngine: exportEngine,
+    dayRecorder: dayRecorder,
   );
 }
 

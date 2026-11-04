@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Google Drive sync needs outbound network access in release builds too. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- The ongoing Lap notification (Android 13+ asks at runtime). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="tempo"
         android:name="${applicationName}"
@@ -46,6 +48,11 @@
                 <action android:name="app.tempo.action.SPLIT" />
             </intent-filter>
         </receiver>
+
+        <!-- Taps on the ongoing Lap notification; only this app's PendingIntents reach it -->
+        <receiver
+            android:name=".LapNotificationReceiver"
+            android:exported="false" />
 
         <!-- Quick Settings notification pull-down shade tile -->
         <service

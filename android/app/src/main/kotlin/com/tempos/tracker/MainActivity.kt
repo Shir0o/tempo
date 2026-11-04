@@ -1,6 +1,9 @@
 package com.tempos.tracker
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import com.google.android.gms.wearable.DataClient
@@ -28,6 +31,7 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var methodChannel: MethodChannel? = null
     private var deepLinkChannel: MethodChannel? = null
+    private var notificationChannel: MethodChannel? = null
     private var initialDeepLink: String? = null
 
     companion object {
@@ -38,6 +42,7 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
         const val PATH_ACTIVITIES = "/tempo/activities"
         const val PATH_ACTIONS_PREFIX = "/tempo/actions/"
         const val PATH_ACTION_RPC = "/tempo/action"
+        private const val REQUEST_POST_NOTIFICATIONS = 1
 
         @Volatile
         var instance: MainActivity? = null
@@ -52,6 +57,16 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
             Log.d(TAG, "Dispatching deep link to Flutter: $url")
             deepLinkChannel?.invokeMethod("onDeepLinkReceived", mapOf("url" to url))
         }
+    }
+
+    /**
+     * Hands a tap on the Lap notification to this engine's Dart side. Returns
+     * false when the engine is not up, so the tap runs headless instead.
+     */
+    fun dispatchNotificationAction(action: Map<String, Any?>): Boolean {
+        val channel = notificationChannel ?: return false
+        runOnUiThread { channel.invokeMethod("onNotificationAction", action) }
+        return true
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -76,6 +91,17 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
                 else -> result.notImplemented()
             }
         }
+
+        notificationChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, LapNotification.CHANNEL_NAME)
+        notificationChannel?.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "updateLapNotification" -> {
+                    (call.arguments as? Map<*, *>)?.let { LapNotification.post(applicationContext, it) }
+                    result.success(null)
+                }
+                else -> result.notImplemented()
+            }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -93,6 +119,22 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
             Wearable.getMessageClient(this).addListener(this)
         } catch (e: Exception) {
             Log.w(TAG, "Wearable API init warning: ${e.message}")
+        }
+
+        // The ongoing Lap notification needs this from Android 13 on.
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_POST_NOTIFICATIONS)
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_POST_NOTIFICATIONS &&
+            grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+        ) {
+            LapNotification.repost(applicationContext)
         }
     }
 
