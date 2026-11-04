@@ -1,14 +1,17 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/state/day_recorder.dart';
+import '../../core/state/today_order.dart';
 import '../../core/time/timezone_id.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
 import 'activity_manager_view.dart';
+import 'helpers/activity_order.dart';
 import 'helpers/ui_helpers.dart';
 import 'theme/tempo_theme.dart';
 
@@ -21,12 +24,22 @@ class DashboardView extends StatefulWidget {
   final VoidCallback? onNavigateToStats;
   final VoidCallback? onOpenHistory;
 
+  /// The Today page's block order. Falls back to [TodayOrder.categories] when
+  /// the app does not provide one (tests, previews).
+  final ValueListenable<TodayOrder>? todayOrder;
+
+  /// Bumped whenever activities or categories change elsewhere in the app, so
+  /// this page can reload its catalog.
+  final ValueListenable<int>? catalogRevision;
+
   const DashboardView({
     super.key,
     required this.dayRecorder,
     required this.database,
     this.onNavigateToStats,
     this.onOpenHistory,
+    this.todayOrder,
+    this.catalogRevision,
   });
 
   @override
@@ -65,6 +78,7 @@ class _DashboardViewState extends State<DashboardView>
   Timer? _liveTicker;
   List<Activity> _activities = [];
   Map<String, Activity> _activitiesById = {};
+  List<Category> _categories = [];
   List<Record> _todayRecords = [];
   Map<String, int> _todayActivityDurations = {};
   int _loggedTodayMs = 0;
@@ -82,6 +96,8 @@ class _DashboardViewState extends State<DashboardView>
     _startLiveTicker();
     _loadData();
     widget.dayRecorder.lapListenable.addListener(_onLapChanged);
+    widget.todayOrder?.addListener(_onOrderChanged);
+    widget.catalogRevision?.addListener(_onCatalogChanged);
   }
 
   @override
@@ -89,6 +105,8 @@ class _DashboardViewState extends State<DashboardView>
     _liveTicker?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     widget.dayRecorder.lapListenable.removeListener(_onLapChanged);
+    widget.todayOrder?.removeListener(_onOrderChanged);
+    widget.catalogRevision?.removeListener(_onCatalogChanged);
     super.dispose();
   }
 
@@ -105,6 +123,16 @@ class _DashboardViewState extends State<DashboardView>
 
   void _onLapChanged() {
     if (mounted) setState(() {});
+  }
+
+  /// The Today page's order changed in Settings; re-lay out the same catalog.
+  void _onOrderChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Activities or categories changed elsewhere; reload them.
+  void _onCatalogChanged() {
+    if (mounted) _loadData();
   }
 
   /// Rebuilds once a second so the elapsed time and the undo countdown move.
@@ -132,6 +160,7 @@ class _DashboardViewState extends State<DashboardView>
       final archived = await widget.database.getAllActivities(
         includeArchived: true,
       );
+      final categories = await widget.database.getCategories();
 
       // Bound the query to the last two days so the strip can also show a
       // record that began yesterday and crossed midnight into today.
@@ -171,6 +200,7 @@ class _DashboardViewState extends State<DashboardView>
         setState(() {
           _activities = activities;
           _activitiesById = activitiesById;
+          _categories = categories;
           _todayRecords = todayRecords;
           _todayActivityDurations = durations;
           _loggedTodayMs = loggedMs;
@@ -730,20 +760,65 @@ class _DashboardViewState extends State<DashboardView>
       );
     }
 
-    return SliverPadding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      sliver: SliverGrid(
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          mainAxisSpacing: 8,
-          crossAxisSpacing: 8,
-          childAspectRatio: 1,
-        ),
-        delegate: SliverChildBuilderDelegate((context, index) {
-          final activity = _activities[index];
-          final durationMs = _todayActivityDurations[activity.id] ?? 0;
-          return _buildActivityBlock(activity, durationMs);
-        }, childCount: _activities.length),
+    final sections = activitySections(
+      activities: _activities,
+      categories: _categories,
+      order: widget.todayOrder?.value ?? TodayOrder.categories,
+    );
+
+    return SliverMainAxisGroup(
+      slivers: [
+        for (final section in sections) ...[
+          if (section.label != null)
+            SliverToBoxAdapter(child: _buildSectionHeader(section)),
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            sliver: SliverGrid(
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                mainAxisSpacing: 8,
+                crossAxisSpacing: 8,
+                childAspectRatio: 1,
+              ),
+              delegate: SliverChildBuilderDelegate((context, index) {
+                final activity = section.activities[index];
+                final durationMs = _todayActivityDurations[activity.id] ?? 0;
+                return _buildActivityBlock(activity, durationMs);
+              }, childCount: section.activities.length),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildSectionHeader(ActivitySection section) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(22, 16, 20, 4),
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: section.color ?? Colors.white38,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              section.label!.toUpperCase(),
+              style: const TextStyle(
+                fontFamily: _fontFamily,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.4,
+                color: Colors.white54,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

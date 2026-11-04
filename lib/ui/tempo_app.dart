@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/export/csv_export_engine.dart';
 import '../../core/state/day_recorder.dart';
+import '../../core/state/today_order.dart';
 import '../../core/sync/google_drive_sync_service.dart';
 import '../../data/database/tempo_database.dart';
 import 'dashboard_view.dart';
@@ -31,17 +32,34 @@ class TempoApp extends StatefulWidget {
 
 class _TempoAppState extends State<TempoApp> with WidgetsBindingObserver {
   int _currentTabIndex = 0;
+  late final ValueNotifier<TodayOrder> _todayOrder;
+  late final ValueNotifier<int> _catalogRevision;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _todayOrder = ValueNotifier(TodayOrder.categories);
+    _catalogRevision = ValueNotifier(0);
+    _loadTodayOrder();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _todayOrder.dispose();
+    _catalogRevision.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadTodayOrder() async {
+    try {
+      final stored = await widget.database.getSetting(TodayOrder.storageKey);
+      if (!mounted) return;
+      _todayOrder.value = TodayOrder.fromStorage(stored);
+    } catch (_) {
+      // A missing or unreadable preference keeps the default order.
+    }
   }
 
   @override
@@ -68,6 +86,8 @@ class _TempoAppState extends State<TempoApp> with WidgetsBindingObserver {
       DashboardView(
         dayRecorder: widget.dayRecorder,
         database: widget.database,
+        todayOrder: _todayOrder,
+        catalogRevision: _catalogRevision,
         onNavigateToStats: () => setState(() => _currentTabIndex = 2),
         onOpenHistory: () => setState(() => _currentTabIndex = 1),
       ),
@@ -78,6 +98,8 @@ class _TempoAppState extends State<TempoApp> with WidgetsBindingObserver {
         dayRecorder: widget.dayRecorder,
         syncService: widget.syncService,
         exportEngine: widget.exportEngine,
+        todayOrder: _todayOrder,
+        catalogRevision: _catalogRevision,
       ),
     ];
 
