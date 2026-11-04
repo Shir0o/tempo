@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/Shir0o/tempo/compare/v1.6.0...v1.7.0) (2026-11-04)
+
+
+### Features
+
+* **notification:** one-tap Lap labeling on phone and Wear OS ([#55](https://github.com/Shir0o/tempo/issues/55)) ([d7a04ff](https://github.com/Shir0o/tempo/commit/d7a04ff4da4bddf0b3f27ee44d78b7018a3d7c13))
+
 ## [1.6.0](https://github.com/Shir0o/tempo/compare/v1.5.0...v1.6.0) (2026-11-04)
 
 
