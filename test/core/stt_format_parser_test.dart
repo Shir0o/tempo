@@ -90,10 +90,12 @@ record\t102\t3\t1700001800000\t1700005400000\tResting\t
       );
       expect(prayerAct.categoryId, equals('cat-1'));
       expect(prayerAct.iconName, equals('sports_bar'));
+      expect(prayerAct.colorHex, equals(envelope.categories[0].colorHex));
 
       final sleepAct = envelope.activities.firstWhere((a) => a.name == 'Sleep');
       expect(sleepAct.categoryId, equals('cat-2'));
       expect(sleepAct.iconName, equals('bed'));
+      expect(sleepAct.colorHex, equals(envelope.categories[1].colorHex));
 
       expect(envelope.rawIntervals.length, equals(2));
       expect(envelope.rawIntervals[0].activityName, equals('Prayer'));
@@ -133,6 +135,13 @@ activity name,time started,time ended,comment,categories,record tags,duration,du
           envelope.activities.map((a) => a.name),
           containsAll(['Ministry', 'Commute']),
         );
+        final ministry = envelope.activities.firstWhere(
+          (a) => a.name == 'Ministry',
+        );
+        final spiritual = envelope.categories.firstWhere(
+          (c) => c.name == 'Spiritual',
+        );
+        expect(ministry.colorHex, equals(spiritual.colorHex));
 
         expect(envelope.rawIntervals.length, equals(2));
         expect(envelope.rawIntervals[0].activityName, equals('Ministry'));

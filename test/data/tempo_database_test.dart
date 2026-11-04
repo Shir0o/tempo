@@ -491,6 +491,94 @@ void main() {
       final saved = await db.getCategoryById('cat-1');
       expect(saved!.name, equals('Deep Work'));
     });
+
+    test('activities in a category wear the category colour', () async {
+      final category = Category(
+        id: 'cat-1',
+        name: 'Work',
+        colorHex: '#111111',
+        createdAtEpochMs: 0,
+        updatedAtEpochMs: 0,
+      );
+      await db.upsertCategory(category);
+
+      await db.insertActivity(
+        Activity(
+          id: 'act-1',
+          name: 'Reading',
+          categoryId: 'cat-1',
+          colorHex: '#AAAAAA',
+          createdAtEpochMs: 0,
+          updatedAtEpochMs: 0,
+        ),
+      );
+      await db.insertActivity(
+        Activity(
+          id: 'act-2',
+          name: 'Writing',
+          categoryId: 'cat-1',
+          colorHex: '#BBBBBB',
+          createdAtEpochMs: 0,
+          updatedAtEpochMs: 0,
+        ),
+      );
+      await db.insertActivity(
+        Activity(
+          id: 'act-loose',
+          name: 'Errands',
+          colorHex: '#CCCCCC',
+          createdAtEpochMs: 0,
+          updatedAtEpochMs: 0,
+        ),
+      );
+
+      expect((await db.getActivityById('act-1'))!.colorHex, '#111111');
+      expect((await db.getActivityById('act-2'))!.colorHex, '#111111');
+      expect((await db.getActivityById('act-loose'))!.colorHex, '#CCCCCC');
+
+      // Assigning an uncategorised activity adopts the category colour.
+      final loose = await db.getActivityById('act-loose');
+      await db.updateActivity(loose!.copyWith(categoryId: 'cat-1'));
+      expect((await db.getActivityById('act-loose'))!.colorHex, '#111111');
+
+      // Recolouring the category updates every activity in it.
+      await db.upsertCategory(
+        category.copyWith(colorHex: '#222222', updatedAtEpochMs: 1),
+      );
+      for (final id in ['act-1', 'act-2', 'act-loose']) {
+        expect((await db.getActivityById(id))!.colorHex, '#222222');
+      }
+    });
+
+    test(
+      'deleting a category keeps its last colour on its activities',
+      () async {
+        final category = Category(
+          id: 'cat-1',
+          name: 'Work',
+          colorHex: '#333333',
+          createdAtEpochMs: 0,
+          updatedAtEpochMs: 0,
+        );
+        await db.upsertCategory(category);
+        await db.insertActivity(
+          Activity(
+            id: 'act-1',
+            name: 'Reading',
+            categoryId: 'cat-1',
+            colorHex: '#999999',
+            createdAtEpochMs: 0,
+            updatedAtEpochMs: 0,
+          ),
+        );
+
+        await db.deleteCategory('cat-1');
+
+        final activity = await db.getActivityById('act-1');
+        expect(activity!.categoryId, isNull);
+        expect(activity.colorHex, '#333333');
+      },
+    );
   });
 
   group('Settings', () {

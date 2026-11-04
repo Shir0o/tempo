@@ -233,6 +233,14 @@ class _CategoryManagerViewState extends State<CategoryManagerView> {
                         );
                       }).toList(),
                     ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Activities in this category use this colour.',
+                      style: TempoText.label.copyWith(
+                        color: TempoColors.inkMuted,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
                     const SizedBox(height: 22),
                     Row(
                       children: [

@@ -355,3 +355,20 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 ''');
 }
+
+/// Version 8: Activities that belong to a Category take the Category's colour,
+/// so every activity in one category shares one colour.
+Future<void> migrateV7ToV8(DatabaseExecutor db) async {
+  await db.execute('''
+UPDATE activities
+SET color_hex = (
+  SELECT categories.color_hex
+  FROM categories
+  WHERE categories.id = activities.category_id
+)
+WHERE category_id IS NOT NULL
+  AND EXISTS (
+    SELECT 1 FROM categories WHERE categories.id = activities.category_id
+  );
+''');
+}

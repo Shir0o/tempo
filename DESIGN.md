@@ -235,7 +235,7 @@ Label screen on Night: overline "UNTRACKED · 10:06", the elapsed time, then Act
 ## Do's and Don'ts
 
 ### Do:
-- **Do** use the Activity's own colour for its block, strip segment and swatch; ink text on top.
+- **Do** use the Activity's colour for its block, strip segment and swatch; ink text on top. Activities in a Category take that Category's colour, so one category reads as one colour.
 - **Do** show every time in the zone it was lived in, and both zones when a Record crosses them.
 - **Do** keep copy descriptive: "Logged Errands 08:42–10:06", "7h 27m a day", "Untracked · 20m".
 - **Do** keep touch targets at least 48dp and give strips and blocks screen-reader labels.

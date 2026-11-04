@@ -176,4 +176,60 @@ void main() {
 
     await tempoDb.close();
   });
+
+  test(
+    'migrating to v8 aligns activity colours with their categories',
+    () async {
+      final v7Db = await databaseFactory.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(
+          version: 7,
+          onCreate: (db, version) => TempoDatabase.createSchema(db),
+        ),
+      );
+
+      await v7Db.insert('categories', {
+        'id': 'cat-1',
+        'name': 'Work',
+        'color_hex': '#112233',
+        'icon_name': 'folder',
+        'sort_order': 0,
+        'created_at_epoch_ms': 1000,
+        'updated_at_epoch_ms': 1000,
+      });
+      await v7Db.insert('activities', {
+        'id': 'act-categorized',
+        'name': 'Reading',
+        'category_id': 'cat-1',
+        'color_hex': '#ABCDEF',
+        'icon_name': 'schedule',
+        'is_pinned': 0,
+        'sort_order': 0,
+        'is_archived': 0,
+        'created_at_epoch_ms': 1000,
+        'updated_at_epoch_ms': 1000,
+      });
+      await v7Db.insert('activities', {
+        'id': 'act-loose',
+        'name': 'Errands',
+        'color_hex': '#ABCDEF',
+        'icon_name': 'schedule',
+        'is_pinned': 0,
+        'sort_order': 1,
+        'is_archived': 0,
+        'created_at_epoch_ms': 1000,
+        'updated_at_epoch_ms': 1000,
+      });
+      await v7Db.close();
+
+      final tempoDb = await TempoDatabase.open(path: dbPath);
+      addTearDown(tempoDb.close);
+
+      expect(
+        (await tempoDb.getActivityById('act-categorized'))!.colorHex,
+        '#112233',
+      );
+      expect((await tempoDb.getActivityById('act-loose'))!.colorHex, '#ABCDEF');
+    },
+  );
 }

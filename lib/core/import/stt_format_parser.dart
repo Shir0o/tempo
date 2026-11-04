@@ -310,12 +310,15 @@ class SttFormatParser {
       final isArchived = actData['isArchived'] as bool;
       final sttCatId = typeToCategory[entry.key];
       final tempoCatId = sttCatId != null ? categoryIdMap[sttCatId] : null;
+      final categoryColor = sttCatId != null
+          ? (rawCategories[sttCatId]?['color'] as String?)
+          : null;
 
       final act = Activity(
         id: 'act-${entry.key}',
         name: name,
         categoryId: tempoCatId,
-        colorHex: color,
+        colorHex: categoryColor ?? color,
         iconName: icon,
         isArchived: isArchived,
         sortOrder: actSort++,
@@ -438,6 +441,7 @@ class SttFormatParser {
     // Synthesize Categories
     final categories = <Category>[];
     final catNameToId = <String, String>{};
+    final catNameToColor = <String, String>{};
     var catSort = 0;
     for (final catName in categoryNames) {
       final catId = 'cat-csv-$catSort';
@@ -452,6 +456,7 @@ class SttFormatParser {
       );
       categories.add(category);
       catNameToId[catName] = catId;
+      catNameToColor[catName] = category.colorHex;
     }
 
     // Synthesize Activities
@@ -461,7 +466,9 @@ class SttFormatParser {
       final actName = entry.key;
       final catName = entry.value;
       final catId = catNameToId[catName];
-      final actColor = deterministicColor(actName);
+      final actColor = catId != null
+          ? catNameToColor[catName]!
+          : deterministicColor(actName);
 
       final act = Activity(
         id: 'act-csv-$actSort',
