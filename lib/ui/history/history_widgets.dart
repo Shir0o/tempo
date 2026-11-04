@@ -495,9 +495,9 @@ class SheetOverline extends StatelessWidget {
   }
 }
 
-/// A start or end stepper on Insert Paper: overline with the zone, ± circle
-/// buttons around the time, and which neighbour moves with it.
-class BoundaryStepper extends StatelessWidget {
+/// A start or end stepper on Insert Paper: overline with the zone and Day,
+/// ± circle buttons around the time, and what the move does.
+class EdgeStepper extends StatelessWidget {
   final String overline;
   final String time;
   final String caption;
@@ -506,7 +506,7 @@ class BoundaryStepper extends StatelessWidget {
   final VoidCallback? onLater;
   final VoidCallback? onPickTime;
 
-  const BoundaryStepper({
+  const EdgeStepper({
     super.key,
     required this.overline,
     required this.time,

@@ -525,7 +525,7 @@ class _HistoryViewState extends State<HistoryView> {
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             Expanded(
-                              child: BoundaryStepper(
+                              child: EdgeStepper(
                                 overline:
                                     'Start · $startZoneLabel'
                                     '${startDayLabel == null ? '' : ' · $startDayLabel'}',
@@ -554,7 +554,7 @@ class _HistoryViewState extends State<HistoryView> {
                             ),
                             const SizedBox(width: 8),
                             Expanded(
-                              child: BoundaryStepper(
+                              child: EdgeStepper(
                                 overline:
                                     'End · $endZoneLabel'
                                     '${endDayLabel == null ? '' : ' · $endDayLabel'}',
@@ -943,7 +943,7 @@ class _HistoryViewState extends State<HistoryView> {
           color: lapColor,
           hatched: false,
           semanticsLabel:
-              'Open Lap since $lapSince, '
+              'Untracked since $lapSince, '
               '${UiHelpers.formatDurationHuman(widget.dayRecorder.currentElapsedMs)}',
         ),
       );
