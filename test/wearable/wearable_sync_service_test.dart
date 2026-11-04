@@ -205,7 +205,9 @@ void main() {
       await syncService.syncActivities(await db.getAllActivities());
 
       final args = methodCalls.last.arguments as Map;
-      expect(args['tileActivityIds'], ['act-coding']);
+      // 'act-coding' is suggested first (recent/temporal/frequency in window),
+      // followed by remaining candidate 'act-workout'.
+      expect(args['tileActivityIds'], ['act-coding', 'act-workout']);
     });
 
     test('incoming LABEL action from the watch labels the Lap', () async {

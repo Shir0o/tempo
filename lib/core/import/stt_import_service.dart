@@ -79,6 +79,18 @@ class SttImportService {
       now,
     );
 
+    // Upsert any tags present in the raw intervals (e.g. from STT CSV "record tags")
+    final uniqueTagNames = <String>{};
+    for (final interval in envelope.rawIntervals) {
+      for (final t in interval.tagNames) {
+        final trimmed = t.trim();
+        if (trimmed.isNotEmpty) {
+          uniqueTagNames.add(trimmed);
+        }
+      }
+    }
+    final tagMapping = await _upsertTags(uniqueTagNames.toList(), now);
+
     var recordsImported = 0;
     var syntheticCount = 0;
     var skippedCollisions = 0;
@@ -88,6 +100,7 @@ class SttImportService {
       final reconciliation = await _reconcileAndInsertHistory(
         intervals: envelope.rawIntervals,
         activityMapping: activityMapping,
+        tagMapping: tagMapping,
         activeTz: activeTz,
         now: now,
       );
@@ -193,10 +206,38 @@ class SttImportService {
     return nameToIdMapping;
   }
 
+  /// Upserts tags non-destructively: exact name match against existing.
+  /// Returns a map of tagName -> effective tagId in database.
+  Future<Map<String, String>> _upsertTags(
+    List<String> tagNames,
+    int nowEpochMs,
+  ) async {
+    final tagMapping = <String, String>{};
+    for (final tag in tagNames) {
+      final existing = await database.getTagByName(tag);
+      if (existing != null) {
+        tagMapping[tag] = existing.id;
+      } else {
+        final newId = generateId();
+        final newTag = Tag(
+          id: newId,
+          name: tag,
+          colorHex: '#9E9E9E',
+          createdAtEpochMs: nowEpochMs,
+          updatedAtEpochMs: nowEpochMs,
+        );
+        await database.insertTag(newTag);
+        tagMapping[tag] = newId;
+      }
+    }
+    return tagMapping;
+  }
+
   /// Continuous coverage reconciliation and batch insertion.
   Future<_ReconciliationSummary> _reconcileAndInsertHistory({
     required List<SttRawInterval> intervals,
     required Map<String, String> activityMapping,
+    required Map<String, String> tagMapping,
     required String activeTz,
     required int now,
   }) async {
@@ -240,6 +281,10 @@ class SttImportService {
 
       final actKey = raw.activityName.trim().toLowerCase();
       final actId = activityMapping[actKey];
+      final recordTagIds = raw.tagNames
+          .map((t) => tagMapping[t.trim()])
+          .whereType<String>()
+          .toList();
 
       // Split multi-day spans across local midnight
       var cursor = startMs;
@@ -260,6 +305,7 @@ class SttImportService {
             isMidnightSplit: isMidnightSplit,
             createdAtEpochMs: now,
             updatedAtEpochMs: now,
+            tagIds: recordTagIds,
           ),
         );
 
@@ -414,6 +460,14 @@ class SttImportService {
             rec.toMap(),
             conflictAlgorithm: ConflictAlgorithm.replace,
           );
+          if (rec.tagIds.isNotEmpty) {
+            for (final tagId in rec.tagIds) {
+              await txn.insert('record_tags', {
+                'record_id': rec.id,
+                'tag_id': tagId,
+              }, conflictAlgorithm: ConflictAlgorithm.replace);
+            }
+          }
         }
       });
     }

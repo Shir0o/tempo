@@ -2,8 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 
-import '../core/state/activity_ranking.dart';
 import '../core/state/day_recorder.dart';
+import '../core/state/suggestion_engine.dart';
+import '../core/time/timezone_id.dart';
 import '../data/database/tempo_database.dart';
 import '../data/models/activity.dart';
 
@@ -127,18 +128,42 @@ class WearableSyncService {
     }
   }
 
-  /// The ids of the most-labelled Activities over [tileActivityWindow], most
-  /// used first. Ties keep the user's own Activity order.
+  /// The ids of the top suggested Activities over [tileActivityWindow] using
+  /// [ContextualSuggestionEngine], filling remaining slots with remaining activities.
   Future<List<String>> _tileActivityIds(List<Activity> activities) async {
     final db = database;
     if (db == null) return const [];
 
-    final since = _nowUtcMs() - tileActivityWindow.inMilliseconds;
-    final records = await db.getRecords(startedAfter: since, trackedOnly: true);
-    return rankActivitiesByUse(
-      activities,
-      records,
-    ).take(tileActivityCount).toList(growable: false);
+    final now = _nowUtcMs();
+    final timezone = localTimezoneId();
+    final since = now - tileActivityWindow.inMilliseconds;
+
+    final history = await db.getRecords(
+      startedAfter: since,
+      orderBy: 'started_at_epoch_ms ASC',
+    );
+
+    final lastClosed = await db.getRecords(
+      trackedOnly: true,
+      limit: 1,
+      orderBy: 'ended_at_epoch_ms DESC, rowid DESC',
+    );
+    final precedingActivityId = lastClosed.isNotEmpty
+        ? lastClosed.first.activityId
+        : null;
+
+    final suggested = const ContextualSuggestionEngine().rank(
+      candidates: activities,
+      history: history,
+      precedingActivityId: precedingActivityId,
+      targetEpochMs: now,
+      timezoneId: timezone,
+      limit: tileActivityCount,
+    );
+
+    final byId = {for (final activity in activities) activity.id: activity};
+    final ids = <String>{for (final s in suggested) s.id, ...byId.keys};
+    return ids.take(tileActivityCount).toList(growable: false);
   }
 
   /// Sends the open Lap snapshot to the watch.

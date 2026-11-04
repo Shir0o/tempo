@@ -59,4 +59,99 @@ void main() {
     dayRecorder.dispose();
     await db.close();
   });
+
+  testWidgets(
+    'suggested activities row renders when suggestions exist and labels on tap',
+    (WidgetTester tester) async {
+      final db = await TempoDatabase.openInMemory(
+        factory: databaseFactoryFfiNoIsolate,
+      );
+      await db.insertActivity(
+        Activity(
+          id: 'act-1',
+          name: 'Work',
+          colorHex: '#2196F3',
+          iconName: 'work',
+          createdAtEpochMs: 0,
+          updatedAtEpochMs: 0,
+        ),
+      );
+      await db.insertActivity(
+        Activity(
+          id: 'act-2',
+          name: 'Coffee',
+          colorHex: '#795548',
+          iconName: '☕',
+          createdAtEpochMs: 0,
+          updatedAtEpochMs: 0,
+        ),
+      );
+
+      final now = DateTime.now().millisecondsSinceEpoch;
+      // Seed history: Work -> Coffee
+      await db.insertRecord(
+        Record(
+          id: 'rec-1',
+          activityId: 'act-1',
+          startedAtEpochMs: now - 7200000,
+          endedAtEpochMs: now - 3600000,
+          timezoneId: 'America/Los_Angeles',
+          createdAtEpochMs: now - 3600000,
+          updatedAtEpochMs: now - 3600000,
+        ),
+      );
+      await db.insertRecord(
+        Record(
+          id: 'rec-2',
+          activityId: 'act-2',
+          startedAtEpochMs: now - 3600000,
+          endedAtEpochMs: now - 1800000,
+          timezoneId: 'America/Los_Angeles',
+          createdAtEpochMs: now - 1800000,
+          updatedAtEpochMs: now - 1800000,
+        ),
+      );
+      // Last closed record was Work, so Coffee is predicted next!
+      await db.insertRecord(
+        Record(
+          id: 'rec-3',
+          activityId: 'act-1',
+          startedAtEpochMs: now - 1800000,
+          endedAtEpochMs: now - 60000,
+          timezoneId: 'America/Los_Angeles',
+          createdAtEpochMs: now - 60000,
+          updatedAtEpochMs: now - 60000,
+        ),
+      );
+
+      final dayRecorder = DayRecorder(database: db);
+      await dayRecorder.initialize();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DashboardView(dayRecorder: dayRecorder, database: db),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Suggested chip should exist
+      final suggestedCoffee = find.byKey(
+        const ValueKey('suggested-chip-act-2'),
+      );
+      expect(suggestedCoffee, findsOneWidget);
+      expect(find.text('☕'), findsWidgets);
+
+      // Tapping the suggested chip labels the lap
+      await tester.tap(suggestedCoffee);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.textContaining('Logged Coffee'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      dayRecorder.dispose();
+      await db.close();
+    },
+  );
 }

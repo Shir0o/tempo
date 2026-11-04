@@ -4,8 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
-import '../core/state/activity_ranking.dart';
 import '../core/state/day_recorder.dart';
+import '../core/state/suggestion_engine.dart';
 import '../core/time/timezone_id.dart';
 import '../data/database/tempo_database.dart';
 import '../data/models/models.dart';
@@ -145,20 +145,38 @@ class LapNotificationService {
     await onSettled?.call();
   }
 
-  /// The most-labelled Activities over the watch tile's window, then the rest
-  /// in the user's own order, up to [chipCount].
+  /// Suggested activities ranked contextually, followed by remaining user
+  /// activities in their own order, up to [chipCount].
   Future<List<Activity>> _chipActivities(List<Activity> activities) async {
-    final since =
-        _nowUtcMs() - WearableSyncService.tileActivityWindow.inMilliseconds;
-    final records = await database.getRecords(
+    final now = _nowUtcMs();
+    final timezone = localTimezoneId();
+    final since = now - WearableSyncService.tileActivityWindow.inMilliseconds;
+
+    final history = await database.getRecords(
       startedAfter: since,
-      trackedOnly: true,
+      orderBy: 'started_at_epoch_ms ASC',
     );
+
+    final lastClosed = await database.getRecords(
+      trackedOnly: true,
+      limit: 1,
+      orderBy: 'ended_at_epoch_ms DESC, rowid DESC',
+    );
+    final precedingActivityId = lastClosed.isNotEmpty
+        ? lastClosed.first.activityId
+        : null;
+
+    final suggested = const ContextualSuggestionEngine().rank(
+      candidates: activities,
+      history: history,
+      precedingActivityId: precedingActivityId,
+      targetEpochMs: now,
+      timezoneId: timezone,
+      limit: chipCount,
+    );
+
     final byId = {for (final activity in activities) activity.id: activity};
-    final ids = <String>{
-      ...rankActivitiesByUse(activities, records),
-      ...byId.keys,
-    };
+    final ids = <String>{for (final s in suggested) s.id, ...byId.keys};
     return [for (final id in ids.take(chipCount)) byId[id]!];
   }
 

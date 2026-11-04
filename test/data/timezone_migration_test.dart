@@ -134,7 +134,7 @@ void main() {
       final db = await TempoDatabase.open(path: dbPath);
       addTearDown(db.close);
 
-      expect(TempoDatabase.databaseVersion, 8);
+      expect(TempoDatabase.databaseVersion, 9);
 
       final pst = await db.getRecordById('rec-pst');
       expect(pst!.timezoneId, 'America/Los_Angeles');
