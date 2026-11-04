@@ -226,17 +226,6 @@ class _HistoryViewState extends State<HistoryView> {
         .showSnackBar(SnackBar(content: Text(message)));
   }
 
-  /// The Record that ends exactly where [record] starts, if any.
-  Record? _previousRecord(Record record) {
-    for (final other in _records) {
-      if (other.id != record.id &&
-          other.endedAtEpochMs == record.startedAtEpochMs) {
-        return other;
-      }
-    }
-    return null;
-  }
-
   /// The Record that starts exactly where [record] ends, if any.
   Record? _nextRecord(Record record) {
     for (final other in _records) {
@@ -255,7 +244,6 @@ class _HistoryViewState extends State<HistoryView> {
   /// applied on Save; Split, Merge next and Untrack apply at once.
   Future<void> _openEditRecordDialog(Record record) async {
     final commentController = TextEditingController(text: record.comment);
-    final previous = _previousRecord(record);
     final next = _nextRecord(record);
     final startClock = wallClockAt(record.timezoneId, record.startedAtEpochMs);
     final stepMs = const Duration(minutes: 5).inMilliseconds;
@@ -271,29 +259,42 @@ class _HistoryViewState extends State<HistoryView> {
     if (current != null && current.isArchived) activities.insert(0, current);
 
     /// Asks for a wall-clock time in [zone] on the date of [currentMs] and
-    /// returns its instant, or null when dismissed.
+    /// returns its instant, or null when dismissed. A time that falls on the
+    /// wrong side of the other edge is read as the neighbouring Day, so
+    /// "22:00 → 02:00" works without a date field.
     Future<int?> pickInstant(
       BuildContext context,
       String zone,
-      int currentMs,
-    ) async {
+      int currentMs, {
+      required bool isEndEdge,
+    }) async {
       final clock = wallClockAt(zone, currentMs);
       final time = await showTimePicker(
         context: context,
         initialTime: TimeOfDay.fromDateTime(clock),
       );
       if (time == null) return null;
-      return epochMsFromWallClock(
-        DateTime.utc(
-          clock.year,
-          clock.month,
-          clock.day,
-          time.hour,
-          time.minute,
-        ),
+      var wall = DateTime.utc(
+        clock.year,
+        clock.month,
+        clock.day,
+        time.hour,
+        time.minute,
+      );
+      var instant = epochMsFromWallClock(
+        wall,
         zone,
         referenceEpochMs: currentMs,
       );
+      if (isEndEdge && instant <= pendingStartMs) {
+        wall = wall.add(const Duration(days: 1));
+      } else if (!isEndEdge && instant >= pendingEndMs) {
+        wall = wall.subtract(const Duration(days: 1));
+      } else {
+        return instant;
+      }
+      instant = epochMsFromWallClock(wall, zone, referenceEpochMs: currentMs);
+      return instant;
     }
 
     await showModalBottomSheet<void>(
@@ -330,16 +331,17 @@ class _HistoryViewState extends State<HistoryView> {
             );
             if (!ok) return;
           }
-          // The start resizes the previous Record, the end resizes this one.
-          if (previous != null && startMs != record.startedAtEpochMs) {
-            final ok = await _applyEdit(
-              () => widget.dayRecorder.moveBoundary(previous.id, startMs),
-            );
-            if (!ok) return;
-          }
-          if (endMs != record.endedAtEpochMs) {
+          // Both edges move together. Only this Record changes; time it gives
+          // up becomes Untracked and time it takes must already be Untracked.
+          final startChanged = startMs != record.startedAtEpochMs;
+          final endChanged = endMs != record.endedAtEpochMs;
+          if (startChanged || endChanged) {
             await _applyEdit(
-              () => widget.dayRecorder.moveBoundary(record.id, endMs),
+              () => widget.dayRecorder.adjustEdges(
+                record.id,
+                startEpochMs: startChanged ? startMs : null,
+                endEpochMs: endChanged ? endMs : null,
+              ),
             );
           }
         }
@@ -421,6 +423,19 @@ class _HistoryViewState extends State<HistoryView> {
               record.endTimezoneId,
               pendingEndMs,
             );
+            final startWall = wallClockAt(record.timezoneId, pendingStartMs);
+            final endWall = wallClockAt(record.endTimezoneId, pendingEndMs);
+            final spansDays =
+                startWall.year != endWall.year ||
+                startWall.month != endWall.month ||
+                startWall.day != endWall.day;
+            final startDayLabel = spansDays
+                ? DateFormat('EEE d MMM').format(startWall)
+                : null;
+            final endDayLabel = spansDays
+                ? DateFormat('EEE d MMM').format(endWall)
+                : null;
+            final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
 
             return Padding(
               padding: EdgeInsets.only(
@@ -502,75 +517,71 @@ class _HistoryViewState extends State<HistoryView> {
                       ),
                       const SizedBox(height: 16),
 
-                      // Boundary steppers: the start resizes the previous
-                      // Record, the end resizes this one.
+                      // Edge steppers: each moves one edge of this Record.
+                      // Time it gives up becomes Untracked; it only grows into
+                      // time that is already Untracked.
                       IntrinsicHeight(
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             Expanded(
-                              child: BoundaryStepper(
-                                overline: 'Start · $startZoneLabel',
+                              child: EdgeStepper(
+                                overline:
+                                    'Start · $startZoneLabel'
+                                    '${startDayLabel == null ? '' : ' · $startDayLabel'}',
                                 edgeName: 'Start',
                                 time: startTime,
-                                caption: previous == null
-                                    ? 'nothing earlier to move'
-                                    : "moves ${_recordName(previous)}'s end",
-                                onEarlier: previous == null
-                                    ? null
-                                    : () => setModalState(
-                                        () => pendingStartMs -= stepMs,
-                                      ),
-                                onLater: previous == null
-                                    ? null
-                                    : () => setModalState(
+                                caption: 'only this Record changes',
+                                onEarlier: () => setModalState(
+                                  () => pendingStartMs -= stepMs,
+                                ),
+                                onLater: pendingStartMs + stepMs < pendingEndMs
+                                    ? () => setModalState(
                                         () => pendingStartMs += stepMs,
-                                      ),
-                                onPickTime: previous == null
-                                    ? null
-                                    : () async {
-                                        final ms = await pickInstant(
-                                          context,
-                                          record.timezoneId,
-                                          pendingStartMs,
-                                        );
-                                        if (ms == null) return;
-                                        setModalState(
-                                          () => pendingStartMs = ms,
-                                        );
-                                      },
+                                      )
+                                    : null,
+                                onPickTime: () async {
+                                  final ms = await pickInstant(
+                                    context,
+                                    record.timezoneId,
+                                    pendingStartMs,
+                                    isEndEdge: false,
+                                  );
+                                  if (ms == null) return;
+                                  setModalState(() => pendingStartMs = ms);
+                                },
                               ),
                             ),
                             const SizedBox(width: 8),
                             Expanded(
-                              child: BoundaryStepper(
-                                overline: 'End · $endZoneLabel',
+                              child: EdgeStepper(
+                                overline:
+                                    'End · $endZoneLabel'
+                                    '${endDayLabel == null ? '' : ' · $endDayLabel'}',
                                 edgeName: 'End',
                                 time: endTime,
-                                caption: next == null
-                                    ? 'meets the open Lap'
-                                    : "moves ${_recordName(next)}'s start",
-                                onEarlier: next == null
-                                    ? null
-                                    : () => setModalState(
+                                caption: 'only this Record changes',
+                                onEarlier:
+                                    pendingEndMs - stepMs > pendingStartMs
+                                    ? () => setModalState(
                                         () => pendingEndMs -= stepMs,
-                                      ),
-                                onLater: next == null
-                                    ? null
-                                    : () => setModalState(
+                                      )
+                                    : null,
+                                onLater: pendingEndMs + stepMs <= nowMs
+                                    ? () => setModalState(
                                         () => pendingEndMs += stepMs,
-                                      ),
-                                onPickTime: next == null
-                                    ? null
-                                    : () async {
-                                        final ms = await pickInstant(
-                                          context,
-                                          record.endTimezoneId,
-                                          pendingEndMs,
-                                        );
-                                        if (ms == null) return;
-                                        setModalState(() => pendingEndMs = ms);
-                                      },
+                                      )
+                                    : null,
+                                onPickTime: () async {
+                                  final ms = await pickInstant(
+                                    context,
+                                    record.endTimezoneId,
+                                    pendingEndMs,
+                                    isEndEdge: true,
+                                  );
+                                  if (ms == null) return;
+                                  setModalState(() => pendingEndMs = ms);
+                                },
                               ),
                             ),
                           ],
@@ -777,7 +788,8 @@ class _HistoryViewState extends State<HistoryView> {
         if (index == 0) return _buildScreenTitle();
         final dateKey = dateKeys[index - 1];
         return _buildDay(
-          // Newest first in the list; earliest first inside a Day.
+          // Day sections run newest first; inside a Day the rows run newest
+          // first too, with the open Lap above them.
           grouped[dateKey]!.reversed.toList(),
           isToday: dateKey == todayKey,
           lap: dateKey == lapKey ? lap : null,
@@ -864,13 +876,6 @@ class _HistoryViewState extends State<HistoryView> {
                 '$zoneRoute, ${records.length} records',
           ),
           const SizedBox(height: 10),
-          for (final record in records)
-            HistoryTimelineRow(
-              time: DateFormat(
-                'HH:mm',
-              ).format(wallClockAt(record.timezoneId, record.startedAtEpochMs)),
-              block: _buildRecordBlock(record),
-            ),
           if (lap != null)
             HistoryTimelineRow(
               time: lapSince!,
@@ -878,6 +883,13 @@ class _HistoryViewState extends State<HistoryView> {
                 dayRecorder: widget.dayRecorder,
                 since: lapSince,
               ),
+            ),
+          for (final record in records.reversed)
+            HistoryTimelineRow(
+              time: DateFormat(
+                'HH:mm',
+              ).format(wallClockAt(record.timezoneId, record.startedAtEpochMs)),
+              block: _buildRecordBlock(record),
             ),
         ],
       ),
@@ -931,7 +943,7 @@ class _HistoryViewState extends State<HistoryView> {
           color: lapColor,
           hatched: false,
           semanticsLabel:
-              'Open Lap since $lapSince, '
+              'Untracked since $lapSince, '
               '${UiHelpers.formatDurationHuman(widget.dayRecorder.currentElapsedMs)}',
         ),
       );
@@ -944,10 +956,15 @@ class _HistoryViewState extends State<HistoryView> {
     final durationStr = UiHelpers.formatDurationHuman(record.elapsedMs);
     final zonedRange = record.crossesTimezones ? timeRange : null;
     final noteLabel = record.comment.isEmpty ? '' : ', ${record.comment}';
+    // The gutter already shows the start; show the end beside the duration.
+    final endLabel = record.crossesTimezones
+        ? null
+        : 'until ${DateFormat('HH:mm').format(wallClockAt(record.endTimezoneId, record.endedAtEpochMs))}';
 
     if (record.isUntracked) {
       return HistoryUntrackedBlock(
         duration: durationStr,
+        endLabel: endLabel,
         zonedRange: zonedRange,
         note: record.comment,
         semanticsLabel:
@@ -962,6 +979,7 @@ class _HistoryViewState extends State<HistoryView> {
       name: name,
       color: UiHelpers.parseHexColor(activity?.colorHex),
       duration: durationStr,
+      endLabel: endLabel,
       zonedRange: zonedRange,
       note: record.comment,
       semanticsLabel: '$name, $timeRange, $durationStr$noteLabel. Edit',

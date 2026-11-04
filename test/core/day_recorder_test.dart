@@ -339,47 +339,94 @@ void main() {
         wallMs(zoneId, 2026, 6, 1, hour, minute);
 
     test(
-      'moveBoundary resizes both neighbours and keeps the Day whole',
+      'adjustEdges trims a Record and leaves the freed time Untracked',
       () async {
         await recordTwoHours();
-        final edge = at(11);
 
-        final moved = await recorder.moveBoundary(sleepRecord.id, edge);
+        final moved = await recorder.adjustEdges(
+          sleepRecord.id,
+          endEpochMs: at(9),
+        );
 
         expect(moved.id, sleepRecord.id);
         expect(moved.startedAtEpochMs, morning);
-        expect(moved.endedAtEpochMs, edge);
-        expect(moved.durationMs, 3 * hourMs);
+        expect(moved.endedAtEpochMs, at(9));
         expect(moved.activityId, sleep.id);
         expect(moved.comment, 'w/ Sam');
         expect(moved.tagIds, [travelTag.id]);
 
-        final right = await db.getRecordById(mealsRecord.id);
-        expect(right!.startedAtEpochMs, edge);
-        expect(right.durationMs, hourMs);
-        expect(right.activityId, meals.id);
+        // The next Record keeps its own edges.
+        final mealsAfter = await db.getRecordById(mealsRecord.id);
+        expect(mealsAfter!.startedAtEpochMs, at(10));
+        expect(mealsAfter.endedAtEpochMs, lapStart);
 
         final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
-        expect(records[0].endedAtEpochMs, records[1].startedAtEpochMs);
-        expect(records.last.endedAtEpochMs, recorder.lap!.startedAtEpochMs);
-        expect(records.last.endedAtEpochMs, lapStart);
+        expect(records, hasLength(3));
+        expect(records[1].isUntracked, isTrue);
+        expect(records[1].startedAtEpochMs, at(9));
+        expect(records[1].endedAtEpochMs, at(10));
+        for (var i = 0; i < records.length - 1; i++) {
+          expect(records[i].endedAtEpochMs, records[i + 1].startedAtEpochMs);
+        }
       },
     );
 
-    test('moveBoundary refuses to pass a neighbour\'s other edge', () async {
+    test(
+      'adjustEdges trims the newest Record and grows the open Lap',
+      () async {
+        await recordTwoHours();
+
+        await recorder.adjustEdges(mealsRecord.id, endEpochMs: at(11, 30));
+
+        expect(recorder.lap!.startedAtEpochMs, at(11, 30));
+        expect(recorder.lap!.revision, 4);
+
+        final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+        expect(records, hasLength(2));
+        expect(records.last.endedAtEpochMs, recorder.lap!.startedAtEpochMs);
+      },
+    );
+
+    test('adjustEdges extends the newest Record into the open Lap', () async {
+      await recordTwoHours();
+      nowUtc = at(13);
+
+      final moved = await recorder.adjustEdges(
+        mealsRecord.id,
+        endEpochMs: at(12, 30),
+      );
+
+      expect(moved.endedAtEpochMs, at(12, 30));
+      expect(recorder.lap!.startedAtEpochMs, at(12, 30));
+      expect(await db.getRecords(), hasLength(2));
+    });
+
+    test(
+      'adjustEdges joins trimmed time to an adjacent Untracked Record',
+      () async {
+        await recordTwoHours();
+        await recorder.relabel(mealsRecord.id, null);
+
+        await recorder.adjustEdges(sleepRecord.id, endEpochMs: at(9));
+
+        final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+        expect(records, hasLength(2));
+        expect(records[1].isUntracked, isTrue);
+        expect(records[1].startedAtEpochMs, at(9));
+        expect(records[1].endedAtEpochMs, lapStart);
+      },
+    );
+
+    test('adjustEdges refuses to grow into a labelled Record', () async {
       await recordTwoHours();
 
       await expectLater(
-        recorder.moveBoundary(sleepRecord.id, mealsRecord.endedAtEpochMs),
-        throwsA(isA<RecordEditRefused>()),
-      );
-      await expectLater(
-        recorder.moveBoundary(sleepRecord.id, morning),
+        recorder.adjustEdges(sleepRecord.id, endEpochMs: at(11)),
         throwsA(
           isA<RecordEditRefused>().having(
             (error) => error.message,
             'message',
-            contains('past a neighbouring Record'),
+            contains('another Record'),
           ),
         ),
       );
@@ -391,27 +438,62 @@ void main() {
     });
 
     test(
-      'moveBoundary refuses to move the edge where the open Lap starts',
+      'adjustEdges moves the start and leaves Untracked before it',
       () async {
         await recordTwoHours();
 
-        await expectLater(
-          recorder.moveBoundary(mealsRecord.id, at(11)),
-          throwsA(
-            isA<RecordEditRefused>().having(
-              (error) => error.message,
-              'message',
-              contains('open Lap'),
-            ),
-          ),
-        );
+        await recorder.adjustEdges(sleepRecord.id, startEpochMs: at(9));
 
-        final unchanged = await db.getRecordById(mealsRecord.id);
-        expect(unchanged!.endedAtEpochMs, lapStart);
+        final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+        expect(records, hasLength(3));
+        expect(records.first.isUntracked, isTrue);
+        expect(records.first.startedAtEpochMs, morning);
+        expect(records.first.endedAtEpochMs, at(9));
+        expect(records[1].startedAtEpochMs, at(9));
       },
     );
 
-    test('moveBoundary keeps each Record\'s start and end zones', () async {
+    test(
+      'adjustEdges may begin a Record earlier when nothing is before it',
+      () async {
+        await recordTwoHours();
+
+        final moved = await recorder.adjustEdges(
+          sleepRecord.id,
+          startEpochMs: at(7),
+        );
+
+        expect(moved.startedAtEpochMs, at(7));
+        expect(await db.getRecords(), hasLength(2));
+      },
+    );
+
+    test('adjustEdges refuses an empty or future Record', () async {
+      await recordTwoHours();
+
+      await expectLater(
+        recorder.adjustEdges(sleepRecord.id, endEpochMs: morning),
+        throwsA(
+          isA<RecordEditRefused>().having(
+            (error) => error.message,
+            'message',
+            contains('start before its end'),
+          ),
+        ),
+      );
+      await expectLater(
+        recorder.adjustEdges(mealsRecord.id, endEpochMs: at(13)),
+        throwsA(
+          isA<RecordEditRefused>().having(
+            (error) => error.message,
+            'message',
+            contains('after now'),
+          ),
+        ),
+      );
+    });
+
+    test('adjustEdges keeps each Record\'s start and end zones', () async {
       zoneId = 'America/Los_Angeles';
       nowUtc = wallMs(zoneId, 2026, 6, 1, 8);
       await recorder.initialize();
@@ -422,9 +504,9 @@ void main() {
       nowUtc += hourMs;
       mealsRecord = await recorder.label(meals.id);
 
-      await recorder.moveBoundary(
+      await recorder.adjustEdges(
         sleepRecord.id,
-        sleepRecord.startedAtEpochMs + hourMs ~/ 2,
+        endEpochMs: sleepRecord.startedAtEpochMs + hourMs ~/ 2,
       );
 
       final left = await db.getRecordById(sleepRecord.id);
@@ -599,12 +681,11 @@ void main() {
       await engine.exportImmediately();
       expect(engine.isExportScheduled, isFalse);
 
-      final edge = at(11);
-      await recorder.moveBoundary(sleepRecord.id, edge);
+      await recorder.adjustEdges(sleepRecord.id, endEpochMs: at(9));
       expect(engine.isExportScheduled, isTrue);
       await engine.exportImmediately();
 
-      final later = await recorder.splitRecord(sleepRecord.id, at(9));
+      final later = await recorder.splitRecord(sleepRecord.id, at(8, 30));
       expect(engine.isExportScheduled, isTrue);
       await engine.exportImmediately();
 
@@ -824,7 +905,7 @@ void main() {
 
   group('Review fixes', () {
     /// Records 22:00 → 00:00 → 01:00 as Sleep and 01:00 → 02:00 as Meals in
-    /// Los Angeles, so one Boundary sits on midnight.
+    /// Los Angeles, so one edge sits on midnight.
     Future<List<Record>> recordAcrossMidnight() async {
       zoneId = 'America/Los_Angeles';
       nowUtc = wallMs(zoneId, 2026, 6, 1, 22);
@@ -839,39 +920,60 @@ void main() {
       return records;
     }
 
-    test('moveBoundary refuses to carry a Record across midnight', () async {
+    test('adjustEdges splits a Record that grows across midnight', () async {
       final records = await recordAcrossMidnight();
       final beforeMidnight = records[0];
-      final afterMidnight = records[1];
+      await recorder.relabel(records[1].id, null);
 
-      // The Record ending at midnight would grow past it.
-      expect(
-        () => recorder.moveBoundary(
-          beforeMidnight.id,
-          wallMs(zoneId, 2026, 6, 2, 0, 30),
-        ),
-        throwsA(isA<RecordEditRefused>()),
-      );
-      // The Record starting at midnight would begin the evening before.
-      expect(
-        () => recorder.moveBoundary(
-          beforeMidnight.id,
-          wallMs(zoneId, 2026, 6, 1, 23, 30),
-        ),
-        throwsA(isA<RecordEditRefused>()),
-      );
-      expect(
-        await db.getRecords(orderBy: 'started_at_epoch_ms ASC'),
-        equals(records),
+      await recorder.adjustEdges(
+        beforeMidnight.id,
+        endEpochMs: wallMs(zoneId, 2026, 6, 2, 0, 30),
       );
 
-      // A Boundary inside one Day still moves.
-      final moved = await recorder.moveBoundary(
-        afterMidnight.id,
-        wallMs(zoneId, 2026, 6, 2, 1, 30),
-      );
-      expect(moved.endedAtEpochMs, wallMs(zoneId, 2026, 6, 2, 1, 30));
+      final after = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+      expect(after, hasLength(4));
+      // The edited Record still stops at midnight; its growth becomes a second
+      // Record that keeps the Activity.
+      expect(after[0].id, beforeMidnight.id);
+      expect(after[0].endedAtEpochMs, wallMs(zoneId, 2026, 6, 2, 0));
+      expect(after[1].startedAtEpochMs, wallMs(zoneId, 2026, 6, 2, 0));
+      expect(after[1].endedAtEpochMs, wallMs(zoneId, 2026, 6, 2, 0, 30));
+      expect(after[1].activityId, sleep.id);
+      expect(after[2].isUntracked, isTrue);
+      expect(after[2].startedAtEpochMs, wallMs(zoneId, 2026, 6, 2, 0, 30));
+      expect(after[2].endedAtEpochMs, wallMs(zoneId, 2026, 6, 2, 1));
+      for (var i = 0; i < after.length - 1; i++) {
+        expect(after[i].endedAtEpochMs, after[i + 1].startedAtEpochMs);
+      }
     });
+
+    test(
+      'adjustEdges splits a Record that begins the evening before',
+      () async {
+        final records = await recordAcrossMidnight();
+        final afterMidnight = records[1];
+        await recorder.relabel(records[0].id, null);
+
+        await recorder.adjustEdges(
+          afterMidnight.id,
+          startEpochMs: wallMs(zoneId, 2026, 6, 1, 23, 30),
+        );
+
+        final after = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+        expect(after, hasLength(4));
+        expect(after[0].isUntracked, isTrue);
+        expect(after[0].endedAtEpochMs, wallMs(zoneId, 2026, 6, 1, 23, 30));
+        expect(after[1].id, afterMidnight.id);
+        expect(after[1].startedAtEpochMs, wallMs(zoneId, 2026, 6, 1, 23, 30));
+        expect(after[1].endedAtEpochMs, wallMs(zoneId, 2026, 6, 2, 0));
+        expect(after[2].startedAtEpochMs, wallMs(zoneId, 2026, 6, 2, 0));
+        expect(after[2].endedAtEpochMs, wallMs(zoneId, 2026, 6, 2, 1));
+        expect(after[2].activityId, sleep.id);
+        for (var i = 0; i < after.length - 1; i++) {
+          expect(after[i].endedAtEpochMs, after[i + 1].startedAtEpochMs);
+        }
+      },
+    );
 
     test('merge refuses Records that meet at midnight', () async {
       final records = await recordAcrossMidnight();

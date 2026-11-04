@@ -161,57 +161,201 @@ class DayRecorder {
     return updated;
   });
 
-  /// Moves the Boundary at the end of [leftRecordId], resizing that Record and
-  /// the one that begins there together. Both keep the start and end zones they
-  /// were recorded in; only their instants change.
+  /// Moves one or both Edges of [recordId] to [startEpochMs] and [endEpochMs].
   ///
-  /// Refused when nothing follows the Record (the open Lap starts at that
-  /// edge), when [newInstantEpochMs] would pass either neighbour's other
-  /// edge, or when either Record would then cross a local midnight.
-  Future<Record> moveBoundary(String leftRecordId, int newInstantEpochMs) =>
-      _synchronized(() async {
-        await _ensureInitializedLocked();
-        final left = await _recordOrThrow(leftRecordId);
-        if (newInstantEpochMs == left.endedAtEpochMs) return left;
+  /// Only that Record changes meaning. Time it gives up becomes Untracked,
+  /// merging into an adjacent Untracked Record or the open Lap when there is
+  /// one; it may grow only into time that is already Untracked, so a change
+  /// that would overlap a labelled Record is refused. A Record that would cross
+  /// local midnight is split there, keeping its Activity, note and tags.
+  Future<Record> adjustEdges(
+    String recordId, {
+    int? startEpochMs,
+    int? endEpochMs,
+  }) => _synchronized(() async {
+    await _ensureInitializedLocked();
+    final record = await _recordOrThrow(recordId);
+    final newStart = startEpochMs ?? record.startedAtEpochMs;
+    final newEnd = endEpochMs ?? record.endedAtEpochMs;
+    if (newStart == record.startedAtEpochMs &&
+        newEnd == record.endedAtEpochMs) {
+      return record;
+    }
+    if (newStart >= newEnd) {
+      throw const RecordEditRefused(
+        'A Record needs a start before its end, so the change was not made.',
+      );
+    }
+    final now = _nowUtcMs();
+    if (newEnd != record.endedAtEpochMs && newEnd > now) {
+      throw const RecordEditRefused(
+        "A Record can't end after now, so the change was not made.",
+      );
+    }
 
-        final right = await _recordStartingAt(left.endedAtEpochMs);
-        if (right == null) {
+    // Time the Record gives up becomes Untracked; time it gains must already
+    // be Untracked, or belong to the open Lap.
+    final lost = <(int, int, String)>[
+      if (newStart > record.startedAtEpochMs)
+        (record.startedAtEpochMs, newStart, record.timezoneId),
+      if (newEnd < record.endedAtEpochMs)
+        (newEnd, record.endedAtEpochMs, record.endTimezoneId),
+    ];
+    final gained = <(int, int)>[
+      if (newStart < record.startedAtEpochMs)
+        (newStart, record.startedAtEpochMs),
+      if (newEnd > record.endedAtEpochMs) (record.endedAtEpochMs, newEnd),
+    ];
+
+    final lap = _lapNotifier.value;
+    final removed = <Record>[];
+    final rewritten = <Record>[];
+    final created = <Record>[];
+    int? lapStartMs;
+
+    // Growing: absorb only Untracked neighbours, trimming or removing them.
+    for (final (from, to) in gained) {
+      for (final other in await _recordsOverlapping(from, to)) {
+        if (other.id == record.id) continue;
+        if (!other.isUntracked) {
           throw const RecordEditRefused(
-            "This edge meets the open Lap, so it can't be moved.",
+            'That time belongs to another Record, so the change was not made.',
           );
         }
-        if (newInstantEpochMs <= left.startedAtEpochMs ||
-            newInstantEpochMs >= right.endedAtEpochMs) {
-          throw const RecordEditRefused(
-            'That would push the edge past a neighbouring Record, so the '
-            'change was not made.',
+        final keepLeft = other.startedAtEpochMs < from;
+        final keepRight = other.endedAtEpochMs > to;
+        if (keepLeft && keepRight) {
+          rewritten.add(
+            other.copyWith(endedAtEpochMs: from, updatedAtEpochMs: now),
           );
+          created.add(
+            _untrackedRecord(
+              from: to,
+              to: other.endedAtEpochMs,
+              timezoneId: other.timezoneId,
+              endTimezoneId: other.endTimezoneId,
+              now: now,
+            ),
+          );
+        } else if (keepLeft) {
+          rewritten.add(
+            other.copyWith(endedAtEpochMs: from, updatedAtEpochMs: now),
+          );
+        } else if (keepRight) {
+          rewritten.add(
+            other.copyWith(startedAtEpochMs: to, updatedAtEpochMs: now),
+          );
+        } else {
+          removed.add(other);
         }
+      }
+    }
 
-        final now = _nowUtcMs();
-        final resizedLeft = left.copyWith(
-          endedAtEpochMs: newInstantEpochMs,
+    // A tail that reaches past the last Record takes time from the open Lap.
+    if (newEnd > record.endedAtEpochMs &&
+        lap != null &&
+        newEnd > lap.startedAtEpochMs) {
+      lapStartMs = newEnd;
+    }
+
+    // Shrinking: the freed span joins an adjacent Untracked span when one is
+    // there, and becomes its own Untracked Record otherwise.
+    for (final (from, to, zone) in lost) {
+      var merged = false;
+      final before = await _recordEndingAt(from);
+      if (before != null && before.id != record.id && before.isUntracked) {
+        final extended = before.copyWith(
+          endedAtEpochMs: to,
           updatedAtEpochMs: now,
         );
-        final resizedRight = right.copyWith(
-          startedAtEpochMs: newInstantEpochMs,
-          updatedAtEpochMs: now,
-        );
-        if (_crossesMidnight(resizedLeft) || _crossesMidnight(resizedRight)) {
-          throw const RecordEditRefused(
-            "That would carry a Record across midnight, so the change was not "
-            'made.',
-          );
+        if (!_crossesMidnight(extended)) {
+          rewritten.add(extended);
+          merged = true;
         }
+      }
+      if (!merged) {
+        final after = await _recordStartingAt(to);
+        if (after != null && after.id != record.id && after.isUntracked) {
+          final extended = after.copyWith(
+            startedAtEpochMs: from,
+            updatedAtEpochMs: now,
+          );
+          if (!_crossesMidnight(extended)) {
+            rewritten.add(extended);
+            merged = true;
+          }
+        }
+      }
+      if (!merged &&
+          lap != null &&
+          lap.startedAtEpochMs == to &&
+          _sameLocalDate(
+            lap.startTimezoneOr(zone),
+            lap.startedAtEpochMs,
+            from,
+          )) {
+        lapStartMs = from;
+        merged = true;
+      }
+      if (!merged) {
+        created.add(
+          _untrackedRecord(
+            from: from,
+            to: to,
+            timezoneId: zone,
+            endTimezoneId: zone,
+            now: now,
+          ),
+        );
+      }
+    }
 
-        await _db.db.transaction((txn) async {
-          await _updateRecordInTxn(txn, resizedLeft);
-          await _updateRecordInTxn(txn, resizedRight);
-        });
-        _lastOperation = null;
-        await _requestExport();
-        return resizedLeft;
-      });
+    final slices = _slicesOf(record, newStart, newEnd, now);
+    final updatedLap =
+        lap != null && lapStartMs != null && lapStartMs != lap.startedAtEpochMs
+        ? lap.copyWith(startedAtEpochMs: lapStartMs, revision: lap.revision + 1)
+        : null;
+
+    await _db.db.transaction((txn) async {
+      for (final record in removed) {
+        await txn.delete('records', where: 'id = ?', whereArgs: [record.id]);
+        await txn.insert(
+          'tombstones',
+          Tombstone(
+            entityId: record.id,
+            entityType: 'record',
+            deletedAtEpochMs: now,
+          ).toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+      for (final record in rewritten) {
+        await _updateRecordInTxn(txn, record);
+      }
+      for (final record in created) {
+        await _insertRecordInTxn(txn, record);
+      }
+      for (var i = 0; i < slices.length; i++) {
+        if (i == 0) {
+          await _updateRecordInTxn(txn, slices[i]);
+        } else {
+          await _insertRecordInTxn(txn, slices[i]);
+        }
+      }
+      if (updatedLap != null) {
+        await txn.insert(
+          'lap',
+          updatedLap.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+    });
+
+    _lastOperation = null;
+    if (updatedLap != null) _updateLap(updatedLap);
+    await _requestExport();
+    return slices.first;
+  });
 
   /// Splits [recordId] at [atEpochMs] into two neighbouring Records that share
   /// its Activity, comment and tags. The earlier half keeps the original id.
@@ -589,6 +733,89 @@ class DayRecorder {
     );
     if (rows.isEmpty) return null;
     return _db.getRecordById(rows.first['id'] as String);
+  }
+
+  /// The Record that ends at [epochMs], if any.
+  Future<Record?> _recordEndingAt(int epochMs) async {
+    final rows = await _db.db.query(
+      'records',
+      columns: ['id'],
+      where: 'ended_at_epoch_ms = ?',
+      whereArgs: [epochMs],
+      orderBy: 'rowid ASC',
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return _db.getRecordById(rows.first['id'] as String);
+  }
+
+  /// Every Record that overlaps [fromMs, toMs), oldest first, with tags.
+  Future<List<Record>> _recordsOverlapping(int fromMs, int toMs) async {
+    final rows = await _db.db.query(
+      'records',
+      columns: ['id'],
+      where: 'started_at_epoch_ms < ? AND ended_at_epoch_ms > ?',
+      whereArgs: [toMs, fromMs],
+      orderBy: 'started_at_epoch_ms ASC',
+    );
+    final records = <Record>[];
+    for (final row in rows) {
+      final record = await _db.getRecordById(row['id'] as String);
+      if (record != null) records.add(record);
+    }
+    return records;
+  }
+
+  /// The slices [start, end] is divided into at each local midnight, so no
+  /// Record crosses 00:00. The first slice keeps [record]'s id; later slices
+  /// keep its Activity, note, tags and end zone.
+  List<Record> _slicesOf(Record record, int start, int end, int now) {
+    final slices = <Record>[];
+    var cursor = start;
+    var first = true;
+    while (cursor < end) {
+      final midnight = nextLocalMidnightUtcMs(record.endTimezoneId, cursor);
+      final sliceEnd = midnight < end ? midnight : end;
+      slices.add(
+        record.copyWith(
+          id: first ? record.id : _generateId(),
+          startedAtEpochMs: cursor,
+          endedAtEpochMs: sliceEnd,
+          timezoneId: first ? record.timezoneId : record.endTimezoneId,
+          createdAtEpochMs: first ? record.createdAtEpochMs : now,
+          updatedAtEpochMs: now,
+        ),
+      );
+      cursor = sliceEnd;
+      first = false;
+    }
+    return slices;
+  }
+
+  Record _untrackedRecord({
+    required int from,
+    required int to,
+    required String timezoneId,
+    required String endTimezoneId,
+    required int now,
+  }) => Record(
+    id: _generateId(),
+    activityId: null,
+    startedAtEpochMs: from,
+    endedAtEpochMs: to,
+    timezoneId: timezoneId,
+    endTimezoneId: endTimezoneId,
+    createdAtEpochMs: now,
+    updatedAtEpochMs: now,
+  );
+
+  /// Whether [a] and [b] fall on the same calendar date in [zone].
+  bool _sameLocalDate(String zone, int a, int b) {
+    final first = wallClockAt(zone, a);
+    final second = wallClockAt(zone, b);
+    return first.year == second.year &&
+        first.month == second.month &&
+        first.day == second.day;
   }
 
   /// The contiguous MidnightSplit Records ending exactly at [lapStartEpochMs],

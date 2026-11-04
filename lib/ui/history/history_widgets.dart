@@ -36,6 +36,14 @@ const TextStyle _blockDurationStyle = TextStyle(
   fontFeatures: [FontFeature.tabularFigures()],
 );
 
+const TextStyle _blockEndStyle = TextStyle(
+  fontFamily: tempoFontFamily,
+  fontSize: 11,
+  fontWeight: FontWeight.w500,
+  color: TempoColors.inkMuted,
+  fontFeatures: [FontFeature.tabularFigures()],
+);
+
 /// Header card for one Day: title, meta and its 00–24 strip. Today sits on
 /// Ledger Paper; earlier Days on a Night Card.
 class HistoryDayCard extends StatelessWidget {
@@ -195,11 +203,13 @@ class HistoryTimelineRow extends StatelessWidget {
 }
 
 /// A labeled Record: Activity colour, ink text, name left, duration right,
-/// optional note and both lived times when the Record crosses zones.
+/// optional end time below it, optional note and both lived times when the
+/// Record crosses zones.
 class HistoryRecordBlock extends StatelessWidget {
   final String name;
   final Color color;
   final String duration;
+  final String? endLabel;
   final String? zonedRange;
   final String note;
   final String semanticsLabel;
@@ -210,6 +220,7 @@ class HistoryRecordBlock extends StatelessWidget {
     required this.name,
     required this.color,
     required this.duration,
+    this.endLabel,
     required this.zonedRange,
     required this.note,
     required this.semanticsLabel,
@@ -252,7 +263,15 @@ class HistoryRecordBlock extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Text(duration, style: _blockDurationStyle),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(duration, style: _blockDurationStyle),
+                          if (endLabel != null)
+                            Text(endLabel!, style: _blockEndStyle),
+                        ],
+                      ),
                     ],
                   ),
                   if (zonedRange != null) ...[
@@ -287,6 +306,7 @@ class HistoryRecordBlock extends StatelessWidget {
 /// "What was it?" pill. The whole block opens labeling.
 class HistoryUntrackedBlock extends StatelessWidget {
   final String duration;
+  final String? endLabel;
   final String? zonedRange;
   final String note;
   final String semanticsLabel;
@@ -295,6 +315,7 @@ class HistoryUntrackedBlock extends StatelessWidget {
   const HistoryUntrackedBlock({
     super.key,
     required this.duration,
+    this.endLabel,
     required this.zonedRange,
     required this.note,
     required this.semanticsLabel,
@@ -363,6 +384,8 @@ class HistoryUntrackedBlock extends StatelessWidget {
                         ),
                       ],
                     ),
+                    if (endLabel != null)
+                      Text(endLabel!, style: _blockEndStyle),
                     if (zonedRange != null)
                       Text(
                         zonedRange!,
@@ -388,7 +411,8 @@ class HistoryUntrackedBlock extends StatelessWidget {
   }
 }
 
-/// Today's open Lap: a Night block with a 2px lime outline and a live timer.
+/// Today's open Untracked stretch: a Night block with a 2px lime outline and a
+/// live timer.
 class HistoryOpenLapBlock extends StatefulWidget {
   final DayRecorder dayRecorder;
   final String since;
@@ -426,7 +450,7 @@ class _HistoryOpenLapBlockState extends State<HistoryOpenLapBlock> {
     return Semantics(
       container: true,
       label:
-          'Open Lap since ${widget.since}, '
+          'Untracked since ${widget.since}, '
           '${UiHelpers.formatDurationHuman(elapsedMs)}',
       excludeSemantics: true,
       child: Container(
@@ -441,7 +465,7 @@ class _HistoryOpenLapBlockState extends State<HistoryOpenLapBlock> {
           children: [
             Expanded(
               child: Text(
-                'Open Lap',
+                'Untracked',
                 style: _blockNameStyle.copyWith(color: Colors.white),
               ),
             ),
@@ -471,9 +495,9 @@ class SheetOverline extends StatelessWidget {
   }
 }
 
-/// A start or end stepper on Insert Paper: overline with the zone, ± circle
-/// buttons around the time, and which neighbour moves with it.
-class BoundaryStepper extends StatelessWidget {
+/// A start or end stepper on Insert Paper: overline with the zone and Day,
+/// ± circle buttons around the time, and what the move does.
+class EdgeStepper extends StatelessWidget {
   final String overline;
   final String time;
   final String caption;
@@ -482,7 +506,7 @@ class BoundaryStepper extends StatelessWidget {
   final VoidCallback? onLater;
   final VoidCallback? onPickTime;
 
-  const BoundaryStepper({
+  const EdgeStepper({
     super.key,
     required this.overline,
     required this.time,

@@ -483,7 +483,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
           end: math.max(end, start),
           color: TempoColors.ink,
           hatched: false,
-          semanticsLabel: 'Open Lap',
+          semanticsLabel: 'Untracked',
         ),
       );
     }

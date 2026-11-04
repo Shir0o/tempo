@@ -14,12 +14,13 @@ import 'pii_sanitizer.dart';
 /// Implements JSON-RPC 2.0 protocol over stdio for external AI assistants.
 /// Read tools describe Days plainly: a Day's timeline, time per Activity over a
 /// range, Untracked Records, and comparisons between Days. Write tools (label
-/// the Lap, split the Lap, move a Boundary) are gated behind `--allow-writes`.
+/// the Lap, split the Lap, adjust a Record's edge) are gated behind
+/// `--allow-writes`.
 class TempoMcpServer {
   static const Set<String> _writeToolNames = {
     'label_lap',
     'split_lap',
-    'move_boundary',
+    'adjust_record_edge',
   };
 
   final TempoDatabase database;
@@ -344,27 +345,33 @@ class TempoMcpServer {
           'inputSchema': {'type': 'object', 'properties': {}},
         },
         {
-          'name': 'move_boundary',
+          'name': 'adjust_record_edge',
           'description':
-              'Moves the Boundary at the end of a Record to a new instant, '
-              'resizing that Record and the one after it together. Refused '
-              'when the instant would push past a neighbour. Requires '
-              '--allow-writes.',
+              'Moves the start or end of one Record to a new instant. Only '
+              'that Record changes: time it gives up becomes Untracked, and it '
+              'may only grow into time that is already Untracked or the open '
+              'Lap. Refused when the instant would overlap a labelled Record '
+              'or land after now. Requires --allow-writes.',
           'inputSchema': {
             'type': 'object',
             'properties': {
               'record_id': {
                 'type': 'string',
-                'description': 'Id of the Record whose end Boundary moves.',
+                'description': 'Id of the Record whose edge moves.',
+              },
+              'edge': {
+                'type': 'string',
+                'enum': ['start', 'end'],
+                'description': 'Which edge of the Record moves.',
               },
               'new_instant': {
                 'type': 'string',
                 'description':
-                    'New Boundary as an ISO 8601 instant with an explicit '
+                    'New edge as an ISO 8601 instant with an explicit '
                     'offset, e.g. "2026-10-30T09:30:00Z".',
               },
             },
-            'required': ['record_id', 'new_instant'],
+            'required': ['record_id', 'edge', 'new_instant'],
           },
         },
       ]);
@@ -429,8 +436,8 @@ class TempoMcpServer {
           final result = await _splitLapTool();
           return _successToolResponse(id, result);
 
-        case 'move_boundary':
-          final result = await _moveBoundaryTool(args);
+        case 'adjust_record_edge':
+          final result = await _adjustRecordEdgeTool(args);
           return _successToolResponse(id, result);
 
         default:
@@ -763,12 +770,16 @@ class TempoMcpServer {
     return {'success': true, 'record': await _describeRecord(record)};
   }
 
-  Future<Map<String, dynamic>> _moveBoundaryTool(
+  Future<Map<String, dynamic>> _adjustRecordEdgeTool(
     Map<String, dynamic> args,
   ) async {
     final recordId = (args['record_id'] as String?)?.trim();
     if (recordId == null || recordId.isEmpty) {
       throw ArgumentError('record_id is required.');
+    }
+    final edge = (args['edge'] as String?)?.trim();
+    if (edge != 'start' && edge != 'end') {
+      throw ArgumentError('edge must be "start" or "end".');
     }
     final rawInstant = (args['new_instant'] as String?)?.trim();
     if (rawInstant == null || rawInstant.isEmpty) {
@@ -789,7 +800,11 @@ class TempoMcpServer {
         .millisecondsSinceEpoch;
 
     final recorder = await _readyRecorder();
-    final record = await recorder.moveBoundary(recordId, newInstantMs);
+    final record = await recorder.adjustEdges(
+      recordId,
+      startEpochMs: edge == 'start' ? newInstantMs : null,
+      endEpochMs: edge == 'end' ? newInstantMs : null,
+    );
 
     return {'success': true, 'record': await _describeRecord(record)};
   }
