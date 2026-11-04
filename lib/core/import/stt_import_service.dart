@@ -217,8 +217,15 @@ class SttImportService {
     // Earliest local midnight: start of the day for earliest record
     final earliestMidnight = _startOfLocalDayUtcMs(activeTz, earliestStart);
 
-    // Latest boundary: Clamp strictly before current Lap
+    // Latest boundary: Clamp before current Lap, unless imported records extend
+    // past lapStart up towards `now`. If imported intervals reach beyond lapStart,
+    // latestCeiling extends up to `now` (clamped to the end of imported history or `now`),
+    // and the open Lap is advanced afterwards to maintain continuous coverage.
+    final latestImportEnd = sorted.last.endedAtEpochMs;
     var latestCeiling = lapStart;
+    if (latestImportEnd > lapStart) {
+      latestCeiling = math.min(now, latestImportEnd);
+    }
     if (latestCeiling > now) latestCeiling = now;
 
     // 3. Resolve historical intervals, split at local midnight (00:00)
@@ -390,6 +397,18 @@ class SttImportService {
           );
         }
       });
+    }
+
+    // 7. If imported history advanced past or met the open Lap start time,
+    // advance the open Lap to latestCeiling to maintain continuous coverage.
+    if (lap != null && latestCeiling > lap.startedAtEpochMs) {
+      final updatedLap = Lap(
+        id: lap.id,
+        startedAtEpochMs: latestCeiling,
+        startedTimezoneId: lap.startedTimezoneId,
+        revision: lap.revision + 1,
+      );
+      await database.setLap(updatedLap);
     }
 
     final trackedImported = recordsToInsert
