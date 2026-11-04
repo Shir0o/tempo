@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.2](https://github.com/Shir0o/tempo/compare/v1.4.1...v1.4.2) (2026-11-04)
+
+
+### Bug Fixes
+
+* **import:** parse CSV wall clock without host local bias ([#43](https://github.com/Shir0o/tempo/issues/43)) ([f03b021](https://github.com/Shir0o/tempo/commit/f03b02129807123a03fb80af3f8867b6e00e2f2c))
+
 ## [1.4.1](https://github.com/Shir0o/tempo/compare/v1.4.0...v1.4.1) (2026-11-04)
 
 
