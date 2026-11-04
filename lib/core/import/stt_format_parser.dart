@@ -381,8 +381,15 @@ class SttFormatParser {
       final endStr = row[endIdx].toString().trim();
       if (actName.isEmpty || startStr.isEmpty || endStr.isEmpty) continue;
 
-      final startTime = DateTime.tryParse(startStr);
-      final endTime = DateTime.tryParse(endStr);
+      // Simple Time Tracker CSV wall-clock times are formatted as `yyyy-MM-dd HH:mm:ss`.
+      // Parse with UTC indicator ('Z') so Dart constructs a pure UTC DateTime where
+      // .millisecondsSinceEpoch reflects the raw wall-clock instant without host machine local zone bias.
+      final startTime = DateTime.tryParse(
+        startStr.endsWith('Z') ? startStr : '${startStr}Z',
+      );
+      final endTime = DateTime.tryParse(
+        endStr.endsWith('Z') ? endStr : '${endStr}Z',
+      );
       if (startTime == null || endTime == null) continue;
 
       final startEpochMs = wallClockToEpochMs(startTime);
