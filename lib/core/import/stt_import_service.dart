@@ -272,19 +272,25 @@ class SttImportService {
     }
 
     // 4. Query existing Tempo records within [earliestMidnight, latestCeiling]
-    // Existing records take absolute precedence
-    final existingRecords = await database.getRecords(
+    // Existing tracked user records (activityId != null) take absolute precedence.
+    // Pre-existing synthetic untracked gaps (activityId == null) that collide with imported
+    // historical activities are removed and replaced so imported records are not blocked.
+    final allExistingInRange = await database.getRecords(
       startedAfter: earliestMidnight,
       startedBefore: latestCeiling,
       orderBy: 'started_at_epoch_ms ASC',
     );
 
-    // Filter candidate records that collide with existing records
+    final existingTrackedRecords = allExistingInRange
+        .where((r) => r.activityId != null)
+        .toList();
+
+    // Filter candidate records that collide with existing tracked records
     final nonColliding = <Record>[];
     var skippedCollisions = 0;
 
     for (final cand in candidateRecords) {
-      final collides = existingRecords.any((exist) {
+      final collides = existingTrackedRecords.any((exist) {
         return cand.startedAtEpochMs < exist.endedAtEpochMs &&
             cand.endedAtEpochMs > exist.startedAtEpochMs;
       });
@@ -295,9 +301,22 @@ class SttImportService {
       }
     }
 
-    // 5. Combine nonColliding with existingRecords to synthesize gaps
+    // Remove pre-existing synthetic untracked records in the imported range that collide with nonColliding
+    for (final cand in nonColliding) {
+      final collidingUntracked = allExistingInRange.where((exist) {
+        return exist.activityId == null &&
+            cand.startedAtEpochMs < exist.endedAtEpochMs &&
+            cand.endedAtEpochMs > exist.startedAtEpochMs;
+      }).toList();
+      for (final untracked in collidingUntracked) {
+        await database.deleteRecord(untracked.id);
+        allExistingInRange.remove(untracked);
+      }
+    }
+
+    // 5. Combine nonColliding with remaining existing tracked records to synthesize gaps
     final allEvents = <_IntervalSpan>[
-      for (final r in existingRecords)
+      for (final r in existingTrackedRecords)
         _IntervalSpan(
           r.startedAtEpochMs,
           r.endedAtEpochMs,
