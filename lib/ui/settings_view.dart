@@ -7,10 +7,12 @@ import 'package:flutter/material.dart';
 import '../../core/export/csv_export_engine.dart';
 import '../../core/import/stt_import_service.dart';
 import '../../core/state/day_recorder.dart';
+import '../../core/state/today_order.dart';
 import '../../core/sync/google_drive_sync_service.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
 import 'activity_manager_view.dart';
+import 'category_manager_view.dart';
 import 'helpers/ui_helpers.dart';
 import 'stt_import_dialog.dart';
 import 'theme/tempo_theme.dart';
@@ -23,12 +25,21 @@ class SettingsView extends StatefulWidget {
   final GoogleDriveSyncService? syncService;
   final CsvExportEngine? exportEngine;
 
+  /// The Today page's order, shared with the dashboard. Optional so previews and
+  /// isolated tests can omit it.
+  final ValueNotifier<TodayOrder>? todayOrder;
+
+  /// Bumped after activities or categories change, so the Today page reloads.
+  final ValueNotifier<int>? catalogRevision;
+
   const SettingsView({
     super.key,
     required this.database,
     this.dayRecorder,
     this.syncService,
     this.exportEngine,
+    this.todayOrder,
+    this.catalogRevision,
   });
 
   @override
@@ -38,11 +49,29 @@ class SettingsView extends StatefulWidget {
 class _SettingsViewState extends State<SettingsView> {
   bool _isProcessing = false;
   List<Activity> _activities = [];
+  List<Category> _categories = [];
 
   @override
   void initState() {
     super.initState();
     _loadActivities();
+    widget.todayOrder?.addListener(_onTodayOrderChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.todayOrder?.removeListener(_onTodayOrderChanged);
+    super.dispose();
+  }
+
+  void _onTodayOrderChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Tells the Today page that its catalog changed elsewhere.
+  void _bumpCatalog() {
+    final revision = widget.catalogRevision;
+    if (revision != null) revision.value += 1;
   }
 
   Future<void> _loadActivities() async {
@@ -50,7 +79,13 @@ class _SettingsViewState extends State<SettingsView> {
       final list = await widget.database.getAllActivities(
         includeArchived: true,
       );
-      if (mounted) setState(() => _activities = list);
+      final categories = await widget.database.getCategories();
+      if (mounted) {
+        setState(() {
+          _activities = list;
+          _categories = categories;
+        });
+      }
     } catch (_) {}
   }
 
@@ -185,6 +220,85 @@ class _SettingsViewState extends State<SettingsView> {
     }
   }
 
+  Future<void> _openActivityManager() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ActivityManagerView(database: widget.database),
+      ),
+    );
+    await _loadActivities();
+    _bumpCatalog();
+  }
+
+  Future<void> _openCategoryManager() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CategoryManagerView(database: widget.database),
+      ),
+    );
+    await _loadActivities();
+    _bumpCatalog();
+  }
+
+  Future<void> _chooseTodayOrder() async {
+    final notifier = widget.todayOrder;
+    final current = notifier?.value ?? TodayOrder.categories;
+    final chosen = await showModalBottomSheet<TodayOrder>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+              child: Text(
+                'Order on Today',
+                style: TempoText.title.copyWith(
+                  color: TempoColors.ink,
+                  fontSize: 22,
+                ),
+              ),
+            ),
+            for (final order in TodayOrder.values)
+              ListTile(
+                minTileHeight: 56,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(TempoRadii.row),
+                ),
+                title: Text(
+                  order.label,
+                  style: TempoText.body.copyWith(
+                    color: TempoColors.ink,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                subtitle: Text(
+                  order.description,
+                  style: TempoText.label.copyWith(color: TempoColors.inkMuted),
+                ),
+                trailing: order == current
+                    ? const Icon(Icons.check_rounded, color: TempoColors.ink)
+                    : null,
+                onTap: () => Navigator.of(ctx).pop(order),
+              ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+    if (chosen == null || notifier == null) return;
+    notifier.value = chosen;
+    try {
+      await widget.database.setSetting(
+        TodayOrder.storageKey,
+        chosen.storageValue,
+      );
+    } catch (_) {
+      _setStatus('Could not save the order.');
+    }
+  }
+
   Future<void> _handleImportSimpleTimeTracker() async {
     try {
       final files = await FilePicker.pickFiles(
@@ -216,6 +330,7 @@ class _SettingsViewState extends State<SettingsView> {
       if (importResult != null && mounted) {
         _loadActivities();
         await widget.dayRecorder?.reloadLapFromDatabase();
+        _bumpCatalog();
         final recordNote = importResult.recordsImported > 0
             ? ', ${importResult.recordsImported} records'
             : '';
@@ -276,6 +391,12 @@ class _SettingsViewState extends State<SettingsView> {
             _buildSectionHeader('HABITS & DATA'),
             _buildGroup([
               _SettingsRow(
+                title: "Today's order",
+                subtitle:
+                    (widget.todayOrder?.value ?? TodayOrder.categories).label,
+                onTap: _chooseTodayOrder,
+              ),
+              _SettingsRow(
                 title: 'Activities',
                 subtitle: _activities.isEmpty
                     ? null
@@ -286,15 +407,20 @@ class _SettingsViewState extends State<SettingsView> {
                       UiHelpers.parseHexColor(a.colorHex),
                   ],
                 ),
-                onTap: () async {
-                  await Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) =>
-                          ActivityManagerView(database: widget.database),
-                    ),
-                  );
-                  _loadActivities();
-                },
+                onTap: _openActivityManager,
+              ),
+              _SettingsRow(
+                title: 'Categories',
+                subtitle: _categories.isEmpty
+                    ? 'Group activities on Today'
+                    : '${_categories.length} groups',
+                leading: _ColourBars(
+                  colors: [
+                    for (final c in _categories.take(3))
+                      UiHelpers.parseHexColor(c.colorHex),
+                  ],
+                ),
+                onTap: _openCategoryManager,
               ),
               _SettingsRow(
                 title: 'Import from Simple Time Tracker',

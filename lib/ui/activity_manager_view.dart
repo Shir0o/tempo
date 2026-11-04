@@ -20,6 +20,7 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
   bool _isLoading = true;
   bool _showArchived = false;
   List<Activity> _activities = [];
+  List<Category> _categories = [];
 
   /// Icon stored on new Activities; the icon is not user-facing in design D.
   static const String _defaultIcon = 'schedule';
@@ -38,9 +39,11 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
       final list = await widget.database.getAllActivities(
         includeArchived: true,
       );
+      final categories = await widget.database.getCategories();
       if (mounted) {
         setState(() {
           _activities = list;
+          _categories = categories;
           _isLoading = false;
         });
       }
@@ -55,6 +58,7 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
         existing?.colorHex ??
         UiHelpers.toHexColor(TempoColors.activityPalette.first);
     bool isPinned = existing?.isPinned ?? false;
+    String? selectedCategoryId = existing?.categoryId;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -148,6 +152,35 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                       }).toList(),
                     ),
                     const SizedBox(height: 14),
+                    Text(
+                      'CATEGORY',
+                      style: TempoText.overline.copyWith(
+                        color: TempoColors.inkMuted,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _CategoryChip(
+                          label: 'None',
+                          selected: selectedCategoryId == null,
+                          onTap: () =>
+                              setModalState(() => selectedCategoryId = null),
+                        ),
+                        for (final category in _categories)
+                          _CategoryChip(
+                            label: category.name,
+                            color: UiHelpers.parseHexColor(category.colorHex),
+                            selected: selectedCategoryId == category.id,
+                            onTap: () => setModalState(
+                              () => selectedCategoryId = category.id,
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
                     Row(
                       children: [
                         Expanded(
@@ -163,7 +196,7 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                'Pinned activities appear as one-tap blocks',
+                                'Pinned activities lead the pin-first order',
                                 style: TempoText.label.copyWith(
                                   color: TempoColors.inkMuted,
                                   fontWeight: FontWeight.w500,
@@ -213,6 +246,8 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                                   name: name,
                                   colorHex: selectedColor,
                                   isPinned: isPinned,
+                                  categoryId: selectedCategoryId,
+                                  clearCategoryId: selectedCategoryId == null,
                                   updatedAtEpochMs: now,
                                 );
                                 await widget.database.updateActivity(updated);
@@ -223,6 +258,7 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                                   colorHex: selectedColor,
                                   iconName: _defaultIcon,
                                   isPinned: isPinned,
+                                  categoryId: selectedCategoryId,
                                   sortOrder: _activities.length,
                                   isArchived: false,
                                   createdAtEpochMs: now,
@@ -594,6 +630,67 @@ class _SheetPill extends StatelessWidget {
                 color: filled ? Colors.white : TempoColors.ink,
                 fontWeight: FontWeight.w700,
               ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A compact pick-one pill for the category field in the activity editor.
+class _CategoryChip extends StatelessWidget {
+  final String label;
+  final Color? color;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _CategoryChip({
+    required this.label,
+    this.color,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: Material(
+        color: selected ? TempoColors.ink : TempoColors.paper,
+        shape: StadiumBorder(
+          side: BorderSide(
+            color: selected ? TempoColors.ink : TempoColors.line,
+          ),
+        ),
+        child: InkWell(
+          customBorder: const StadiumBorder(),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (color != null) ...[
+                  Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+                Text(
+                  label,
+                  style: TempoText.label.copyWith(
+                    color: selected ? Colors.white : TempoColors.ink,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ),
           ),
         ),

@@ -462,4 +462,49 @@ void main() {
       },
     );
   });
+
+  group('Categories', () {
+    test('upserting a category keeps its activities attached', () async {
+      final category = Category(
+        id: 'cat-1',
+        name: 'Work',
+        createdAtEpochMs: 0,
+        updatedAtEpochMs: 0,
+      );
+      await db.upsertCategory(category);
+      await db.insertActivity(
+        Activity(
+          id: 'act-1',
+          name: 'Reading',
+          categoryId: 'cat-1',
+          createdAtEpochMs: 0,
+          updatedAtEpochMs: 0,
+        ),
+      );
+
+      await db.upsertCategory(
+        category.copyWith(name: 'Deep Work', sortOrder: 2),
+      );
+
+      final activity = await db.getActivityById('act-1');
+      expect(activity!.categoryId, equals('cat-1'));
+      final saved = await db.getCategoryById('cat-1');
+      expect(saved!.name, equals('Deep Work'));
+    });
+  });
+
+  group('Settings', () {
+    test('stores and overwrites values by key', () async {
+      expect(await db.getSetting('today_activity_order'), isNull);
+
+      await db.setSetting('today_activity_order', 'pinned');
+      expect(await db.getSetting('today_activity_order'), equals('pinned'));
+
+      await db.setSetting('today_activity_order', 'alphabetical');
+      expect(
+        await db.getSetting('today_activity_order'),
+        equals('alphabetical'),
+      );
+    });
+  });
 }

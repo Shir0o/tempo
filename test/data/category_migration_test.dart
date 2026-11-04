@@ -90,7 +90,7 @@ void main() {
     await tempDir.delete(recursive: true);
   });
 
-  test('migrates database v5 to v6 creating categories table and category_id column', () async {
+  test('migrates a v5 database through every schema version', () async {
     final v5Db = await databaseFactory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
@@ -169,6 +169,10 @@ void main() {
       ),
       isTrue,
     );
+
+    // v7 adds the settings table, which every later migration path must create.
+    await tempoDb.setSetting('today_activity_order', 'pinned');
+    expect(await tempoDb.getSetting('today_activity_order'), equals('pinned'));
 
     await tempoDb.close();
   });

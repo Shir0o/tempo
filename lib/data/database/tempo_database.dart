@@ -17,7 +17,7 @@ class TempoDatabase {
 
   Database get db => _db;
 
-  static const int databaseVersion = 6;
+  static const int databaseVersion = 7;
   static const String databaseFileName = 'tempo.db';
 
   // --- DDL Constants (schema v6) ---
@@ -91,6 +91,13 @@ CREATE TABLE IF NOT EXISTS tombstones (
 );
 ''';
 
+  static const String createSettingsTable = '''
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY NOT NULL,
+    value TEXT NOT NULL
+);
+''';
+
   static const List<String> createIndexes = [
     'CREATE INDEX IF NOT EXISTS idx_activities_category_id ON activities(category_id);',
     'CREATE INDEX IF NOT EXISTS idx_records_started ON records(started_at_epoch_ms);',
@@ -107,6 +114,7 @@ CREATE TABLE IF NOT EXISTS tombstones (
     await db.execute(createRecordTagsTable);
     await db.execute(createLapTableSql);
     await db.execute(createTombstonesTable);
+    await db.execute(createSettingsTable);
     for (final indexSql in createIndexes) {
       await db.execute(indexSql);
     }
@@ -157,6 +165,9 @@ CREATE TABLE IF NOT EXISTS tombstones (
           }
           if (oldVersion < 6) {
             await migrateV5ToV6(db);
+          }
+          if (oldVersion < 7) {
+            await migrateV6ToV7(db);
           }
         },
       ),
@@ -273,11 +284,17 @@ CREATE TABLE IF NOT EXISTS tombstones (
   // ==========================================
 
   Future<void> upsertCategory(Category category) async {
-    await _db.insert(
+    // Update before inserting: INSERT OR REPLACE deletes the old row, and the
+    // activities.category_id foreign key would null every assignment.
+    final updated = await _db.update(
       'categories',
       category.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
+      where: 'id = ?',
+      whereArgs: [category.id],
     );
+    if (updated == 0) {
+      await _db.insert('categories', category.toMap());
+    }
   }
 
   Future<Category?> getCategoryById(String id) async {
@@ -314,6 +331,29 @@ CREATE TABLE IF NOT EXISTS tombstones (
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     });
+  }
+
+  // ==========================================
+  // Settings
+  // ==========================================
+
+  Future<String?> getSetting(String key) async {
+    final rows = await _db.query(
+      'settings',
+      columns: ['value'],
+      where: 'key = ?',
+      whereArgs: [key],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['value'] as String?;
+  }
+
+  Future<void> setSetting(String key, String value) async {
+    await _db.insert('settings', {
+      'key': key,
+      'value': value,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   // ==========================================

@@ -344,3 +344,14 @@ CREATE TABLE IF NOT EXISTS categories (
     'CREATE INDEX IF NOT EXISTS idx_activities_category_id ON activities(category_id);',
   );
 }
+
+/// Version 7: A key/value store for user preferences that must survive a
+/// restart and travel with the database backup.
+Future<void> migrateV6ToV7(DatabaseExecutor db) async {
+  await db.execute('''
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY NOT NULL,
+    value TEXT NOT NULL
+);
+''');
+}
