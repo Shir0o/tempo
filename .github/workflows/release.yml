@@ -119,10 +119,13 @@ jobs:
         id: locate
         run: |
           set -euo pipefail
-          AAB=$(find build/app/outputs/bundle/release -name '*.aab' | head -n1)
-          APK=$(find build/app/outputs/flutter-apk -name 'app-release.apk' | head -n1)
-          WEAR_AAB=$(find android/wear/build/outputs/bundle/release -name '*.aab' | head -n1)
-          WEAR_APK=$(find android/wear/build/outputs/apk/release -name '*.apk' | head -n1)
+          # android/build.gradle.kts redirects every Gradle project's build
+          # directory to the repository-root build/ dir (build/<project>), so the
+          # Wear OS module writes to build/wear/, not android/wear/build/.
+          AAB=$(find build/app/outputs/bundle/release -name '*.aab' | head -n1 || true)
+          APK=$(find build/app/outputs/flutter-apk -name 'app-release.apk' | head -n1 || true)
+          WEAR_AAB=$(find build/wear/outputs/bundle/release -name '*.aab' | head -n1 || true)
+          WEAR_APK=$(find build/wear/outputs/apk/release -name '*.apk' | head -n1 || true)
           if [ -z "$AAB" ] || [ -z "$APK" ] || [ -z "$WEAR_AAB" ] || [ -z "$WEAR_APK" ]; then
             echo "::error::Built artifacts not found (Phone: AAB=$AAB, APK=$APK; Wear: AAB=$WEAR_AAB, APK=$WEAR_APK)."
             exit 1
