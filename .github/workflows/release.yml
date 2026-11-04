@@ -130,10 +130,12 @@ jobs:
             echo "::error::Built artifacts not found (Phone: AAB=$AAB, APK=$APK; Wear: AAB=$WEAR_AAB, APK=$WEAR_APK)."
             exit 1
           fi
-          echo "aab=$AAB" >> "$GITHUB_OUTPUT"
-          echo "apk=$APK" >> "$GITHUB_OUTPUT"
-          echo "wear_aab=$WEAR_AAB" >> "$GITHUB_OUTPUT"
-          echo "wear_apk=$WEAR_APK" >> "$GITHUB_OUTPUT"
+          # Fastlane resolves relative paths against the fastlane/ directory, so
+          # hand every consumer an absolute path.
+          echo "aab=$(realpath "$AAB")" >> "$GITHUB_OUTPUT"
+          echo "apk=$(realpath "$APK")" >> "$GITHUB_OUTPUT"
+          echo "wear_aab=$(realpath "$WEAR_AAB")" >> "$GITHUB_OUTPUT"
+          echo "wear_apk=$(realpath "$WEAR_APK")" >> "$GITHUB_OUTPUT"
 
       - name: Check if release artifacts are already attached (idempotency)
         id: check-existing
