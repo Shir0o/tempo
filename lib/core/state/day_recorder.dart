@@ -252,7 +252,9 @@ class DayRecorder {
     }
 
     // A tail that reaches past the last Record takes time from the open Lap.
-    if (lap != null && newEnd > lap.startedAtEpochMs) {
+    if (newEnd > record.endedAtEpochMs &&
+        lap != null &&
+        newEnd > lap.startedAtEpochMs) {
       lapStartMs = newEnd;
     }
 
