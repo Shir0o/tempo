@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.0](https://github.com/Shir0o/tempo/compare/v1.4.3...v1.5.0) (2026-11-04)
+
+
+### Features
+
+* **icon:** replace Flutter default with Day Ring app icon ([#49](https://github.com/Shir0o/tempo/issues/49)) ([feac932](https://github.com/Shir0o/tempo/commit/feac9323ae69734aec370344a7f8ae6aa21e4bda))
+* **records:** adjust one Record's start or end edge ([#51](https://github.com/Shir0o/tempo/issues/51)) ([25f2c10](https://github.com/Shir0o/tempo/commit/25f2c1090b1da8ef8760b1154b4c5ae580ce0d84))
+
 ## [1.4.3](https://github.com/Shir0o/tempo/compare/v1.4.2...v1.4.3) (2026-11-04)
 
 
