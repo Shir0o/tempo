@@ -80,7 +80,11 @@ lane :play_upload do |options|
 
   UI.success("Uploaded #{aab_path} to Play Console internal track for #{APP_PACKAGE_NAME}.")
 
-  if wear_aab_path && File.exist?(wear_aab_path)
+  if wear_aab_path
+    unless File.exist?(wear_aab_path)
+      UI.user_error!("Wear OS AAB not found at #{wear_aab_path}. Confirm the Wear build step ran successfully.")
+    end
+
     UI.message("Uploading Wear OS AAB to Play Console wear:internal track: #{wear_aab_path}")
     begin
       upload_to_play_store(
