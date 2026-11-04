@@ -9,10 +9,13 @@ void main() {
       expect(deriveVersionCode('v12.34.56').value, 123456);
     });
 
-    test('supports wear os offset prefix for distinct bundle version codes', () {
-      expect(deriveVersionCode('v1.2.0', offset: 1000000).value, 1010200);
-      expect(deriveVersionCode('v1.2.3', offset: 1000000).value, 1010203);
-    });
+    test(
+      'supports wear os offset prefix for distinct bundle version codes',
+      () {
+        expect(deriveVersionCode('v1.2.0', offset: 1000000).value, 1010200);
+        expect(deriveVersionCode('v1.2.3', offset: 1000000).value, 1010203);
+      },
+    );
 
     test('treats the leading v as optional', () {
       expect(deriveVersionCode('1.2.3').value, 10203);
