@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.3](https://github.com/Shir0o/tempo/compare/v1.4.2...v1.4.3) (2026-11-04)
+
+
+### Bug Fixes
+
+* **import:** replace untracked gaps instead of blocking on them ([#45](https://github.com/Shir0o/tempo/issues/45)) ([0579534](https://github.com/Shir0o/tempo/commit/0579534dc7726aa9b22613ce918ca8bc15fc4cab))
+
 ## [1.4.2](https://github.com/Shir0o/tempo/compare/v1.4.1...v1.4.2) (2026-11-04)
 
 
