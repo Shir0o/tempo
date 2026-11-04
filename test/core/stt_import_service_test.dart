@@ -306,7 +306,8 @@ record\t1\t10\t$start\t$end\tOvernight sleep\t
         nowUtcMs: () => now,
       );
 
-      final backupContent = '''
+      final backupContent =
+          '''
 app simple time tracker
 category\t1\tProductivity\t3\t\t
 typeCategory\t10\t1
@@ -328,9 +329,7 @@ record\t2\t10\t$start2\t$end2\tAfternoon coding\t
       expect(updatedLap!.startedAtEpochMs, equals(end2));
 
       // Check all records including synthetic gaps
-      final records = await db.getRecords(
-        orderBy: 'started_at_epoch_ms ASC',
-      );
+      final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
       // Gaps + records:
       // 1. [00:00, 01:00] Untracked
       // 2. [01:00, 03:00] Coding 1
