@@ -52,6 +52,14 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
     }
   }
 
+  Category? _categoryById(String? id) {
+    if (id == null) return null;
+    for (final category in _categories) {
+      if (category.id == id) return category;
+    }
+    return null;
+  }
+
   Future<void> _openActivityEditor([Activity? existing]) async {
     final nameController = TextEditingController(text: existing?.name ?? '');
     String selectedColor =
@@ -66,6 +74,7 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
       builder: (ctx) {
         return StatefulBuilder(
           builder: (context, setModalState) {
+            final selectedCategory = _categoryById(selectedCategoryId);
             return Padding(
               padding: EdgeInsets.only(
                 bottom: MediaQuery.of(context).viewInsets.bottom,
@@ -107,52 +116,6 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                     ),
                     const SizedBox(height: 18),
                     Text(
-                      'COLOUR',
-                      style: TempoText.overline.copyWith(
-                        color: TempoColors.inkMuted,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: TempoColors.activityPalette.map((color) {
-                        final hex = UiHelpers.toHexColor(color);
-                        final isSelected =
-                            hex.toLowerCase() == selectedColor.toLowerCase();
-                        return Semantics(
-                          button: true,
-                          selected: isSelected,
-                          label: 'Colour $hex',
-                          child: GestureDetector(
-                            onTap: () =>
-                                setModalState(() => selectedColor = hex),
-                            child: Container(
-                              width: 40,
-                              height: 40,
-                              padding: const EdgeInsets.all(3),
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: isSelected
-                                      ? TempoColors.ink
-                                      : Colors.transparent,
-                                  width: 2,
-                                ),
-                              ),
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  color: color,
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                    const SizedBox(height: 14),
-                    Text(
                       'CATEGORY',
                       style: TempoText.overline.copyWith(
                         color: TempoColors.inkMuted,
@@ -174,12 +137,85 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                             label: category.name,
                             color: UiHelpers.parseHexColor(category.colorHex),
                             selected: selectedCategoryId == category.id,
-                            onTap: () => setModalState(
-                              () => selectedCategoryId = category.id,
-                            ),
+                            onTap: () => setModalState(() {
+                              selectedCategoryId = category.id;
+                              selectedColor = category.colorHex;
+                            }),
                           ),
                       ],
                     ),
+                    const SizedBox(height: 18),
+                    Text(
+                      'COLOUR',
+                      style: TempoText.overline.copyWith(
+                        color: TempoColors.inkMuted,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    if (selectedCategory == null)
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: TempoColors.activityPalette.map((color) {
+                          final hex = UiHelpers.toHexColor(color);
+                          final isSelected =
+                              hex.toLowerCase() == selectedColor.toLowerCase();
+                          return Semantics(
+                            button: true,
+                            selected: isSelected,
+                            label: 'Colour $hex',
+                            child: GestureDetector(
+                              onTap: () =>
+                                  setModalState(() => selectedColor = hex),
+                              child: Container(
+                                width: 40,
+                                height: 40,
+                                padding: const EdgeInsets.all(3),
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: isSelected
+                                        ? TempoColors.ink
+                                        : Colors.transparent,
+                                    width: 2,
+                                  ),
+                                ),
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    color: color,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      )
+                    else
+                      Row(
+                        children: [
+                          Container(
+                            width: 16,
+                            height: 16,
+                            decoration: BoxDecoration(
+                              color: UiHelpers.parseHexColor(
+                                selectedCategory.colorHex,
+                              ),
+                              borderRadius: BorderRadius.circular(5),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'Colour comes from ${selectedCategory.name}.',
+                              style: TempoText.label.copyWith(
+                                color: TempoColors.inkMuted,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     const SizedBox(height: 18),
                     Row(
                       children: [
@@ -241,10 +277,12 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                               final now = DateTime.now()
                                   .toUtc()
                                   .millisecondsSinceEpoch;
+                              final effectiveColor =
+                                  selectedCategory?.colorHex ?? selectedColor;
                               if (existing != null) {
                                 final updated = existing.copyWith(
                                   name: name,
-                                  colorHex: selectedColor,
+                                  colorHex: effectiveColor,
                                   isPinned: isPinned,
                                   categoryId: selectedCategoryId,
                                   clearCategoryId: selectedCategoryId == null,
@@ -255,7 +293,7 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                                 final newAct = Activity(
                                   id: const Uuid().v4(),
                                   name: name,
-                                  colorHex: selectedColor,
+                                  colorHex: effectiveColor,
                                   iconName: _defaultIcon,
                                   isPinned: isPinned,
                                   categoryId: selectedCategoryId,

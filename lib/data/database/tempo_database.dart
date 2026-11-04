@@ -17,7 +17,7 @@ class TempoDatabase {
 
   Database get db => _db;
 
-  static const int databaseVersion = 7;
+  static const int databaseVersion = 8;
   static const String databaseFileName = 'tempo.db';
 
   // --- DDL Constants (schema v6) ---
@@ -169,6 +169,9 @@ CREATE TABLE IF NOT EXISTS settings (
           if (oldVersion < 7) {
             await migrateV6ToV7(db);
           }
+          if (oldVersion < 8) {
+            await migrateV7ToV8(db);
+          }
         },
       ),
     );
@@ -203,20 +206,33 @@ CREATE TABLE IF NOT EXISTS settings (
   // ==========================================
 
   Future<void> insertActivity(Activity activity) async {
+    final normalized = await _withCategoryColor(activity);
     await _db.insert(
       'activities',
-      activity.toMap(),
+      normalized.toMap(),
       conflictAlgorithm: ConflictAlgorithm.abort,
     );
   }
 
   Future<void> updateActivity(Activity activity) async {
+    final normalized = await _withCategoryColor(activity);
     await _db.update(
       'activities',
-      activity.toMap(),
+      normalized.toMap(),
       where: 'id = ?',
-      whereArgs: [activity.id],
+      whereArgs: [normalized.id],
     );
+  }
+
+  /// An Activity in a Category always wears the Category's colour, so one
+  /// category reads as one colour everywhere. Uncategorised Activities keep
+  /// the colour chosen for them.
+  Future<Activity> _withCategoryColor(Activity activity) async {
+    final categoryId = activity.categoryId;
+    if (categoryId == null) return activity;
+    final category = await getCategoryById(categoryId);
+    if (category == null) return activity;
+    return activity.copyWith(colorHex: category.colorHex);
   }
 
   Future<Activity?> getActivityById(String id) async {
@@ -284,17 +300,46 @@ CREATE TABLE IF NOT EXISTS settings (
   // ==========================================
 
   Future<void> upsertCategory(Category category) async {
-    // Update before inserting: INSERT OR REPLACE deletes the old row, and the
-    // activities.category_id foreign key would null every assignment.
-    final updated = await _db.update(
-      'categories',
-      category.toMap(),
-      where: 'id = ?',
-      whereArgs: [category.id],
-    );
-    if (updated == 0) {
-      await _db.insert('categories', category.toMap());
-    }
+    await _db.transaction((txn) async {
+      final before = await txn.query(
+        'categories',
+        columns: ['color_hex'],
+        where: 'id = ?',
+        whereArgs: [category.id],
+        limit: 1,
+      );
+
+      // Update before inserting: INSERT OR REPLACE deletes the old row, and the
+      // activities.category_id foreign key would null every assignment.
+      final updated = await txn.update(
+        'categories',
+        category.toMap(),
+        where: 'id = ?',
+        whereArgs: [category.id],
+      );
+      if (updated == 0) {
+        await txn.insert('categories', category.toMap());
+        return;
+      }
+
+      final previousColor = before.isEmpty
+          ? null
+          : before.first['color_hex'] as String?;
+      if (previousColor == null || previousColor == category.colorHex) {
+        return;
+      }
+
+      // Keep the category's activities in step with its colour.
+      await txn.update(
+        'activities',
+        {
+          'color_hex': category.colorHex,
+          'updated_at_epoch_ms': category.updatedAtEpochMs,
+        },
+        where: 'category_id = ?',
+        whereArgs: [category.id],
+      );
+    });
   }
 
   Future<Category?> getCategoryById(String id) async {

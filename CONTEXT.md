@@ -15,7 +15,7 @@ A named, color-coded kind of thing that fills part of a day (e.g., "Sleep", "Mea
 _Avoid_: Task, job, habit, project
 
 **Category**:
-A primary organizational grouping classifying one or more Activities into high-level routines (e.g., "Essentials", "Productivity", "Leisure", "Transportation"). Categories provide color/icon defaults and group activities across reports and exports without imposing priority or goal mechanics.
+A primary organizational grouping classifying one or more Activities into high-level routines (e.g., "Essentials", "Productivity", "Leisure", "Transportation"). Categories own the colour its Activities wear and group activities across reports and exports without imposing priority or goal mechanics.
 _Avoid_: Bucket, goal, folder
 
 **Record**:
