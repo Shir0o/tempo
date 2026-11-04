@@ -35,8 +35,10 @@ final RegExp _releaseTagPattern = RegExp(
 
 /// Returns the version code for [tag], or a validation failure.
 ///
+/// An optional [offset] can be added to the derived version code (e.g. to ensure
+/// distinct version codes for companion form factors like Wear OS without colliding).
 /// [tag] is matched against [_releaseTagPattern] and never passed to a shell.
-VersionCodeResult deriveVersionCode(String tag) {
+VersionCodeResult deriveVersionCode(String tag, {int offset = 0}) {
   final match = _releaseTagPattern.firstMatch(tag);
   if (match == null) {
     return VersionCodeResult.invalid(
@@ -54,5 +56,5 @@ VersionCodeResult deriveVersionCode(String tag) {
     );
   }
 
-  return VersionCodeResult.valid(major * 10000 + minor * 100 + patch);
+  return VersionCodeResult.valid(offset + major * 10000 + minor * 100 + patch);
 }

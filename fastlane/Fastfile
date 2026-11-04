@@ -11,12 +11,14 @@ DEFAULT_AAB_PATH = File.expand_path("../build/app/outputs/bundle/release/app-rel
 
 # Lane: play_upload
 #
-# Uploads the AAB to the Play Console internal testing track.
+# Uploads the phone AAB to the Play Console internal testing track and,
+# if present, the Wear OS companion AAB to the Wear OS internal testing track.
 # The release workflow is responsible for mounting
 # `fastlane/play-supply-credentials.json` from the PLAY_SUPPLY_JSON_KEY
 # secret before invoking this lane.
 lane :play_upload do |options|
   aab_path = options[:aab_path] || ENV["FASTLANE_AAB_PATH"] || DEFAULT_AAB_PATH
+  wear_aab_path = options[:wear_aab_path] || ENV["FASTLANE_WEAR_AAB_PATH"]
 
   unless File.exist?(aab_path)
     UI.user_error!("AAB not found at #{aab_path}. Confirm the build step ran successfully.")
@@ -77,4 +79,25 @@ lane :play_upload do |options|
   )
 
   UI.success("Uploaded #{aab_path} to Play Console internal track for #{APP_PACKAGE_NAME}.")
+
+  if wear_aab_path && File.exist?(wear_aab_path)
+    UI.message("Uploading Wear OS AAB to Play Console wear:internal track: #{wear_aab_path}")
+    begin
+      upload_to_play_store(
+        package_name: APP_PACKAGE_NAME,
+        track: "wear:internal",
+        aab: wear_aab_path,
+        json_key: "fastlane/play-supply-credentials.json",
+        release_status: "completed",
+        skip_upload_metadata: true,
+        skip_upload_changelogs: false,
+        skip_upload_images: true,
+        skip_upload_screenshots: true,
+        validate_only: false,
+      )
+      UI.success("Uploaded #{wear_aab_path} to Play Console wear:internal track for #{APP_PACKAGE_NAME}.")
+    rescue => e
+      UI.important("Wear OS internal track upload warning (e.g. form factor not yet opted in): #{e.message}")
+    end
+  end
 end
