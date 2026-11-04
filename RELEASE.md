@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/Shir0o/tempo/compare/v1.4.0...v1.4.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* **import:** retain intervals past lapStart and advance open Lap ([#41](https://github.com/Shir0o/tempo/issues/41)) ([d63a229](https://github.com/Shir0o/tempo/commit/d63a229a6f24e30192839973f812c96abcf3c076))
+
 ## [1.4.0](https://github.com/Shir0o/tempo/compare/v1.3.0...v1.4.0) (2026-11-03)
 
 
