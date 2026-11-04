@@ -5,6 +5,7 @@
 
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
@@ -32,6 +33,11 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <!-- Lap notification actions: label / undo the open Lap without launching an activity -->
+        <receiver
+            android:name=".LapActionReceiver"
+            android:exported="false" />
 
         <!-- ProtoLayout Smart Tile Service (Lap elapsed header, top-3 Activity slots) -->
         <service

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 
+import '../core/state/activity_ranking.dart';
 import '../core/state/day_recorder.dart';
 import '../data/database/tempo_database.dart';
 import '../data/models/activity.dart';
@@ -134,29 +135,10 @@ class WearableSyncService {
 
     final since = _nowUtcMs() - tileActivityWindow.inMilliseconds;
     final records = await db.getRecords(startedAfter: since, trackedOnly: true);
-    final counts = <String, int>{};
-    for (final record in records) {
-      final activityId = record.activityId;
-      if (activityId != null) {
-        counts.update(activityId, (count) => count + 1, ifAbsent: () => 1);
-      }
-    }
-
-    final order = <String, int>{
-      for (var i = 0; i < activities.length; i++) activities[i].id: i,
-    };
-    final ranked =
-        counts.entries.where((entry) => order.containsKey(entry.key)).toList()
-          ..sort((a, b) {
-            final byCount = b.value.compareTo(a.value);
-            if (byCount != 0) return byCount;
-            return order[a.key]!.compareTo(order[b.key]!);
-          });
-
-    return ranked
-        .take(tileActivityCount)
-        .map((entry) => entry.key)
-        .toList(growable: false);
+    return rankActivitiesByUse(
+      activities,
+      records,
+    ).take(tileActivityCount).toList(growable: false);
   }
 
   /// Sends the open Lap snapshot to the watch.
@@ -206,6 +188,10 @@ class WearableSyncService {
 
         case 'SPLIT':
           await dayRecorder.split();
+          break;
+
+        case 'UNDO':
+          await dayRecorder.undoLast();
           break;
       }
     } catch (e) {
