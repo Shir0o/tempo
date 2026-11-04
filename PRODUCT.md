@@ -66,6 +66,6 @@ Unlike cloud-locked, corporate subscription trackers (Toggl, Clockify, Harvest) 
 1. **Sub-Second Capture**: Labeling time must never feel like a chore. Wrist complications, menu bar hotkeys, and widget buttons must label the open Lap in $\le 1$ second.
 2. **Never Miss a Notification**: Watch interactions must execute an Action-and-Exit pattern, immediately returning to the watch face so system alerts and communications remain unblocked.
 3. **Data Sovereign & Local-First**: Time history is deeply personal. All data resides on physical hardware in open formats (SQLite, CSV, JSON); synchronization uses private user accounts (Google Drive) without middlemen.
-4. **The Day Is Continuous**: Every moment belongs to a Record or the open Lap. Every label is 1 tap with a 3-second Undo window, and any past Boundary can be moved later — so an accidental tap costs nothing.
+4. **The Day Is Continuous**: Every moment belongs to a Record or the open Lap. Every label is 1 tap with a 3-second Undo window, and any past Record's start or end can be moved later — so an accidental tap costs nothing.
 5. **Private AI Assistance**: AI analysis must be performed locally via MCP with deterministic sanitization so personal names, notes, and contacts are never leaked to cloud models.
 6. **True to Where You Were**: Records show the local times they were lived in and their true durations, across any time zone or daylight saving change.

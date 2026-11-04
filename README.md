@@ -48,7 +48,7 @@ Tempo describes how a day was spent, without judging it.
 
 - **Local stdio MCP server** (`tempo-mcp`) reads the local SQLite store directly, with no open ports and no cloud relay.
 - **Descriptive tools** cover day timelines, time per Activity, untracked time, and comparisons across days and weeks.
-- **Guarded writes**: tools that label a Lap, Split it, or move a Boundary require `--allow-writes`.
+- **Guarded writes**: tools that label the open untracked stretch, Split it, or adjust a Record's start or end require `--allow-writes`.
 - **Deterministic PII redaction**: `--sanitize-pii` replaces contact names after `w/` and `with ` markers with stable session pseudonyms and masks emails, phone numbers, and URLs before payloads reach an assistant.
 
 ## 🛠 Tech Stack
