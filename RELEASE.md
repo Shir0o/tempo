@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.0](https://github.com/Shir0o/tempo/compare/v1.5.0...v1.6.0) (2026-11-04)
+
+
+### Features
+
+* **categories:** give every activity its category's colour ([#54](https://github.com/Shir0o/tempo/issues/54)) ([62523ea](https://github.com/Shir0o/tempo/commit/62523ead6cfd37327cbab987e0cda5565cc8c5a7))
+* **today:** order activities by category, with a setting ([#52](https://github.com/Shir0o/tempo/issues/52)) ([0fcc137](https://github.com/Shir0o/tempo/commit/0fcc137771e00d25398196deb30e3a118f4d3582))
+
 ## [1.5.0](https://github.com/Shir0o/tempo/compare/v1.4.3...v1.5.0) (2026-11-04)
 
 
