@@ -72,6 +72,10 @@ dependencies {
     implementation("androidx.wear:wear:1.3.0")
     implementation("androidx.wear:wear-ongoing:1.0.0")
     implementation("androidx.activity:activity-compose:1.9.0")
+    // androidx.wear:wear pulls Fragment 1.2.4 transitively, and the ActivityResult
+    // APIs used by QuickLogActivity require Fragment 1.3.0+. Without this upgrade
+    // the release build fails lintVitalRelease (InvalidFragmentVersionForActivityResult).
+    implementation("androidx.fragment:fragment:1.7.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.6")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
