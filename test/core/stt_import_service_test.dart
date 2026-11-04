@@ -276,5 +276,86 @@ record\t1\t10\t$start\t$end\tOvernight sleep\t
         expect(records[1].isMidnightSplit, isFalse);
       },
     );
+
+    test('Full History import imports intervals across lapStart and advances the open Lap', () async {
+      // Day midnight: 1700006400000 is 2023-11-15 00:00:00 UTC
+      const dayMidnight = 1700006400000;
+      // Existing open Lap started earlier today at 02:00
+      final lapStart = dayMidnight + 7200000; // 02:00
+      // Imported record 1: 01:00 to 03:00 (crosses lapStart)
+      final start1 = dayMidnight + 3600000;
+      final end1 = dayMidnight + 10800000;
+      // Imported record 2: 04:00 to 05:00 (starts strictly after lapStart)
+      final start2 = dayMidnight + 14400000;
+      final end2 = dayMidnight + 18000000;
+      // Current wall clock: 06:00
+      final now = dayMidnight + 21600000;
+
+      await db.setLap(
+        Lap(
+          id: 1,
+          startedAtEpochMs: lapStart,
+          startedTimezoneId: 'UTC',
+          revision: 1,
+        ),
+      );
+
+      final service = SttImportService(
+        database: db,
+        getTimezoneId: () => 'UTC',
+        nowUtcMs: () => now,
+      );
+
+      final backupContent = '''
+app simple time tracker
+category\t1\tProductivity\t3\t\t
+typeCategory\t10\t1
+recordType\t10\tCoding\tic_computer_24px\t3\t0\t\t\t\t\t\t0\t
+record\t1\t10\t$start1\t$end1\tMorning coding\t
+record\t2\t10\t$start2\t$end2\tAfternoon coding\t
+''';
+
+      final result = await service.import(
+        content: backupContent,
+        scope: SttImportScope.fullHistory,
+      );
+
+      expect(result.recordsImported, equals(2));
+
+      // Check open Lap has been advanced to latestCeiling (end2)
+      final updatedLap = await db.getLap();
+      expect(updatedLap, isNotNull);
+      expect(updatedLap!.startedAtEpochMs, equals(end2));
+
+      // Check all records including synthetic gaps
+      final records = await db.getRecords(
+        orderBy: 'started_at_epoch_ms ASC',
+      );
+      // Gaps + records:
+      // 1. [00:00, 01:00] Untracked
+      // 2. [01:00, 03:00] Coding 1
+      // 3. [03:00, 04:00] Untracked
+      // 4. [04:00, 05:00] Coding 2
+      // (Lap covers 05:00 to now)
+      expect(records.length, equals(4));
+
+      expect(records[0].activityId, isNull);
+      expect(records[0].startedAtEpochMs, equals(dayMidnight));
+      expect(records[0].endedAtEpochMs, equals(start1));
+
+      expect(records[1].activityId, isNotNull);
+      expect(records[1].startedAtEpochMs, equals(start1));
+      expect(records[1].endedAtEpochMs, equals(end1));
+      expect(records[1].comment, equals('Morning coding'));
+
+      expect(records[2].activityId, isNull);
+      expect(records[2].startedAtEpochMs, equals(end1));
+      expect(records[2].endedAtEpochMs, equals(start2));
+
+      expect(records[3].activityId, isNotNull);
+      expect(records[3].startedAtEpochMs, equals(start2));
+      expect(records[3].endedAtEpochMs, equals(end2));
+      expect(records[3].comment, equals('Afternoon coding'));
+    });
   });
 }

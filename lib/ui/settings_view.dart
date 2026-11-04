@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/export/csv_export_engine.dart';
 import '../../core/import/stt_import_service.dart';
+import '../../core/state/day_recorder.dart';
 import '../../core/sync/google_drive_sync_service.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
@@ -18,12 +19,14 @@ import 'theme/tempo_theme.dart';
 /// manual exports, database backups, and activity customization.
 class SettingsView extends StatefulWidget {
   final TempoDatabase database;
+  final DayRecorder? dayRecorder;
   final GoogleDriveSyncService? syncService;
   final CsvExportEngine? exportEngine;
 
   const SettingsView({
     super.key,
     required this.database,
+    this.dayRecorder,
     this.syncService,
     this.exportEngine,
   });
@@ -212,6 +215,7 @@ class _SettingsViewState extends State<SettingsView> {
 
       if (importResult != null && mounted) {
         _loadActivities();
+        await widget.dayRecorder?.reloadLapFromDatabase();
         final recordNote = importResult.recordsImported > 0
             ? ', ${importResult.recordsImported} records'
             : '';

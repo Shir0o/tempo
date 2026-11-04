@@ -104,6 +104,18 @@ class DayRecorder {
     () => _closeLapLocked(activityId: activityId, comment: comment, tags: tags),
   );
 
+  /// Synchronizes the in-memory Lap with the latest state in the database,
+  /// re-arming midnight timers if changed. Call after external batch imports
+  /// or migrations that advance the Lap.
+  Future<void> reloadLapFromDatabase() => _synchronized(() async {
+    final current = await _db.getLap();
+    if (current != null) {
+      _updateLap(current);
+      await _applyMidnightSplitsLocked();
+      await _armMidnightTimer();
+    }
+  });
+
   /// Closes the open Lap as an Untracked Record and opens a new Lap at the same
   /// instant, so the boundary is marked without deciding what the time was.
   Future<Record> split() => _synchronized(() => _closeLapLocked());

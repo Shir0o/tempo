@@ -75,6 +75,7 @@ class _TempoAppState extends State<TempoApp> with WidgetsBindingObserver {
       StatsView(database: widget.database),
       SettingsView(
         database: widget.database,
+        dayRecorder: widget.dayRecorder,
         syncService: widget.syncService,
         exportEngine: widget.exportEngine,
       ),
