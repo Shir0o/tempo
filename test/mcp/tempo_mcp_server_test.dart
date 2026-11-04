@@ -239,7 +239,7 @@ void main() {
         );
         expect(names, isNot(contains('label_lap')));
         expect(names, isNot(contains('split_lap')));
-        expect(names, isNot(contains('move_boundary')));
+        expect(names, isNot(contains('adjust_record_edge')));
 
         final evaluative = RegExp(
           r'productiv|focus|goal|streak|habit|score',
@@ -268,12 +268,19 @@ void main() {
             .map((t) => t['name'] as String)
             .toList();
 
-        expect(names, containsAll(['label_lap', 'split_lap', 'move_boundary']));
+        expect(
+          names,
+          containsAll(['label_lap', 'split_lap', 'adjust_record_edge']),
+        );
       },
     );
 
     test('write tools are refused when allowWrites is false', () async {
-      for (final writeTool in ['label_lap', 'split_lap', 'move_boundary']) {
+      for (final writeTool in [
+        'label_lap',
+        'split_lap',
+        'adjust_record_edge',
+      ]) {
         final result = await callTool(server, writeTool, {
           'activity_name': 'Reading',
         });
@@ -660,8 +667,9 @@ void main() {
 
       final boundaryInstant = records.first.startedAtEpochMs + 9000000;
       final moved = payloadOf(
-        await callTool(writeServer, 'move_boundary', {
+        await callTool(writeServer, 'adjust_record_edge', {
           'record_id': records.first.id,
+          'edge': 'end',
           'new_instant': DateTime.fromMillisecondsSinceEpoch(
             boundaryInstant,
             isUtc: true,
@@ -679,8 +687,9 @@ void main() {
       expect(records[1].durationMs, equals(1800000));
       expect(records[2].startedAtEpochMs, equals(records[1].endedAtEpochMs));
 
-      final pastNeighbour = await callTool(writeServer, 'move_boundary', {
+      final pastNeighbour = await callTool(writeServer, 'adjust_record_edge', {
         'record_id': records.first.id,
+        'edge': 'end',
         'new_instant': DateTime.fromMillisecondsSinceEpoch(
           records[2].startedAtEpochMs + 1800000,
           isUtc: true,
@@ -689,18 +698,26 @@ void main() {
       expect(pastNeighbour['isError'], isTrue);
       expect(
         pastNeighbour['content'][0]['text'] as String,
-        contains('past a neighbouring Record'),
+        contains('another Record'),
       );
 
-      final intoOpenLap = await callTool(writeServer, 'move_boundary', {
-        'record_id': records[2].id,
-        'new_instant': DateTime.fromMillisecondsSinceEpoch(
-          records[2].endedAtEpochMs + 1800000,
-          isUtc: true,
-        ).toIso8601String(),
-      });
-      expect(intoOpenLap['isError'], isTrue);
-      expect(intoOpenLap['content'][0]['text'] as String, contains('open Lap'));
+      // The newest Record may grow into the open Lap.
+      clock += hourMs;
+      final intoOpenLap = payloadOf(
+        await callTool(writeServer, 'adjust_record_edge', {
+          'record_id': records[2].id,
+          'edge': 'end',
+          'new_instant': DateTime.fromMillisecondsSinceEpoch(
+            records[2].endedAtEpochMs + 1800000,
+            isUtc: true,
+          ).toIso8601String(),
+        }),
+      );
+      expect(intoOpenLap['success'], isTrue);
+      expect(
+        recorder.lap!.startedAtEpochMs,
+        equals(records[2].endedAtEpochMs + 1800000),
+      );
     });
 
     test('processStream handles multi-line stdio input cleanly', () async {

@@ -616,7 +616,7 @@ class _DashboardViewState extends State<DashboardView>
           color: _ink,
           hatched: false,
           semanticsLabel:
-              'Open Lap since '
+              'Untracked since '
               '${DateFormat('HH:mm').format(wallClockAt(widget.dayRecorder.lapStartTimezoneId, lap.startedAtEpochMs))}, '
               '${UiHelpers.formatDurationHuman(widget.dayRecorder.currentElapsedMs)}',
         ),
@@ -759,7 +759,7 @@ class _DashboardViewState extends State<DashboardView>
     return Semantics(
       button: true,
       label:
-          '${activity.name}, $total today. Tap to label the open Lap as '
+          '${activity.name}, $total today. Tap to label the untracked time as '
           '${activity.name}.',
       child: ExcludeSemantics(
         child: Material(

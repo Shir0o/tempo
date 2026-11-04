@@ -23,23 +23,23 @@ A labeled, closed span of a Day for one Activity, containing a start timestamp, 
 _Avoid_: TimeEntry, log, session, event
 
 **Lap**:
-The single open, unlabeled span running from the end of the last Record to now. It always runs; labeling it closes it as a Record and opens a new Lap.
+The internal name for the open Untracked stretch: the single running span from the end of the last Record to now. It always runs; labeling it closes it as a Record and opens a new one. Never shown in the UI, which calls this time Untracked.
 _Avoid_: Timer, stopwatch, running record, session
 
 **Untracked Record**:
-A closed span with no Activity yet, created by a Split or by leaving time unlabeled. Shown hatched; can be labeled any time; excluded from the EcosystemExport until labeled.
+A closed span with no Activity yet, created by a Split, by leaving time unlabeled, or by trimming a Record's Edge. Shown hatched; can be labeled any time; excluded from the EcosystemExport until labeled.
 _Avoid_: Gap, hole, idle time
 
 **Split**:
 Closing the open Lap at the current moment without labeling it, producing an Untracked Record and a new Lap.
 _Avoid_: Stop, pause, break
 
-**Boundary**:
-The shared instant where one Record ends and the next begins. Correcting the past means moving a Boundary (both neighbors change together), splitting a Record, or merging two neighbors — never editing one Record in isolation.
-_Avoid_: Edge, cut, handle
+**Edge**:
+The start or end instant of one Record. Correcting the past moves an Edge: only that Record changes, the time it gives up becomes an Untracked Record (joining an adjacent Untracked span or the open Untracked stretch when one is there), and it may grow only into time that is already Untracked. A Record that would cross local midnight is split there.
+_Avoid_: Boundary, cut, handle
 
 **MidnightSplit**:
-The automatic division of any Record or Lap that crosses midnight into two, at 00:00 in the zone the user is in when that midnight occurs.
+The division of any Record or Lap that crosses midnight into two, at 00:00 in the zone the user is in when that midnight occurs. An edit that pushes a Record across midnight is split the same way.
 _Avoid_: Rollover, day wrap
 
 **Tag**:
