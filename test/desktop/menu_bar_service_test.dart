@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:tempo/core/state/day_recorder.dart';
+import 'package:tempo/core/state/record_commands.dart';
 import 'package:tempo/data/database/tempo_database.dart';
 import 'package:tempo/data/models/models.dart';
 import 'package:tempo/desktop/menu_bar_service.dart';
@@ -210,7 +211,9 @@ void main() {
 
     test('shows the Lap elapsed time and resets after a label', () async {
       final service = MenuBarService(
+        commands: PhoneRecordCommands(dayRecorder: dayRecorder),
         dayRecorder: dayRecorder,
+        database: db,
         nowUtcMs: () => mockTime,
       );
 
@@ -233,7 +236,9 @@ void main() {
 
     test('switches display modes dynamically', () async {
       final service = MenuBarService(
+        commands: PhoneRecordCommands(dayRecorder: dayRecorder),
         dayRecorder: dayRecorder,
+        database: db,
         nowUtcMs: () => mockTime,
       );
 
@@ -257,7 +262,9 @@ void main() {
 
     test('dispatches updateStatusItem method channel calls', () async {
       final service = MenuBarService(
+        commands: PhoneRecordCommands(dayRecorder: dayRecorder),
         dayRecorder: dayRecorder,
+        database: db,
         nowUtcMs: () => mockTime,
       );
 

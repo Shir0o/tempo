@@ -2,7 +2,10 @@ package com.tempos.tracker.wear
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
+import android.widget.Toast
 import com.google.android.gms.wearable.DataMap
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
@@ -42,9 +45,14 @@ data class WearActivity(
 
 data class WatchAction(
     val actionId: String = UUID.randomUUID().toString(),
+    /** Per-watch monotonic counter; the phone acknowledges the highest applied. */
+    val actionSeq: Long = 0L,
     val type: String, // "LABEL", "SPLIT" or "UNDO"
     val activityId: String? = null,
     val timestampEpochMs: Long = System.currentTimeMillis(),
+    val timezoneId: String = ZoneId.systemDefault().id,
+    /** For an UNDO, the label it reverses. */
+    val undoesActionId: String? = null,
     val comment: String? = null
 )
 
@@ -68,6 +76,14 @@ class WearLapRepository private constructor(private val context: Context) {
     @Volatile
     private var lapBeforeLabel: LapState? = null
 
+    /** The action id of the last [label], carried by the [undo] that reverses it. */
+    @Volatile
+    private var lastLabelActionId: String? = null
+
+    /** Guards the visible notice so one burst of failures shows one notice. */
+    @Volatile
+    private var lastNoticeEpochMs = 0L
+
     companion object {
         private const val TAG = "WearLapRepository"
         private const val PREF_LAP_STARTED_AT = "lap_started_at"
@@ -77,7 +93,13 @@ class WearLapRepository private constructor(private val context: Context) {
         private const val PREF_ACTIVITIES_JSON = "activities_json"
         private const val PREF_TILE_ACTIVITY_IDS_JSON = "tile_activity_ids_json"
         private const val PREF_OFFLINE_QUEUE_JSON = "offline_queue_json"
+        private const val PREF_ACTION_SEQ = "action_seq"
+        private const val PREF_DEVICE_ID = "device_id"
         private const val TILE_SLOT_COUNT = 3
+
+        /** The queue holds 50 actions; beyond that the oldest is dropped. */
+        private const val MAX_PENDING_ACTIONS = 50
+        private const val NOTICE_DEDUPE_MS = 2_000L
 
         @Volatile
         private var instance: WearLapRepository? = null
@@ -193,7 +215,15 @@ class WearLapRepository private constructor(private val context: Context) {
         val now = System.currentTimeMillis()
         lapBeforeLabel = _lap.value
         openLapFrom(now)
-        dispatchAction(WatchAction(type = "LABEL", activityId = activityId, timestampEpochMs = now))
+        val action = WatchAction(
+            actionSeq = nextActionSeq(),
+            type = "LABEL",
+            activityId = activityId,
+            timestampEpochMs = now,
+            timezoneId = ZoneId.systemDefault().id
+        )
+        lastLabelActionId = action.actionId
+        dispatchAction(action)
         notifySurfaces()
     }
 
@@ -201,24 +231,58 @@ class WearLapRepository private constructor(private val context: Context) {
     fun split() {
         val now = System.currentTimeMillis()
         lapBeforeLabel = null
+        lastLabelActionId = null
         openLapFrom(now)
-        dispatchAction(WatchAction(type = "SPLIT", timestampEpochMs = now))
+        dispatchAction(
+            WatchAction(
+                actionSeq = nextActionSeq(),
+                type = "SPLIT",
+                timestampEpochMs = now,
+                timezoneId = ZoneId.systemDefault().id
+            )
+        )
         notifySurfaces()
     }
 
     /**
      * Reverses the last [label] inside the UndoGraceWindow: the Lap goes back
      * to its previous start here, and the phone deletes the Record it wrote.
+     * The undo carries the id of the label it reverses.
      */
     fun undo() {
         val previous = lapBeforeLabel ?: return
+        val undoesActionId = lastLabelActionId
         lapBeforeLabel = null
+        lastLabelActionId = null
         val now = System.currentTimeMillis()
         val restored = previous.copy(revision = _lap.value.revision + 1, updatedAtEpochMs = now)
         _lap.value = restored
         saveLap(restored)
-        dispatchAction(WatchAction(type = "UNDO", timestampEpochMs = now))
+        dispatchAction(
+            WatchAction(
+                actionSeq = nextActionSeq(),
+                type = "UNDO",
+                timestampEpochMs = now,
+                timezoneId = ZoneId.systemDefault().id,
+                undoesActionId = undoesActionId
+            )
+        )
         notifySurfaces()
+    }
+
+    /** The watch's own identity, so the phone keys its watermark by device. */
+    private val deviceId: String by lazy {
+        prefs.getString(PREF_DEVICE_ID, null)
+            ?: UUID.randomUUID().toString().also {
+                prefs.edit().putString(PREF_DEVICE_ID, it).apply()
+            }
+    }
+
+    /** Allocates the next sequence before any network call, so a retry keeps it. */
+    private fun nextActionSeq(): Long = synchronized(this) {
+        val next = prefs.getLong(PREF_ACTION_SEQ, 0L) + 1L
+        prefs.edit().putLong(PREF_ACTION_SEQ, next).apply()
+        next
     }
 
     /**
@@ -252,22 +316,38 @@ class WearLapRepository private constructor(private val context: Context) {
         notifySurfaces()
     }
 
+    /**
+     * Applies the phone's acknowledgement: pending actions at or below
+     * [appliedActionSeq] are done and leave the queue, and [rejectedActionIds]
+     * are dropped instead of retried. A rejection also rolls the optimistic
+     * Lap back, because the phone's Lap is the one that actually happened.
+     */
+    fun applyAcknowledgement(appliedActionSeq: Long, rejectedActionIds: List<String>) {
+        pruneAcknowledged(appliedActionSeq)
+        discardRejected(rejectedActionIds)
+
+        if (rejectedActionIds.isEmpty()) return
+        lapBeforeLabel = null
+        lastLabelActionId = null
+        postNotice("A label couldn't be applied")
+    }
+
     private fun dispatchAction(action: WatchAction) {
         enqueueOfflineAction(action)
         scope.launch {
             try {
-                // 1. Put DataItem with setUrgent() for durable replication
+                // Put DataItem with setUrgent() for durable replication. It stays
+                // pending until the phone acknowledges its sequence: a DataItem
+                // outlives this process and is re-read after a queue restore.
                 Wearable.getDataClient(context).putDataItem(
                     putActionRequest(action).asPutDataRequest().setUrgent()
                 ).await()
-                Log.d(TAG, "Successfully dispatched urgent action: ${action.type}")
+                Log.d(TAG, "Dispatched urgent action ${action.actionId} (seq ${action.actionSeq})")
 
                 // Also attempt low-latency MessageClient RPC to connected nodes
                 sendActionMessage(action)
-
-                dequeueOfflineAction(action.actionId)
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to immediately dispatch action (buffered in offline queue): ${e.message}")
+                Log.w(TAG, "Failed to immediately dispatch action (still pending): ${e.message}")
             }
         }
     }
@@ -275,9 +355,13 @@ class WearLapRepository private constructor(private val context: Context) {
     private fun putActionRequest(action: WatchAction): PutDataMapRequest {
         return PutDataMapRequest.create("/tempo/actions/${action.actionId}").apply {
             dataMap.putString("actionId", action.actionId)
+            dataMap.putLong("actionSeq", action.actionSeq)
+            dataMap.putString("deviceId", deviceId)
             dataMap.putString("action", action.type)
             action.activityId?.let { dataMap.putString("activityId", it) }
             dataMap.putLong("timestampEpochMs", action.timestampEpochMs)
+            dataMap.putString("zoneId", action.timezoneId)
+            action.undoesActionId?.let { dataMap.putString("undoesActionId", it) }
             action.comment?.let { dataMap.putString("comment", it) }
         }
     }
@@ -287,9 +371,13 @@ class WearLapRepository private constructor(private val context: Context) {
             val nodes = Wearable.getNodeClient(context).connectedNodes.await()
             val payload = JSONObject().apply {
                 put("actionId", action.actionId)
+                put("actionSeq", action.actionSeq)
+                put("deviceId", deviceId)
                 put("action", action.type)
                 action.activityId?.let { put("activityId", it) }
                 put("timestampEpochMs", action.timestampEpochMs)
+                put("zoneId", action.timezoneId)
+                action.undoesActionId?.let { put("undoesActionId", it) }
                 action.comment?.let { put("comment", it) }
             }.toString().toByteArray(Charsets.UTF_8)
 
@@ -302,17 +390,55 @@ class WearLapRepository private constructor(private val context: Context) {
     }
 
     private fun enqueueOfflineAction(action: WatchAction) {
-        synchronized(this) {
+        val dropped = synchronized(this) {
             val queue = getOfflineQueue().toMutableList()
             queue.add(action)
+            var oldest: WatchAction? = null
+            while (queue.size > MAX_PENDING_ACTIONS) {
+                oldest = queue.removeAt(0)
+            }
             saveOfflineQueue(queue)
+            oldest
+        }
+        if (dropped != null) {
+            Log.w(TAG, "Pending queue full; dropped action ${dropped.actionId}")
+            postNotice("Watch queue full: a label was lost")
         }
     }
 
-    private fun dequeueOfflineAction(actionId: String) {
+    private fun pruneAcknowledged(appliedActionSeq: Long) {
+        if (appliedActionSeq <= 0L) return
         synchronized(this) {
-            val queue = getOfflineQueue().filter { it.actionId != actionId }
-            saveOfflineQueue(queue)
+            val queue = getOfflineQueue()
+            // Anything at or below the watermark is done. An action queued
+            // before sequences existed carries 0 and can never be acknowledged,
+            // so it goes here too rather than being re-sent and applied twice.
+            val kept = queue.filter { it.actionSeq > appliedActionSeq }
+            if (kept.size == queue.size) return
+            saveOfflineQueue(kept)
+            Log.d(TAG, "Acknowledged ${queue.size - kept.size} actions up to $appliedActionSeq")
+        }
+    }
+
+    private fun discardRejected(rejectedActionIds: List<String>) {
+        if (rejectedActionIds.isEmpty()) return
+        synchronized(this) {
+            val rejected = rejectedActionIds.toSet()
+            val queue = getOfflineQueue()
+            val kept = queue.filter { it.actionId !in rejected }
+            if (kept.size != queue.size) {
+                saveOfflineQueue(kept)
+                Log.w(TAG, "Phone rejected ${queue.size - kept.size} actions")
+            }
+        }
+    }
+
+    private fun postNotice(message: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastNoticeEpochMs < NOTICE_DEDUPE_MS) return
+        lastNoticeEpochMs = now
+        Handler(Looper.getMainLooper()).post {
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -326,9 +452,12 @@ class WearLapRepository private constructor(private val context: Context) {
                 list.add(
                     WatchAction(
                         actionId = obj.getString("actionId"),
+                        actionSeq = obj.optLong("actionSeq", 0L),
                         type = obj.getString("action"),
                         activityId = obj.optString("activityId").ifEmpty { null },
                         timestampEpochMs = obj.getLong("timestampEpochMs"),
+                        timezoneId = obj.optString("timezoneId", ""),
+                        undoesActionId = obj.optString("undoesActionId").ifEmpty { null },
                         comment = obj.optString("comment").ifEmpty { null }
                     )
                 )
@@ -344,9 +473,12 @@ class WearLapRepository private constructor(private val context: Context) {
         for (a in queue) {
             val obj = JSONObject().apply {
                 put("actionId", a.actionId)
+                put("actionSeq", a.actionSeq)
                 put("action", a.type)
                 a.activityId?.let { put("activityId", it) }
                 put("timestampEpochMs", a.timestampEpochMs)
+                put("timezoneId", a.timezoneId)
+                a.undoesActionId?.let { put("undoesActionId", it) }
                 a.comment?.let { put("comment", it) }
             }
             array.put(obj)
@@ -358,14 +490,14 @@ class WearLapRepository private constructor(private val context: Context) {
         scope.launch {
             val pending = getOfflineQueue()
             if (pending.isEmpty()) return@launch
-            Log.d(TAG, "Flushing ${pending.size} offline buffered actions")
+            Log.d(TAG, "Flushing ${pending.size} unacknowledged actions")
             for (action in pending) {
                 try {
                     Wearable.getDataClient(context).putDataItem(
                         putActionRequest(action).asPutDataRequest().setUrgent()
                     ).await()
-                    dequeueOfflineAction(action.actionId)
-                    Log.d(TAG, "Flushed action: ${action.actionId}")
+                    sendActionMessage(action)
+                    Log.d(TAG, "Re-sent action: ${action.actionId} (seq ${action.actionSeq})")
                 } catch (e: Exception) {
                     Log.w(TAG, "Offline flush retry deferred: ${e.message}")
                     break

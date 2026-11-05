@@ -7,21 +7,44 @@ import '../core/state/suggestion_engine.dart';
 import '../core/time/timezone_id.dart';
 import '../data/database/tempo_database.dart';
 import '../data/models/activity.dart';
+import '../data/models/sync_change.dart';
 
 /// Represents an action received from the Wear OS companion watch.
 class WatchAction {
   /// "LABEL" labels the open Lap; "SPLIT" closes it as an Untracked Record.
   final String type;
   final String? activityId;
+
+  /// The instant the tap happened, in UTC epoch milliseconds. The Record is
+  /// written for this moment, not for when the phone received it.
   final int timestampEpochMs;
+
+  /// The zone the tap happened in, so the Record's end lands in the zone the
+  /// user was actually in.
+  final String? zoneId;
   final String? actionId;
+
+  /// Per-watch monotonic counter. The phone acknowledges with the highest
+  /// sequence it has applied, and the watch drops everything at or below it.
+  final int actionSeq;
+
+  /// The watch that tapped, so its acknowledgement watermark is keyed by
+  /// device in `watch_watermarks`.
+  final String? deviceId;
+
+  /// For an UNDO, the id of the label it reverses.
+  final String? undoesActionId;
   final String? comment;
 
   const WatchAction({
     required this.type,
     this.activityId,
     required this.timestampEpochMs,
+    this.zoneId,
     this.actionId,
+    this.actionSeq = 0,
+    this.deviceId,
+    this.undoesActionId,
     this.comment,
   });
 
@@ -32,14 +55,52 @@ class WatchAction {
       timestampEpochMs:
           (map['timestampEpochMs'] as num?)?.toInt() ??
           DateTime.now().toUtc().millisecondsSinceEpoch,
+      zoneId: map['zoneId'] as String?,
       actionId: map['actionId'] as String?,
+      actionSeq: (map['actionSeq'] as num?)?.toInt() ?? 0,
+      deviceId: map['deviceId'] as String?,
+      undoesActionId: map['undoesActionId'] as String?,
       comment: map['comment'] as String?,
     );
   }
 
   @override
   String toString() =>
-      'WatchAction(type: $type, activityId: $activityId, timestamp: $timestampEpochMs)';
+      'WatchAction(type: $type, activityId: $activityId, '
+      'timestamp: $timestampEpochMs, actionSeq: $actionSeq, '
+      'deviceId: $deviceId)';
+}
+
+/// The outcome of one watch action: what the phone applied at the tap's own
+/// instant, or why it refused, so the watch can drop the action and roll its
+/// optimistic Lap back.
+class WatchActionResult {
+  final String actionId;
+  final int actionSeq;
+
+  /// [IntentResult.appliedStatus] or [IntentResult.rejectedStatus].
+  final String status;
+
+  /// Empty when applied; a stable reason such as `lap-moved` when rejected.
+  final String reason;
+  final String? entityId;
+  final int? appliedAtEpochMs;
+
+  const WatchActionResult({
+    required this.actionId,
+    required this.actionSeq,
+    required this.status,
+    this.reason = '',
+    this.entityId,
+    this.appliedAtEpochMs,
+  });
+
+  bool get isApplied => status == IntentResult.appliedStatus;
+
+  @override
+  String toString() =>
+      'WatchActionResult(actionId: $actionId, actionSeq: $actionSeq, '
+      'status: $status, reason: $reason)';
 }
 
 /// Service bridging the Flutter application with the Wear OS companion app.
@@ -62,6 +123,19 @@ class WearableSyncService {
 
   final StreamController<WatchAction> _watchActionController =
       StreamController<WatchAction>.broadcast();
+
+  /// The watch whose watermark this service acknowledges. Learned from the
+  /// actions themselves; the phone never learns a watch id any other way.
+  String? _watchDeviceId;
+
+  /// Ids the phone refused, sent with the next Lap payload so the watch can
+  /// drop them instead of queueing them forever.
+  final List<String> _rejectedActionIds = <String>[];
+
+  /// A tap arrives twice, on the DataItem and the message channel. Serializing
+  /// the handling is what makes the watermark a real duplicate guard: the
+  /// second copy reads a watermark the first has already advanced.
+  Future<void>? _actionLock;
 
   bool _isDisposed = false;
 
@@ -166,20 +240,31 @@ class WearableSyncService {
     return ids.take(tileActivityCount).toList(growable: false);
   }
 
-  /// Sends the open Lap snapshot to the watch.
+  /// Sends the open Lap snapshot to the watch, with the acknowledgement
+  /// watermark and any ids the phone refused.
   Future<void> _onLapChanged() async {
     if (_isDisposed) return;
 
     final lap = dayRecorder.lap;
     final now = _nowUtcMs();
+    final rejectedActionIds = List<String>.from(_rejectedActionIds);
+    final deviceId = _watchDeviceId;
 
     try {
+      final appliedActionSeq = deviceId == null || deviceId.isEmpty
+          ? 0
+          : await _readWatermark(deviceId);
       await channel.invokeMethod('syncLap', {
         'lapStartedAtEpochMs': lap?.startedAtEpochMs ?? 0,
         'lapStartedTimezoneId': lap?.startedTimezoneId ?? '',
         'revision': lap?.revision ?? 0,
         'updatedAtEpochMs': now,
+        'appliedActionSeq': appliedActionSeq,
+        'rejectedActionIds': rejectedActionIds,
       });
+      if (rejectedActionIds.isNotEmpty) {
+        _rejectedActionIds.removeWhere(rejectedActionIds.contains);
+      }
     } catch (_) {
       // Platform channel or watch unreachable; offline buffer will sync upon reconnection
     }
@@ -192,36 +277,179 @@ class WearableSyncService {
       if (args is Map) {
         final action = WatchAction.fromMap(args);
         _watchActionController.add(action);
-        await _executeWatchAction(action);
-        return true;
+        final result = await _serialized(() => _executeWatchAction(action));
+        return {
+          'status': result.status,
+          'reason': result.reason,
+          'actionId': result.actionId,
+          'actionSeq': result.actionSeq,
+        };
       }
     }
     return null;
   }
 
-  Future<void> _executeWatchAction(WatchAction action) async {
+  /// Applies [action] at the instant it was tapped, or refuses it with a
+  /// reason. Never swallows the outcome: a refusal becomes a rejected id the
+  /// watch can act on.
+  Future<WatchActionResult> _executeWatchAction(WatchAction action) async {
+    if (action.deviceId != null && action.deviceId!.isNotEmpty) {
+      _watchDeviceId = action.deviceId;
+    }
+
+    final type = action.type.toUpperCase();
+    if (type != 'LABEL' && type != 'SPLIT' && type != 'UNDO') {
+      return _reject(action, 'unknown-action');
+    }
+
+    // The DataItem and the message carry the same tap. The second copy is a
+    // no-op that only re-acknowledges the sequence already applied.
+    final watermark = await _currentWatermark();
+    if (action.actionSeq > 0 && action.actionSeq <= watermark) {
+      await _onLapChanged();
+      return WatchActionResult(
+        actionId: action.actionId ?? '',
+        actionSeq: action.actionSeq,
+        status: IntentResult.appliedStatus,
+        reason: 'duplicate',
+      );
+    }
+
+    const maxClockSkewMs = 10 * 60 * 1000;
+    if ((action.timestampEpochMs - _nowUtcMs()).abs() > maxClockSkewMs) {
+      return await _reject(action, IntentResult.reasonClockSkew);
+    }
+
+    // A tap older than the open Lap belongs to time the phone has already
+    // closed. Refuse it rather than re-place it somewhere it did not happen.
+    final lap = dayRecorder.lap;
+    if (type != 'UNDO' &&
+        lap != null &&
+        lap.startedAtEpochMs > action.timestampEpochMs) {
+      return await _reject(action, IntentResult.reasonLapMoved);
+    }
+
     try {
-      switch (action.type.toUpperCase()) {
+      switch (type) {
         case 'LABEL':
-          if (action.activityId != null && action.activityId!.isNotEmpty) {
-            await dayRecorder.label(
-              action.activityId!,
-              comment: action.comment ?? '',
-            );
+          final activityId = action.activityId;
+          if (activityId == null || activityId.isEmpty) {
+            return await _reject(action, IntentResult.reasonUnknownActivity);
           }
-          break;
+          if (!await _activityExists(activityId)) {
+            return await _reject(action, IntentResult.reasonUnknownActivity);
+          }
+          final record = await dayRecorder.label(
+            activityId,
+            comment: action.comment ?? '',
+            atEpochMs: action.timestampEpochMs,
+            atZoneId: action.zoneId,
+            intentId: action.actionId,
+          );
+          return await _applied(action, entityId: record.id);
 
         case 'SPLIT':
-          await dayRecorder.split();
-          break;
+          final record = await dayRecorder.split(
+            atEpochMs: action.timestampEpochMs,
+            atZoneId: action.zoneId,
+            intentId: action.actionId,
+          );
+          return await _applied(action, entityId: record.id);
 
         case 'UNDO':
-          await dayRecorder.undoLast();
-          break;
+          final undone = await dayRecorder.undoLast();
+          if (!undone) return await _reject(action, 'nothing-to-undo');
+          return await _applied(action);
       }
-    } catch (e) {
-      // Ignore transition error if state already transitioned or invalid
+    } on ArgumentError {
+      return await _reject(action, IntentResult.reasonUnknownActivity);
+    } catch (_) {
+      return await _reject(action, 'failed');
     }
+
+    return await _reject(action, 'unknown-action');
+  }
+
+  /// Runs one action at a time, so the two copies of a tap cannot both read the
+  /// watermark before either writes it.
+  Future<T> _serialized<T>(Future<T> Function() action) async {
+    final previous = _actionLock;
+    final completer = Completer<void>();
+    _actionLock = completer.future;
+    if (previous != null) {
+      try {
+        await previous;
+      } catch (_) {}
+    }
+    try {
+      return await action();
+    } finally {
+      completer.complete();
+      if (identical(_actionLock, completer.future)) _actionLock = null;
+    }
+  }
+
+  Future<WatchActionResult> _applied(
+    WatchAction action, {
+    String? entityId,
+  }) async {
+    final deviceId = _watchDeviceId;
+    if (deviceId != null && deviceId.isNotEmpty && action.actionSeq > 0) {
+      await _writeWatermark(deviceId, action.actionSeq);
+    }
+    await _onLapChanged();
+    return WatchActionResult(
+      actionId: action.actionId ?? '',
+      actionSeq: action.actionSeq,
+      status: IntentResult.appliedStatus,
+      entityId: entityId,
+      appliedAtEpochMs: action.timestampEpochMs,
+    );
+  }
+
+  Future<WatchActionResult> _reject(WatchAction action, String reason) async {
+    final actionId = action.actionId;
+    if (actionId != null &&
+        actionId.isNotEmpty &&
+        !_rejectedActionIds.contains(actionId)) {
+      _rejectedActionIds.add(actionId);
+    }
+    // A refusal does not move the Lap, so the watch only learns about it if
+    // the snapshot is pushed here.
+    await _onLapChanged();
+    return WatchActionResult(
+      actionId: actionId ?? '',
+      actionSeq: action.actionSeq,
+      status: IntentResult.rejectedStatus,
+      reason: reason,
+    );
+  }
+
+  Future<bool> _activityExists(String activityId) async {
+    final db = database;
+    if (db == null) return true;
+    return await db.getActivityById(activityId) != null;
+  }
+
+  /// The highest sequence already applied for this watch, read from the store
+  /// so a restart of the phone app does not re-apply or lose the watermark.
+  Future<int> _currentWatermark() async {
+    final deviceId = _watchDeviceId;
+    if (deviceId == null || deviceId.isEmpty) return 0;
+    return _readWatermark(deviceId);
+  }
+
+  Future<int> _readWatermark(String deviceId) async {
+    final db = database;
+    if (db == null) return 0;
+    return db.getWatchWatermark(deviceId);
+  }
+
+  Future<void> _writeWatermark(String deviceId, int actionSeq) async {
+    final db = database;
+    if (db == null) return;
+    if (await _readWatermark(deviceId) >= actionSeq) return;
+    await db.setWatchWatermark(deviceId, actionSeq);
   }
 
   /// Closes streams and cleans up listeners.

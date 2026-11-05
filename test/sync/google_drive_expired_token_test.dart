@@ -89,7 +89,7 @@ void main() {
     }
   });
 
-  test('backup renews an expired access token and retries once', () async {
+  test('CSV sync renews an expired access token and retries once', () async {
     var renewals = 0;
     final service = GoogleDriveSyncService(
       driveApi: _driveApi(transport, 'expired-token'),
@@ -99,9 +99,9 @@ void main() {
       },
     );
 
-    final backupId = await service.backupDatabaseToDrive(dbFile: dbFile);
+    final fileId = await service.syncCsvToDrive(dbFile);
 
-    expect(backupId, 'backup-1');
+    expect(fileId, 'backup-1');
     expect(renewals, 1);
     expect(service.lastSyncTime, isNotNull);
     expect(service.lastError, isNull);
@@ -111,7 +111,7 @@ void main() {
   });
 
   test(
-    'backup reports a reconnect message when renewal is unavailable',
+    'CSV sync reports a reconnect message when renewal is unavailable',
     () async {
       final service = GoogleDriveSyncService(
         driveApi: _driveApi(transport, 'expired-token'),
@@ -120,7 +120,7 @@ void main() {
       );
 
       await expectLater(
-        service.backupDatabaseToDrive(dbFile: dbFile),
+        service.syncCsvToDrive(dbFile),
         throwsA(
           predicate(
             (e) => e.toString().contains(
@@ -140,7 +140,7 @@ void main() {
       );
 
       await expectLater(
-        service.backupDatabaseToDrive(dbFile: dbFile),
+        service.syncCsvToDrive(dbFile),
         throwsA(isA<GoogleDriveAccessExpiredException>()),
       );
       expect(service.isSignedIn, isFalse);

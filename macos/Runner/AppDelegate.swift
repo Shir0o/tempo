@@ -1,15 +1,28 @@
 import Cocoa
 import FlutterMacOS
 import Carbon
+import Security
 
 @main
 class AppDelegate: FlutterAppDelegate {
   private var statusItem: NSStatusItem?
   private var menuBarChannel: FlutterMethodChannel?
   private var deepLinkChannel: FlutterMethodChannel?
+  private var backupDestinationChannel: FlutterMethodChannel?
+  private var pairingSecretsChannel: FlutterMethodChannel?
   private var pendingDeepLink: String?
   private var hotKeyRef: EventHotKeyRef?
   private var currentDisplayMode: String = "full"
+
+  /// The Keychain service every pairing secret is written under. Secrets are
+  /// never in `tempo.db`, so a snapshot never carries a credential. There is
+  /// no access group: the app's own Keychain is the boundary.
+  private static let pairingService = "com.tempos.tracker.pairing"
+
+  /// Security-scoped URLs the app is allowed to write to, keyed by the base64
+  /// bookmark that granted access. A sandboxed app loses access on relaunch, so
+  /// the bookmark in the backup destination setting is what restores it.
+  private var scopedURLs: [String: URL] = [:]
 
   override func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
     return false
@@ -88,10 +101,243 @@ class AppDelegate: FlutterAppDelegate {
     }
     self.deepLinkChannel = linkChannel
 
+    // Backup destination picking and security-scoped bookmark resolution. The
+    // Mac scans the pairing QR in Flutter; nothing is rendered here.
+    let backupChannel = FlutterMethodChannel(
+      name: "com.tempos.tracker/backup_destination",
+      binaryMessenger: messenger
+    )
+    backupChannel.setMethodCallHandler { [weak self] (call, result) in
+      guard let self = self else {
+        result(nil)
+        return
+      }
+      switch call.method {
+      case "pickDirectory":
+        self.pickBackupDirectory(result: result)
+      case "resolveBookmark":
+        if let args = call.arguments as? [String: Any],
+           let bookmark = args["bookmark"] as? String {
+          if let path = self.resolveBookmark(bookmark) {
+            result(["path": path])
+          } else {
+            result(nil)
+          }
+        } else {
+          result(FlutterError(code: "INVALID_ARGUMENTS", message: "bookmark is required", details: nil))
+        }
+      case "releaseBookmark":
+        if let args = call.arguments as? [String: Any],
+           let bookmark = args["bookmark"] as? String {
+          self.scopedURLs.removeValue(forKey: bookmark)?.stopAccessingSecurityScopedResource()
+          result(nil)
+        } else {
+          result(FlutterError(code: "INVALID_ARGUMENTS", message: "bookmark is required", details: nil))
+        }
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    self.backupDestinationChannel = backupChannel
+
+    // Pairing secrets: 256-bit secrets in the login Keychain, keyed by the
+    // peer or invite key the Dart side chooses.
+    let pairingChannel = FlutterMethodChannel(
+      name: "tempo/pairing_secrets",
+      binaryMessenger: messenger
+    )
+    pairingChannel.setMethodCallHandler { [weak self] (call, result) in
+      guard let self = self else {
+        result(nil)
+        return
+      }
+      switch call.method {
+      case "read":
+        if let key = AppDelegate.pairingKey(call) {
+          result(self.readPairingSecret(key))
+        } else {
+          result(FlutterError(code: "INVALID_ARGUMENTS", message: "key is required", details: nil))
+        }
+      case "write":
+        if let key = AppDelegate.pairingKey(call),
+           let value = (call.arguments as? [String: Any])?["value"] as? String {
+          if let error = self.writePairingSecret(key, value: value) {
+            result(error)
+          } else {
+            result(nil)
+          }
+        } else {
+          result(FlutterError(code: "INVALID_ARGUMENTS", message: "key and value are required", details: nil))
+        }
+      case "delete":
+        if let key = AppDelegate.pairingKey(call) {
+          if let error = self.deletePairingSecret(key) {
+            result(error)
+          } else {
+            result(nil)
+          }
+        } else {
+          result(FlutterError(code: "INVALID_ARGUMENTS", message: "key is required", details: nil))
+        }
+      case "deleteAll":
+        if let error = self.deleteAllPairingSecrets() {
+          result(error)
+        } else {
+          result(nil)
+        }
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    self.pairingSecretsChannel = pairingChannel
+
     if let pending = pendingDeepLink {
       linkChannel.invokeMethod("onDeepLinkReceived", arguments: ["url": pending])
       pendingDeepLink = nil
     }
+  }
+
+  /// Shows the folder picker and returns `{path, bookmark}` so the destination
+  /// survives a relaunch. Returns nil when the user cancels.
+  private func pickBackupDirectory(result: @escaping FlutterResult) {
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.canCreateDirectories = true
+    panel.prompt = "Choose"
+    panel.message = "Choose the folder Tempo keeps verified backups in."
+
+    let complete: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+      guard response == .OK, let url = panel.url else {
+        result(nil)
+        return
+      }
+      _ = url.startAccessingSecurityScopedResource()
+      var bookmark: Any = NSNull()
+      do {
+        let data = try url.bookmarkData(
+          options: .withSecurityScope,
+          includingResourceValuesForKeys: nil,
+          relativeTo: nil
+        )
+        let encoded = data.base64EncodedString()
+        self?.scopedURLs[encoded] = url
+        bookmark = encoded
+      } catch {
+        // Without a bookmark the folder is usable for this session only; the
+        // Dart side shows the destination as unreachable after a relaunch.
+        NSLog("Tempo: could not create a security-scoped bookmark: \(error)")
+      }
+      result(["path": url.path, "bookmark": bookmark])
+    }
+
+    if let window = mainFlutterWindow {
+      panel.beginSheetModal(for: window, completionHandler: complete)
+    } else {
+      complete(panel.runModal())
+    }
+  }
+
+  /// Resolves a persisted bookmark and starts security-scoped access. Returns
+  /// the folder path, or nil when the bookmark is stale or access is refused.
+  private func resolveBookmark(_ encoded: String) -> String? {
+    if let url = scopedURLs[encoded] {
+      return url.path
+    }
+    guard let data = Data(base64Encoded: encoded) else { return nil }
+    var isStale = false
+    do {
+      let url = try URL(
+        resolvingBookmarkData: data,
+        options: [.withSecurityScope],
+        relativeTo: nil,
+        bookmarkDataIsStale: &isStale
+      )
+      guard url.startAccessingSecurityScopedResource() else { return nil }
+      scopedURLs[encoded] = url
+      return url.path
+    } catch {
+      NSLog("Tempo: could not resolve the backup destination bookmark: \(error)")
+      return nil
+    }
+  }
+
+  // MARK: - Pairing secrets (Keychain)
+
+  /// The pairing key a call names, or nil when it is missing or empty.
+  private static func pairingKey(_ call: FlutterMethodCall) -> String? {
+    guard let key = (call.arguments as? [String: Any])?["key"] as? String,
+          !key.isEmpty else { return nil }
+    return key
+  }
+
+  /// The `kSecClassGenericPassword` query for one account, or for the whole
+  /// service when [account] is nil.
+  private func pairingQuery(account: String?) -> [String: Any] {
+    var query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: AppDelegate.pairingService,
+    ]
+    if let account = account {
+      query[kSecAttrAccount as String] = account
+    }
+    return query
+  }
+
+  private func readPairingSecret(_ key: String) -> String? {
+    var query = pairingQuery(account: key)
+    query[kSecReturnData as String] = true
+    query[kSecMatchLimit as String] = kSecMatchLimitOne
+    var item: CFTypeRef?
+    let status = SecItemCopyMatching(query as CFDictionary, &item)
+    guard status == errSecSuccess, let data = item as? Data else { return nil }
+    return String(data: data, encoding: .utf8)
+  }
+
+  private func writePairingSecret(_ key: String, value: String) -> FlutterError? {
+    guard let data = value.data(using: .utf8) else {
+      return FlutterError(code: "INVALID_ARGUMENTS", message: "value is not UTF-8", details: nil)
+    }
+    // One item per key: a rewrite replaces the secret rather than adding a
+    // second candidate a lookup could return.
+    _ = SecItemDelete(pairingQuery(account: key) as CFDictionary)
+    var query = pairingQuery(account: key)
+    query[kSecValueData as String] = data
+    let status = SecItemAdd(query as CFDictionary, nil)
+    guard status == errSecSuccess else {
+      return FlutterError(
+        code: "KEYCHAIN_WRITE_FAILED",
+        message: "the Keychain refused the write (\(status))",
+        details: nil
+      )
+    }
+    return nil
+  }
+
+  private func deletePairingSecret(_ key: String) -> FlutterError? {
+    let status = SecItemDelete(pairingQuery(account: key) as CFDictionary)
+    guard status == errSecSuccess || status == errSecItemNotFound else {
+      return FlutterError(
+        code: "KEYCHAIN_DELETE_FAILED",
+        message: "the Keychain refused the delete (\(status))",
+        details: nil
+      )
+    }
+    return nil
+  }
+
+  /// "Revoke all paired devices": every secret under the service goes.
+  private func deleteAllPairingSecrets() -> FlutterError? {
+    let status = SecItemDelete(pairingQuery(account: nil) as CFDictionary)
+    guard status == errSecSuccess || status == errSecItemNotFound else {
+      return FlutterError(
+        code: "KEYCHAIN_DELETE_FAILED",
+        message: "the Keychain refused the delete (\(status))",
+        details: nil
+      )
+    }
+    return nil
   }
 
   override func application(_ application: NSApplication, open urls: [URL]) {

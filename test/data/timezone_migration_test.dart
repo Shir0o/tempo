@@ -34,6 +34,16 @@ CREATE TABLE records (
 );
 ''';
 
+const String _v1Tags = '''
+CREATE TABLE tags (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL UNIQUE,
+    color_hex TEXT NOT NULL DEFAULT '#9E9E9E',
+    created_at_epoch_ms INTEGER NOT NULL,
+    updated_at_epoch_ms INTEGER NOT NULL
+);
+''';
+
 const String _v1RecordTags = '''
 CREATE TABLE record_tags (
     record_id TEXT NOT NULL REFERENCES records(id) ON DELETE CASCADE,
@@ -87,6 +97,7 @@ void main() {
         version: 1,
         onCreate: (db, version) async {
           await db.execute(_v1Activities);
+          await db.execute(_v1Tags);
           await db.execute(_v1Records);
           await db.execute(_v1RecordTags);
           await db.execute(_v1ActiveTimer);
@@ -134,7 +145,7 @@ void main() {
       final db = await TempoDatabase.open(path: dbPath);
       addTearDown(db.close);
 
-      expect(TempoDatabase.databaseVersion, 9);
+      expect(TempoDatabase.databaseVersion, 10);
 
       final pst = await db.getRecordById('rec-pst');
       expect(pst!.timezoneId, 'America/Los_Angeles');

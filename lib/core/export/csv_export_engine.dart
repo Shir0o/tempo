@@ -17,6 +17,12 @@ class CsvExportEngine {
   final String Function() _generateUuid;
   final DateTime Function(int epochMs) _epochToDateTime;
 
+  /// Blanks the comment column while keeping it present and quoted.
+  ///
+  /// When null, each export follows the `export_redact_comments` setting, so a
+  /// switch flipped in Settings takes effect without rebuilding the engine.
+  final bool? redactComments;
+
   /// Default file name matching Simple Time Tracker continuous auto-export.
   static const String defaultFileName = 'stt_records_automatic.csv';
 
@@ -43,6 +49,7 @@ class CsvExportEngine {
     this.debounceDuration = defaultDebounceDuration,
     String Function()? generateUuid,
     DateTime Function(int epochMs)? epochToDateTime,
+    this.redactComments,
     this.onExportCompleted,
   }) : targetFile = _resolveTargetFile(
          targetFile: targetFile,
@@ -63,6 +70,7 @@ class CsvExportEngine {
     Duration debounceDuration = defaultDebounceDuration,
     String Function()? generateUuid,
     DateTime Function(int epochMs)? epochToDateTime,
+    bool? redactComments,
   }) => CsvExportEngine(
     database: database,
     exportDirectory: directory,
@@ -70,6 +78,7 @@ class CsvExportEngine {
     debounceDuration: debounceDuration,
     generateUuid: generateUuid,
     epochToDateTime: epochToDateTime,
+    redactComments: redactComments,
   );
 
   static File _resolveTargetFile({
@@ -141,11 +150,15 @@ class CsvExportEngine {
   }
 
   /// Formats a single record row matching the 8-column STT CSV layout.
+  ///
+  /// With [redactComments] the comment cell is written as an empty quoted
+  /// string; its column, the times, the tags, and the duration are unchanged.
   String formatRecordRow({
     required Record record,
     required String activityName,
     required List<String> tagNames,
     String categories = '',
+    bool redactComments = false,
   }) {
     // Both ends use the Record's offset at its start, so rows never shift
     // when the device changes zone and the two offset-less timestamps always
@@ -166,7 +179,7 @@ class CsvExportEngine {
     final durationMinutes = formatDurationMinutes(record.durationMs);
 
     final quotedActivity = quoteString(activityName);
-    final quotedComment = quoteString(record.comment);
+    final quotedComment = quoteString(redactComments ? '' : record.comment);
     final quotedCategories = quoteString(categories);
     final quotedTags = quoteString(tagNames.join(', '));
 
@@ -177,9 +190,20 @@ class CsvExportEngine {
   // Serialization
   // ==========================================
 
+  /// An explicit constructor value wins; otherwise the persisted switch
+  /// decides, defaulting to off when the setting is missing.
+  Future<bool> _shouldRedactComments() async {
+    final configured = redactComments;
+    if (configured != null) return configured;
+    return await database.getSetting(SyncSettingKeys.exportRedactComments) ==
+        'true';
+  }
+
   /// Generates the complete 8-column CSV content string from the database,
   /// ordered by `started_at_epoch_ms` ascending.
   Future<String> generateCsvString() async {
+    final redactComments = await _shouldRedactComments();
+
     final activities = await database.getAllActivities(includeArchived: true);
     final activityMap = {for (final a in activities) a.id: a};
 
@@ -218,6 +242,7 @@ class CsvExportEngine {
         activityName: activityName,
         tagNames: tagNames,
         categories: categoryName,
+        redactComments: redactComments,
       );
       buffer.write(row);
     }

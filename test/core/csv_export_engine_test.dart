@@ -670,6 +670,94 @@ void main() {
     });
   });
 
+  group('Comment Redaction', () {
+    Record recordWithComment(String id) => Record(
+      id: id,
+      activityId: testActivityLunch.id,
+      startedAtEpochMs: 1758109597000,
+      endedAtEpochMs: 1758113197000,
+      comment: 'Lunch w/ Abel',
+      timezoneId: 'UTC',
+      createdAtEpochMs: 1758113197000,
+      updatedAtEpochMs: 1758113197000,
+      tagIds: [tagContact.id],
+    );
+
+    test('blanks the comment cell but keeps the column, times, tags, and '
+        'duration', () async {
+      await db.insertRecord(recordWithComment('rec-redacted'));
+      final engine = CsvExportEngine(
+        database: db,
+        targetFile: targetFile,
+        redactComments: true,
+        epochToDateTime: fixedEpochToDateTime,
+      );
+      addTearDown(engine.dispose);
+
+      final csvString = await engine.generateCsvString();
+      final rows = Csv(autoDetect: false).decode(csvString);
+
+      expect(rows.first.length, 8);
+      expect(rows.first[3], 'comment');
+      expect(rows[1].length, 8);
+      expect(rows[1][3], '');
+      expect(rows[1][1], '2025-09-17 11:46:37');
+      expect(rows[1][2], '2025-09-17 12:46:37');
+      expect(rows[1][5], 'Contact');
+      expect(rows[1][6], '1:0:0');
+      expect(rows[1][7], '60');
+      // The comment column is still present and quoted, not dropped.
+      expect(
+        csvString,
+        contains(
+          '"Lunch",2025-09-17 11:46:37,2025-09-17 12:46:37,"","","Contact",1:0:0,60\n',
+        ),
+      );
+      expect(csvString, isNot(contains('Abel')));
+    });
+
+    test('is off by default and keeps the comment', () async {
+      await db.insertRecord(recordWithComment('rec-visible'));
+      final engine = CsvExportEngine(
+        database: db,
+        targetFile: targetFile,
+        epochToDateTime: fixedEpochToDateTime,
+      );
+      addTearDown(engine.dispose);
+
+      final csvString = await engine.generateCsvString();
+      final rows = Csv(autoDetect: false).decode(csvString);
+      expect(rows[1][3], 'Lunch w/ Abel');
+    });
+
+    test('follows export_redact_comments when no flag is given', () async {
+      await db.insertRecord(recordWithComment('rec-setting'));
+      await db.setSetting(SyncSettingKeys.exportRedactComments, 'true');
+
+      final following = CsvExportEngine(
+        database: db,
+        targetFile: targetFile,
+        epochToDateTime: fixedEpochToDateTime,
+      );
+      addTearDown(following.dispose);
+      final redacted = Csv(autoDetect: false)
+          .decode(await following.generateCsvString());
+      expect(redacted[1][3], '');
+
+      // An explicit flag wins over the stored switch.
+      final explicit = CsvExportEngine(
+        database: db,
+        targetFile: targetFile,
+        redactComments: false,
+        epochToDateTime: fixedEpochToDateTime,
+      );
+      addTearDown(explicit.dispose);
+      final kept = Csv(autoDetect: false)
+          .decode(await explicit.generateCsvString());
+      expect(kept[1][3], 'Lunch w/ Abel');
+    });
+  });
+
   group('DayRecorder Integration', () {
     test('labeling the Lap automatically triggers debounced export', () async {
       final engine = CsvExportEngine(

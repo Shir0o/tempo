@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/state/day_recorder.dart';
+import '../../core/state/record_commands.dart';
 import '../../core/state/suggestion_engine.dart';
 import '../../core/state/today_order.dart';
 import '../../core/time/timezone_id.dart';
@@ -20,8 +21,16 @@ import 'theme/tempo_theme.dart';
 /// over a 00–24 strip of the Day, then a 3-column grid of Activity blocks.
 /// Tapping a block labels the open Lap; an undo bar stays for three seconds.
 class DashboardView extends StatefulWidget {
-  final DayRecorder dayRecorder;
+  /// The phone's always-running Lap. Null on the Mac, which reads the Lap from
+  /// the replica and never opens one of its own.
+  final DayRecorder? dayRecorder;
   final TempoDatabase database;
+
+  /// Every mutation goes through this seam. Defaults to the phone's
+  /// [PhoneRecordCommands] when a [DayRecorder] is supplied; the Mac passes
+  /// [RemoteRecordCommands] so a tap becomes an intent.
+  final RecordCommands? commands;
+
   final VoidCallback? onNavigateToStats;
   final VoidCallback? onOpenHistory;
 
@@ -35,8 +44,9 @@ class DashboardView extends StatefulWidget {
 
   const DashboardView({
     super.key,
-    required this.dayRecorder,
+    this.dayRecorder,
     required this.database,
+    this.commands,
     this.onNavigateToStats,
     this.onOpenHistory,
     this.todayOrder,
@@ -76,6 +86,13 @@ class _UndoState {
 
 class _DashboardViewState extends State<DashboardView>
     with WidgetsBindingObserver {
+  /// The seam this page writes through: the injected commands, or the phone's
+  /// DayRecorder-backed implementation when none was supplied.
+  late final RecordCommands _commands = widget.commands ?? _phoneCommands();
+
+  /// The Lap read from the replica on a Mac, where no DayRecorder exists.
+  Lap? _replicaLap;
+
   Timer? _liveTicker;
   List<Activity> _activities = [];
   Map<String, Activity> _activitiesById = {};
@@ -91,13 +108,30 @@ class _DashboardViewState extends State<DashboardView>
   int _dayStartMs = 0;
   int _dayEndMs = 0;
 
+  RecordCommands _phoneCommands() {
+    final recorder = widget.dayRecorder;
+    if (recorder == null) {
+      throw StateError('DashboardView needs commands or a DayRecorder.');
+    }
+    return PhoneRecordCommands(dayRecorder: recorder);
+  }
+
+  /// The open Lap: the phone's live notifier, or the replica's last row.
+  Lap? get _lap => widget.dayRecorder?.lap ?? _replicaLap;
+
+  int get _elapsedMs =>
+      _lap?.elapsedMs(DateTime.now().toUtc().millisecondsSinceEpoch) ?? 0;
+
+  String get _lapStartZoneId =>
+      _lap?.startTimezoneOr(localTimezoneId()) ?? localTimezoneId();
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _startLiveTicker();
     _loadData();
-    widget.dayRecorder.lapListenable.addListener(_onLapChanged);
+    widget.dayRecorder?.lapListenable.addListener(_onLapChanged);
     widget.todayOrder?.addListener(_onOrderChanged);
     widget.catalogRevision?.addListener(_onCatalogChanged);
   }
@@ -106,7 +140,7 @@ class _DashboardViewState extends State<DashboardView>
   void dispose() {
     _liveTicker?.cancel();
     WidgetsBinding.instance.removeObserver(this);
-    widget.dayRecorder.lapListenable.removeListener(_onLapChanged);
+    widget.dayRecorder?.lapListenable.removeListener(_onLapChanged);
     widget.todayOrder?.removeListener(_onOrderChanged);
     widget.catalogRevision?.removeListener(_onCatalogChanged);
     super.dispose();
@@ -198,6 +232,11 @@ class _DashboardViewState extends State<DashboardView>
       final lastActivityId = last.isEmpty ? null : last.first.activityId;
       final activitiesById = {for (final a in archived) a.id: a};
 
+      // A Mac reads the Lap from the replica; it must never open one itself.
+      final replicaLap = widget.dayRecorder == null
+          ? await widget.database.getLap()
+          : null;
+
       // Query past 30 days of history for contextual suggestions
       final thirtyDaysAgoMs =
           now.millisecondsSinceEpoch - const Duration(days: 30).inMilliseconds;
@@ -227,6 +266,7 @@ class _DashboardViewState extends State<DashboardView>
           _suggestedActivities = suggested;
           _loggedTodayMs = loggedMs;
           _lastActivity = activitiesById[lastActivityId];
+          _replicaLap = replicaLap;
           _dayStartMs = dayStartMs;
           _dayEndMs = dayEndMs;
           _isLoading = false;
@@ -239,8 +279,12 @@ class _DashboardViewState extends State<DashboardView>
 
   Future<void> _labelActivity(Activity activity) async {
     try {
-      final record = await widget.dayRecorder.label(activity.id);
+      final record = await _commands.label(activity.id);
       await _loadData();
+      if (record == null) {
+        _showQueued('${activity.name} is waiting for the phone.');
+        return;
+      }
       _showUndo('Logged ${activity.name} ${_rangeLabel(record)}', record);
     } catch (e) {
       _showError('Failed to label the Lap: $e');
@@ -248,13 +292,18 @@ class _DashboardViewState extends State<DashboardView>
   }
 
   Future<void> _labelSameAsLast() async {
+    final last = _lastActivity;
+    if (last == null) {
+      _showError('There is no earlier Record to repeat yet.');
+      return;
+    }
     try {
-      final record = await widget.dayRecorder.sameAsLast();
+      final record = await _commands.label(last.id);
+      await _loadData();
       if (record == null) {
-        _showError('There is no earlier Record to repeat yet.');
+        _showQueued('${last.name} is waiting for the phone.');
         return;
       }
-      await _loadData();
       final name = _activitiesById[record.activityId]?.name ?? 'Record';
       _showUndo('Logged $name ${_rangeLabel(record)}', record);
     } catch (e) {
@@ -264,8 +313,12 @@ class _DashboardViewState extends State<DashboardView>
 
   Future<void> _split() async {
     try {
-      final record = await widget.dayRecorder.split();
+      final record = await _commands.split();
       await _loadData();
+      if (record == null) {
+        _showQueued('The split is waiting for the phone.');
+        return;
+      }
       final at = DateFormat('HH:mm')
           .format(wallClockAt(record.endTimezoneId, record.endedAtEpochMs));
       _showUndo('Split at $at', record);
@@ -276,7 +329,7 @@ class _DashboardViewState extends State<DashboardView>
 
   Future<void> _undoLast() async {
     try {
-      final undone = await widget.dayRecorder.undoLast();
+      final undone = await _commands.undo();
       if (!mounted) return;
       setState(() => _undo = null);
       if (undone) {
@@ -287,6 +340,16 @@ class _DashboardViewState extends State<DashboardView>
     } catch (e) {
       _showError('Failed to undo: $e');
     }
+  }
+
+  /// A proposal the phone has not answered yet; the undo bar would target the
+  /// wrong Record, so this only states where the label went.
+  void _showQueued(String message) {
+    if (!mounted) return;
+    setState(() => _undo = null);
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _showUndo(String message, Record? record) {
@@ -354,16 +417,12 @@ class _DashboardViewState extends State<DashboardView>
 
   Widget _buildLapPanel() {
     final now = DateTime.now();
-    final lap = widget.dayRecorder.lap;
-    final elapsedMs = widget.dayRecorder.currentElapsedMs;
+    final lap = _lap;
+    final elapsedMs = _elapsedMs;
     final since = lap == null
         ? '--:--'
-        : DateFormat('HH:mm').format(
-            wallClockAt(
-              widget.dayRecorder.lapStartTimezoneId,
-              lap.startedAtEpochMs,
-            ),
-          );
+        : DateFormat('HH:mm')
+              .format(wallClockAt(_lapStartZoneId, lap.startedAtEpochMs));
 
     final topInset = MediaQuery.of(context).padding.top;
 
@@ -658,7 +717,7 @@ class _DashboardViewState extends State<DashboardView>
       );
     }
 
-    final lap = widget.dayRecorder.lap;
+    final lap = _lap;
     if (lap != null) {
       final start = fraction(lap.startedAtEpochMs);
       final end = fraction(DateTime.now().toUtc().millisecondsSinceEpoch);
@@ -670,8 +729,8 @@ class _DashboardViewState extends State<DashboardView>
           hatched: false,
           semanticsLabel:
               'Untracked since '
-              '${DateFormat('HH:mm').format(wallClockAt(widget.dayRecorder.lapStartTimezoneId, lap.startedAtEpochMs))}, '
-              '${UiHelpers.formatDurationHuman(widget.dayRecorder.currentElapsedMs)}',
+              '${DateFormat('HH:mm').format(wallClockAt(_lapStartZoneId, lap.startedAtEpochMs))}, '
+              '${UiHelpers.formatDurationHuman(_elapsedMs)}',
         ),
       );
     }
@@ -681,15 +740,11 @@ class _DashboardViewState extends State<DashboardView>
   // ------------------------------------------------------------- Grid section
 
   Widget _buildGridHeading() {
-    final lap = widget.dayRecorder.lap;
+    final lap = _lap;
     final since = lap == null
         ? '--:--'
-        : DateFormat('HH:mm').format(
-            wallClockAt(
-              widget.dayRecorder.lapStartTimezoneId,
-              lap.startedAtEpochMs,
-            ),
-          );
+        : DateFormat('HH:mm')
+              .format(wallClockAt(_lapStartZoneId, lap.startedAtEpochMs));
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 26, 20, 14),

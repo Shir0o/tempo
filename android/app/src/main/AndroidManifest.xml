@@ -1,8 +1,18 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Google Drive sync needs outbound network access in release builds too. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- The ongoing Lap notification (Android 13+ asks at runtime). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- mDNS advertising of the sync listener needs multicast; no internet-only trick. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
+    <!-- Settings states whether a paired device is reachable. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- mobile_scanner ships CAMERA for the Mac's pairing scan. The phone only
+         displays its own QR code, so the merged manifest must not carry the
+         permission: it would be requested from the user and shown in the store
+         listing for a feature the phone does not have. -->
+    <uses-permission android:name="android.permission.CAMERA" tools:node="remove"/>
     <application
         android:label="tempo"
         android:name="${applicationName}"

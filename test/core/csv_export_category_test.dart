@@ -134,4 +134,36 @@ void main() {
       '"Lunch",2023-11-14 22:43:20,2023-11-14 23:13:20,"","","",0:30:0,30',
     );
   });
+
+  test('redaction blanks only the comment, leaving categories and tags', () {
+    final engine = CsvExportEngine(
+      database: db,
+      targetFile: targetFile,
+      epochToDateTime: fixedEpochToDateTime,
+    );
+
+    final record = Record(
+      id: 'rec-1',
+      activityId: 'act-1',
+      startedAtEpochMs: 1700000000000,
+      endedAtEpochMs: 1700003600000,
+      comment: 'w/ Abel',
+      timezoneId: 'UTC',
+      createdAtEpochMs: 1700000000000,
+      updatedAtEpochMs: 1700000000000,
+    );
+
+    final row = engine.formatRecordRow(
+      record: record,
+      activityName: 'Coding',
+      tagNames: ['Contact'],
+      categories: 'Productivity',
+      redactComments: true,
+    );
+
+    expect(
+      row,
+      '"Coding",2023-11-14 22:13:20,2023-11-14 23:13:20,"","Productivity","Contact",1:0:0,60\n',
+    );
+  });
 }

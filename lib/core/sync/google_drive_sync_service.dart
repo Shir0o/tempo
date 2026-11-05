@@ -6,8 +6,6 @@ import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:googleapis_auth/googleapis_auth.dart' as gapis;
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
-import 'package:path/path.dart' as p;
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../../data/database/tempo_database.dart';
 import '../export/csv_export_engine.dart';
@@ -25,15 +23,17 @@ class GoogleDriveAccessExpiredException implements Exception {
       'Google Drive access has expired. Reconnect to continue.';
 }
 
-/// Service managing synchronization of CSV exports and database backups with Google Drive.
+/// Service managing synchronization of CSV exports with Google Drive.
 /// Follows BNPB and Simple Time Tracker conventions:
 /// - Target folder: root-level "Time track"
 /// - CSV file: "stt_records_automatic.csv"
-/// - Database backup: "tempo_backup.db"
+///
+/// Database backup and restore are not part of this service: recovery lives in
+/// `BackupService`, which snapshots the store and promotes verified generations
+/// to a folder the user chooses.
 class GoogleDriveSyncService {
   static const String timeTrackFolderName = 'Time track';
   static const String defaultCsvFileName = 'stt_records_automatic.csv';
-  static const String defaultBackupFileName = 'tempo_backup.db';
 
   static const List<String> driveScopes = [
     drive.DriveApi.driveFileScope,
@@ -236,109 +236,6 @@ class GoogleDriveSyncService {
     }
   }
 
-  /// Backs up the local SQLite database to Google Drive "Time track" folder.
-  Future<String> backupDatabaseToDrive({
-    File? dbFile,
-    String fileName = defaultBackupFileName,
-  }) async {
-    final fileToBackup = dbFile ?? await _resolveLocalDbFile();
-    if (!await fileToBackup.exists()) {
-      throw StateError('Database file does not exist at ${fileToBackup.path}');
-    }
-
-    try {
-      return await _withDriveApi((api) async {
-        final folderId = await _ensureTimeTrackFolder(api);
-
-        final query =
-            "name = '$fileName' and '$folderId' in parents and trashed = false";
-        final fileList = await api.files.list(
-          q: query,
-          spaces: 'drive',
-          $fields: 'files(id, name)',
-        );
-
-        // Built per attempt: a rejected upload may have consumed the stream.
-        final media = drive.Media(
-          fileToBackup.openRead(),
-          await fileToBackup.length(),
-        );
-
-        if (fileList.files != null && fileList.files!.isNotEmpty) {
-          final existingId = fileList.files!.first.id!;
-          final updated = await api.files.update(
-            drive.File(),
-            existingId,
-            uploadMedia: media,
-            $fields: 'id, name, modifiedTime',
-          );
-          _lastSyncTime = DateTime.now();
-          _lastError = null;
-          return updated.id!;
-        } else {
-          final newFile = drive.File()
-            ..name = fileName
-            ..parents = [folderId];
-          final created = await api.files.create(
-            newFile,
-            uploadMedia: media,
-            $fields: 'id, name',
-          );
-          _lastSyncTime = DateTime.now();
-          _lastError = null;
-          return created.id!;
-        }
-      });
-    } catch (e) {
-      _lastError = e.toString();
-      rethrow;
-    }
-  }
-
-  /// Downloads the database backup from Google Drive "Time track" folder to [targetFile].
-  Future<File> restoreDatabaseFromDrive({
-    File? targetFile,
-    String fileName = defaultBackupFileName,
-  }) async {
-    return _withDriveApi((api) async {
-      final folderId = await _ensureTimeTrackFolder(api);
-
-      final query =
-          "name = '$fileName' and '$folderId' in parents and trashed = false";
-      final fileList = await api.files.list(
-        q: query,
-        spaces: 'drive',
-        $fields: 'files(id, name)',
-      );
-
-      if (fileList.files == null || fileList.files!.isEmpty) {
-        throw StateError(
-          'No backup file "$fileName" found in Google Drive "Time track" folder.',
-        );
-      }
-
-      final backupFileId = fileList.files!.first.id!;
-      final response = await api.files.get(
-        backupFileId,
-        downloadOptions: drive.DownloadOptions.fullMedia,
-      ) as drive.Media;
-
-      final destination = targetFile ?? await _resolveLocalDbFile();
-      if (!await destination.parent.exists()) {
-        await destination.parent.create(recursive: true);
-      }
-
-      final output = destination.openWrite();
-      await response.stream.pipe(output);
-      await output.flush();
-      await output.close();
-
-      _lastSyncTime = DateTime.now();
-      _lastError = null;
-      return destination;
-    });
-  }
-
   /// Attaches this sync service to [engine] to automatically upload the CSV file on export.
   void attachToExportEngine(CsvExportEngine engine) {
     engine.onExportCompleted = (File exportedFile) async {
@@ -349,11 +246,5 @@ class GoogleDriveSyncService {
         debugPrint('Auto-sync CSV to Drive failed: $e');
       }
     };
-  }
-
-  Future<File> _resolveLocalDbFile() async {
-    final dbFactory = databaseFactory;
-    final dbDir = await dbFactory.getDatabasesPath();
-    return File(p.join(dbDir, TempoDatabase.databaseFileName));
   }
 }
