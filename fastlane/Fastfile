@@ -99,9 +99,17 @@ lane :play_upload do |options|
         skip_upload_screenshots: true,
         validate_only: false,
       )
-      UI.success("Uploaded #{wear_aab_path} to Play Console wear:internal track for #{APP_PACKAGE_NAME}.")
     rescue => e
-      UI.important("Wear OS internal track upload warning (e.g. form factor not yet opted in): #{e.message}")
+      # A swallowed warning here is invisible: the phone bundle ships, CI stays
+      # green, and the watch silently receives no build. Fail the lane instead so
+      # a rejected Wear OS bundle is caught on the release run.
+      UI.user_error!(
+        "Wear OS upload to Play Console wear:internal failed, so the watch bundle was NOT distributed: " \
+        "#{e.message}. Verify the Wear OS form factor is added and opted in under " \
+        "Play Console → Test and release → Advanced settings → Form factors, and that " \
+        "the listing mentions Wear OS and has at least one Wear OS screenshot."
+      )
     end
+    UI.success("Uploaded #{wear_aab_path} to Play Console wear:internal track for #{APP_PACKAGE_NAME}.")
   end
 end
