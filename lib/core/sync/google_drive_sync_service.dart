@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
+import 'package:googleapis_auth/googleapis_auth.dart' as gapis;
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 import 'package:path/path.dart' as p;
@@ -10,6 +11,19 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../../data/database/tempo_database.dart';
 import '../export/csv_export_engine.dart';
+
+/// Obtains a Drive API bound to a freshly authorized access token.
+typedef DriveReauthorizer = Future<drive.DriveApi> Function();
+
+/// Raised when Drive rejects the cached access token and a new one cannot be
+/// obtained without the user signing in again.
+class GoogleDriveAccessExpiredException implements Exception {
+  const GoogleDriveAccessExpiredException();
+
+  @override
+  String toString() =>
+      'Google Drive access has expired. Reconnect to continue.';
+}
 
 /// Service managing synchronization of CSV exports and database backups with Google Drive.
 /// Follows BNPB and Simple Time Tracker conventions:
@@ -28,7 +42,12 @@ class GoogleDriveSyncService {
 
   final TempoDatabase? database;
   final GoogleSignIn? googleSignIn;
+
+  /// Overrides how a fresh Drive client is obtained after the access token
+  /// expires; tests inject a client on a fake transport.
+  final DriveReauthorizer? reauthorize;
   drive.DriveApi? driveApi;
+  GoogleSignInAccount? _account;
   bool autoSyncEnabled;
   DateTime? _lastSyncTime;
   String? _cachedTimeTrackFolderId;
@@ -39,6 +58,7 @@ class GoogleDriveSyncService {
     this.googleSignIn,
     this.driveApi,
     this.autoSyncEnabled = true,
+    this.reauthorize,
   });
 
   /// Whether the user is currently signed in and Drive API is ready.
@@ -73,8 +93,8 @@ class GoogleDriveSyncService {
       final authz = await account.authorizationClient.authorizeScopes(
         driveScopes,
       );
-      final client = authz.authClient(scopes: driveScopes);
-      driveApi = drive.DriveApi(client);
+      _account = account;
+      driveApi = drive.DriveApi(authz.authClient(scopes: driveScopes));
       _lastError = null;
       return true;
     } catch (e) {
@@ -90,13 +110,51 @@ class GoogleDriveSyncService {
       final gSignIn = googleSignIn ?? GoogleSignIn.instance;
       await gSignIn.signOut();
     } catch (_) {}
+    _account = null;
     driveApi = null;
     _cachedTimeTrackFolderId = null;
   }
 
+  /// Runs [action] with the Drive API, renewing the access token once if Google
+  /// rejects the cached one as expired.
+  ///
+  /// Access tokens live about an hour, but [signIn] caches a client that never
+  /// refreshes, so the first call after expiry comes back as a 401 surfaced by
+  /// `googleapis_auth` as [gapis.AccessDeniedException].
+  Future<T> _withDriveApi<T>(
+    Future<T> Function(drive.DriveApi api) action,
+  ) async {
+    try {
+      return await action(_getDriveApi());
+    } on gapis.AccessDeniedException {
+      driveApi = await (reauthorize ?? _reauthorizeFromAccount)();
+      return await action(_getDriveApi());
+    }
+  }
+
+  /// Asks the signed-in account for a new access token without prompting.
+  ///
+  /// `authorizationForScopes` returns null when Google needs the user to
+  /// interact; that (and a missing account) means the user has to reconnect.
+  Future<drive.DriveApi> _reauthorizeFromAccount() async {
+    final account = _account;
+    if (account != null) {
+      final authz = await account.authorizationClient.authorizationForScopes(
+        driveScopes,
+      );
+      if (authz != null) {
+        return driveApi = drive.DriveApi(authz.authClient(scopes: driveScopes));
+      }
+    }
+    driveApi = null;
+    throw const GoogleDriveAccessExpiredException();
+  }
+
   /// Locates or creates the "Time track" folder at the root of Google Drive.
-  Future<String> ensureTimeTrackFolder() async {
-    final api = _getDriveApi();
+  Future<String> ensureTimeTrackFolder() =>
+      _withDriveApi(_ensureTimeTrackFolder);
+
+  Future<String> _ensureTimeTrackFolder(drive.DriveApi api) async {
     if (_cachedTimeTrackFolderId != null) {
       return _cachedTimeTrackFolderId!;
     }
@@ -132,45 +190,46 @@ class GoogleDriveSyncService {
     File csvFile, {
     String fileName = defaultCsvFileName,
   }) async {
-    final api = _getDriveApi();
-    final folderId = await ensureTimeTrackFolder();
-
-    final query =
-        "name = '$fileName' and '$folderId' in parents and trashed = false";
-    final fileList = await api.files.list(
-      q: query,
-      spaces: 'drive',
-      $fields: 'files(id, name)',
-    );
-
-    final length = await csvFile.length();
-    final media = drive.Media(csvFile.openRead(), length);
-
     try {
-      if (fileList.files != null && fileList.files!.isNotEmpty) {
-        final existingId = fileList.files!.first.id!;
-        final updated = await api.files.update(
-          drive.File(),
-          existingId,
-          uploadMedia: media,
-          $fields: 'id, name, modifiedTime',
+      return await _withDriveApi((api) async {
+        final folderId = await _ensureTimeTrackFolder(api);
+
+        final query =
+            "name = '$fileName' and '$folderId' in parents and trashed = false";
+        final fileList = await api.files.list(
+          q: query,
+          spaces: 'drive',
+          $fields: 'files(id, name)',
         );
-        _lastSyncTime = DateTime.now();
-        _lastError = null;
-        return updated.id!;
-      } else {
-        final newFile = drive.File()
-          ..name = fileName
-          ..parents = [folderId];
-        final created = await api.files.create(
-          newFile,
-          uploadMedia: media,
-          $fields: 'id, name',
-        );
-        _lastSyncTime = DateTime.now();
-        _lastError = null;
-        return created.id!;
-      }
+
+        // Built per attempt: a rejected upload may have consumed the stream.
+        final media = drive.Media(csvFile.openRead(), await csvFile.length());
+
+        if (fileList.files != null && fileList.files!.isNotEmpty) {
+          final existingId = fileList.files!.first.id!;
+          final updated = await api.files.update(
+            drive.File(),
+            existingId,
+            uploadMedia: media,
+            $fields: 'id, name, modifiedTime',
+          );
+          _lastSyncTime = DateTime.now();
+          _lastError = null;
+          return updated.id!;
+        } else {
+          final newFile = drive.File()
+            ..name = fileName
+            ..parents = [folderId];
+          final created = await api.files.create(
+            newFile,
+            uploadMedia: media,
+            $fields: 'id, name',
+          );
+          _lastSyncTime = DateTime.now();
+          _lastError = null;
+          return created.id!;
+        }
+      });
     } catch (e) {
       _lastError = e.toString();
       rethrow;
@@ -182,50 +241,54 @@ class GoogleDriveSyncService {
     File? dbFile,
     String fileName = defaultBackupFileName,
   }) async {
-    final api = _getDriveApi();
-    final folderId = await ensureTimeTrackFolder();
-
     final fileToBackup = dbFile ?? await _resolveLocalDbFile();
     if (!await fileToBackup.exists()) {
       throw StateError('Database file does not exist at ${fileToBackup.path}');
     }
 
-    final query =
-        "name = '$fileName' and '$folderId' in parents and trashed = false";
-    final fileList = await api.files.list(
-      q: query,
-      spaces: 'drive',
-      $fields: 'files(id, name)',
-    );
-
-    final length = await fileToBackup.length();
-    final media = drive.Media(fileToBackup.openRead(), length);
-
     try {
-      if (fileList.files != null && fileList.files!.isNotEmpty) {
-        final existingId = fileList.files!.first.id!;
-        final updated = await api.files.update(
-          drive.File(),
-          existingId,
-          uploadMedia: media,
-          $fields: 'id, name, modifiedTime',
+      return await _withDriveApi((api) async {
+        final folderId = await _ensureTimeTrackFolder(api);
+
+        final query =
+            "name = '$fileName' and '$folderId' in parents and trashed = false";
+        final fileList = await api.files.list(
+          q: query,
+          spaces: 'drive',
+          $fields: 'files(id, name)',
         );
-        _lastSyncTime = DateTime.now();
-        _lastError = null;
-        return updated.id!;
-      } else {
-        final newFile = drive.File()
-          ..name = fileName
-          ..parents = [folderId];
-        final created = await api.files.create(
-          newFile,
-          uploadMedia: media,
-          $fields: 'id, name',
+
+        // Built per attempt: a rejected upload may have consumed the stream.
+        final media = drive.Media(
+          fileToBackup.openRead(),
+          await fileToBackup.length(),
         );
-        _lastSyncTime = DateTime.now();
-        _lastError = null;
-        return created.id!;
-      }
+
+        if (fileList.files != null && fileList.files!.isNotEmpty) {
+          final existingId = fileList.files!.first.id!;
+          final updated = await api.files.update(
+            drive.File(),
+            existingId,
+            uploadMedia: media,
+            $fields: 'id, name, modifiedTime',
+          );
+          _lastSyncTime = DateTime.now();
+          _lastError = null;
+          return updated.id!;
+        } else {
+          final newFile = drive.File()
+            ..name = fileName
+            ..parents = [folderId];
+          final created = await api.files.create(
+            newFile,
+            uploadMedia: media,
+            $fields: 'id, name',
+          );
+          _lastSyncTime = DateTime.now();
+          _lastError = null;
+          return created.id!;
+        }
+      });
     } catch (e) {
       _lastError = e.toString();
       rethrow;
@@ -237,42 +300,43 @@ class GoogleDriveSyncService {
     File? targetFile,
     String fileName = defaultBackupFileName,
   }) async {
-    final api = _getDriveApi();
-    final folderId = await ensureTimeTrackFolder();
+    return _withDriveApi((api) async {
+      final folderId = await _ensureTimeTrackFolder(api);
 
-    final query =
-        "name = '$fileName' and '$folderId' in parents and trashed = false";
-    final fileList = await api.files.list(
-      q: query,
-      spaces: 'drive',
-      $fields: 'files(id, name)',
-    );
-
-    if (fileList.files == null || fileList.files!.isEmpty) {
-      throw StateError(
-        'No backup file "$fileName" found in Google Drive "Time track" folder.',
+      final query =
+          "name = '$fileName' and '$folderId' in parents and trashed = false";
+      final fileList = await api.files.list(
+        q: query,
+        spaces: 'drive',
+        $fields: 'files(id, name)',
       );
-    }
 
-    final backupFileId = fileList.files!.first.id!;
-    final response = await api.files.get(
-      backupFileId,
-      downloadOptions: drive.DownloadOptions.fullMedia,
-    ) as drive.Media;
+      if (fileList.files == null || fileList.files!.isEmpty) {
+        throw StateError(
+          'No backup file "$fileName" found in Google Drive "Time track" folder.',
+        );
+      }
 
-    final destination = targetFile ?? await _resolveLocalDbFile();
-    if (!await destination.parent.exists()) {
-      await destination.parent.create(recursive: true);
-    }
+      final backupFileId = fileList.files!.first.id!;
+      final response = await api.files.get(
+        backupFileId,
+        downloadOptions: drive.DownloadOptions.fullMedia,
+      ) as drive.Media;
 
-    final output = destination.openWrite();
-    await response.stream.pipe(output);
-    await output.flush();
-    await output.close();
+      final destination = targetFile ?? await _resolveLocalDbFile();
+      if (!await destination.parent.exists()) {
+        await destination.parent.create(recursive: true);
+      }
 
-    _lastSyncTime = DateTime.now();
-    _lastError = null;
-    return destination;
+      final output = destination.openWrite();
+      await response.stream.pipe(output);
+      await output.flush();
+      await output.close();
+
+      _lastSyncTime = DateTime.now();
+      _lastError = null;
+      return destination;
+    });
   }
 
   /// Attaches this sync service to [engine] to automatically upload the CSV file on export.
