@@ -253,6 +253,12 @@ jobs:
             puts cleaned
           ' "$CHANGELOG_DEST"
 
+          # The Wear OS bundle uses its own +1,000,000 version code, so supply
+          # looks for a changelog named after that code. Reuse the same notes.
+          WEAR_CHANGELOG_DEST="fastlane/metadata/android/en-US/changelogs/${WEAR_VERSION_CODE}.txt"
+          cp "$CHANGELOG_DEST" "$WEAR_CHANGELOG_DEST"
+          echo "Copied release notes to ${WEAR_CHANGELOG_DEST}"
+
       - name: Upload AAB to Play Console internal track
         if: steps.prerelease.outputs.is_prerelease != 'true'
         env:
