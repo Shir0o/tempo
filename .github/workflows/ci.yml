@@ -69,7 +69,7 @@ jobs:
 
       - name: Compile the watch app
         working-directory: android
-        run: sh "$FLUTTER_ROOT/bin/cache/artifacts/gradle_wrapper/gradlew" :wear:compileDebugKotlin
+        run: bash "$FLUTTER_ROOT/bin/cache/artifacts/gradle_wrapper/gradlew" :wear:compileDebugKotlin
 
   macos:
     name: macOS Build
