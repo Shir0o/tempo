@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.1](https://github.com/Shir0o/tempo/compare/v1.8.0...v1.8.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* **wear:** add a launcher icon so Play accepts the Wear bundle ([#62](https://github.com/Shir0o/tempo/issues/62)) ([61016e0](https://github.com/Shir0o/tempo/commit/61016e048695a7a2a016b6e0d25029a9e6e09fa0))
+
 ## [1.8.0](https://github.com/Shir0o/tempo/compare/v1.7.0...v1.8.0) (2026-11-04)
 
 
