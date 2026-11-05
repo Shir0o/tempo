@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.1](https://github.com/Shir0o/tempo/compare/v1.9.0...v1.9.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* **wear:** target API 36 so Play accepts the watch bundle ([#71](https://github.com/Shir0o/tempo/issues/71)) ([034b4f2](https://github.com/Shir0o/tempo/commit/034b4f2af2301416c1f8f43073917220205083f0))
+
 ## [1.9.0](https://github.com/Shir0o/tempo/compare/v1.8.2...v1.9.0) (2026-11-05)
 
 
