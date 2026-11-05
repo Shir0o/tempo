@@ -15,7 +15,7 @@ plugins {
 
 android {
     namespace = "com.tempos.tracker.wear"
-    compileSdk = 34
+    compileSdk = 36
 
     signingConfigs {
         create("release") {
@@ -29,7 +29,9 @@ android {
     defaultConfig {
         applicationId = "com.tempos.tracker"
         minSdk = 30
-        targetSdk = 34
+        // Play requires new Wear OS apps to target API 35+ (since 2026-08-31).
+        // Match the phone app's Flutter default of 36.
+        targetSdk = 36
         versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
         versionName = (project.findProperty("versionName") as String?) ?: "1.0.0"
     }
