@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.2](https://github.com/Shir0o/tempo/compare/v1.8.1...v1.8.2) (2026-11-05)
+
+
+### Bug Fixes
+
+* **sync:** renew an expired Google Drive access token ([#64](https://github.com/Shir0o/tempo/issues/64)) ([3b60464](https://github.com/Shir0o/tempo/commit/3b604641b78d9d347509dfb98f0ffaba30cad87a))
+
 ## [1.8.1](https://github.com/Shir0o/tempo/compare/v1.8.0...v1.8.1) (2026-11-05)
 
 
