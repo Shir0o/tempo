@@ -60,11 +60,16 @@ jobs:
         run: flutter pub get
 
       - name: Point Gradle at the Flutter SDK
-        run: echo "flutter.sdk=${{ steps.flutter.outputs.flutter-root }}" > android/local.properties
+        env:
+          FLUTTER_SDK: ${{ steps.flutter.outputs.flutter-root }}
+        run: echo "flutter.sdk=$FLUTTER_SDK" > android/local.properties
 
-      - name: Compile the app and the watch app
+      - name: Build the app
+        run: flutter build apk --debug
+
+      - name: Compile the watch app
         working-directory: android
-        run: ./gradlew :app:compileDebugKotlin :wear:compileDebugKotlin
+        run: sh "$FLUTTER_ROOT/bin/cache/artifacts/gradle_wrapper/gradlew" :wear:compileDebugKotlin
 
   macos:
     name: macOS Build
