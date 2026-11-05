@@ -67,9 +67,15 @@ jobs:
       - name: Build the app
         run: flutter build apk --debug
 
+      - name: Provide the Gradle wrapper
+        run: |
+          cp "$FLUTTER_ROOT/bin/cache/artifacts/gradle_wrapper/gradlew" android/gradlew
+          cp "$FLUTTER_ROOT/bin/cache/artifacts/gradle_wrapper/gradle/wrapper/gradle-wrapper.jar" android/gradle/wrapper/gradle-wrapper.jar
+          chmod +x android/gradlew
+
       - name: Compile the watch app
         working-directory: android
-        run: bash "$FLUTTER_ROOT/bin/cache/artifacts/gradle_wrapper/gradlew" :wear:compileDebugKotlin
+        run: ./gradlew :wear:compileDebugKotlin
 
   macos:
     name: macOS Build
