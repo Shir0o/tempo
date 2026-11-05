@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.9.0](https://github.com/Shir0o/tempo/compare/v1.8.2...v1.9.0) (2026-11-05)
+
+
+### Features
+
+* **store:** add Play listing assets and store description ([#70](https://github.com/Shir0o/tempo/issues/70)) ([0901e84](https://github.com/Shir0o/tempo/commit/0901e84c5b4a62d0652ffce9118dfc5401a22dac))
+
+
+### Bug Fixes
+
+* **ci:** set explicit permissions in ci workflow (alert [#1](https://github.com/Shir0o/tempo/issues/1)) ([#66](https://github.com/Shir0o/tempo/issues/66)) ([25c02a7](https://github.com/Shir0o/tempo/commit/25c02a74877dac454adf938897c1f0593a180f73))
+* **release:** fail the run when the Wear OS upload is rejected ([#68](https://github.com/Shir0o/tempo/issues/68)) ([f6e1254](https://github.com/Shir0o/tempo/commit/f6e1254196ebc06b0cedf7b500211140169ebbaf))
+
 ## [1.8.2](https://github.com/Shir0o/tempo/compare/v1.8.1...v1.8.2) (2026-11-05)
 
 
