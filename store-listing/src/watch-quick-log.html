@@ -1,0 +1,61 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="fonts.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; width: 768px; height: 768px; overflow: hidden; }
+  body {
+    background: #0B0B0A;
+    font-family: 'Space Grotesk', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .stage {
+    width: 768px; height: 768px;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 34px 0;
+  }
+  .header { text-align: center; margin-bottom: 22px; }
+  .overline {
+    font-size: 22px; font-weight: 700; letter-spacing: 0.08em;
+    color: #A8A8A8; font-variant-numeric: tabular-nums;
+  }
+  .elapsed {
+    font-size: 62px; font-weight: 600; letter-spacing: -0.04em;
+    line-height: 1.05; color: #FFFFFF; font-variant-numeric: tabular-nums;
+    margin-top: 2px;
+  }
+  .pills { width: 604px; display: flex; flex-direction: column; gap: 10px; }
+  .pill {
+    height: 82px; border-radius: 999px;
+    display: flex; align-items: center;
+    padding: 0 32px;
+    font-size: 30px; font-weight: 700; color: #121210;
+  }
+  .section {
+    width: 604px; padding: 8px 0 2px 10px;
+    font-size: 21px; font-weight: 700; color: #A8A8A8;
+  }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="header">
+      <div class="overline">UNTRACKED &middot; 10:06</div>
+      <div class="elapsed">3:42</div>
+    </div>
+    <div class="pills">
+      <div class="pill" style="background:#F26B5E">Errands</div>
+      <div class="pill" style="background:#A855F7">Exercise</div>
+      <div class="pill" style="background:#F5A623">Meals</div>
+    </div>
+    <div class="section">All activities</div>
+    <div class="pills">
+      <div class="pill" style="background:#5BD08A">Reading</div>
+      <div class="pill" style="background:#C9CDD6">Routine</div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="fonts.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; width: 768px; height: 768px; overflow: hidden; }
+  body { background: #C6F432; font-family: 'Space Grotesk', sans-serif; -webkit-font-smoothing: antialiased; }
+  .stage {
+    width: 768px; height: 768px;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+  }
+  svg { display: block; margin-bottom: 14px; }
+  .name {
+    font-size: 58px; font-weight: 700; letter-spacing: -0.03em;
+    color: #121210; line-height: 1.05;
+  }
+  .range {
+    margin-top: 8px; font-size: 30px; font-weight: 600;
+    color: #121210; font-variant-numeric: tabular-nums;
+  }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <svg width="72" height="72" viewBox="0 0 72 72" fill="none">
+      <path d="M11 37 L28 54 L61 18" stroke="#121210" stroke-width="9"
+            stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <div class="name">Errands</div>
+    <div class="range">10:06&ndash;10:43</div>
+  </div>
+</body>
+</html>
