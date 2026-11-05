@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
-import '../core/state/day_recorder.dart';
+import '../core/state/record_commands.dart';
 import '../data/database/tempo_database.dart';
 import '../data/models/models.dart';
 
@@ -15,28 +15,36 @@ import '../data/models/models.dart';
 /// - `tempo://split` closes the open Lap as an Untracked Record without
 ///   labelling it.
 ///
+/// The action goes through [RecordCommands], so the phone writes the Record and
+/// the Mac queues an intent at the instant the link arrived.
+///
 /// Links naming an Activity that does not exist are refused without touching
 /// the Lap. [lastError] carries the reason for the most recent refusal.
 class DeepLinkService {
   static const String channelName = 'com.tempos.tracker/deeplink';
   static const Set<String> supportedSchemes = {'tempo', 'timetracker'};
 
-  final DayRecorder dayRecorder;
+  final RecordCommands commands;
   final TempoDatabase database;
   final MethodChannel _channel;
   final int Function() _nowUtcMs;
   final String Function() _generateId;
   final void Function(String message)? onError;
 
+  /// Whether a link may create a Tag it does not recognise. False on a
+  /// replica, where a local write would be discarded by the next replay.
+  final bool createMissingTags;
+
   String? _lastError;
 
   DeepLinkService({
-    required this.dayRecorder,
+    required this.commands,
     required this.database,
     MethodChannel? channel,
     int Function()? nowUtcMs,
     String Function()? generateId,
     this.onError,
+    this.createMissingTags = true,
   }) : _channel = channel ?? const MethodChannel(channelName),
        _nowUtcMs =
            nowUtcMs ?? (() => DateTime.now().toUtc().millisecondsSinceEpoch),
@@ -149,12 +157,12 @@ class DeepLinkService {
 
     final tagIds = await _resolveTagIds(tagNames);
 
-    await dayRecorder.label(activity.id, comment: comment, tags: tagIds);
+    await commands.label(activity.id, comment: comment, tags: tagIds);
     return true;
   }
 
   Future<bool> _handleSplit() async {
-    await dayRecorder.split();
+    await commands.split();
     return true;
   }
 
@@ -193,6 +201,8 @@ class DeepLinkService {
 
       if (existing != null) {
         tagIds.add(existing.id);
+      } else if (!createMissingTags) {
+        continue;
       } else {
         final now = _nowUtcMs();
         final newTag = Tag(

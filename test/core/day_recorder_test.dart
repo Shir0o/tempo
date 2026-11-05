@@ -7,6 +7,7 @@ import 'package:tempo/core/state/day_recorder.dart';
 import 'package:tempo/core/time/timezone_id.dart';
 import 'package:tempo/data/database/tempo_database.dart';
 import 'package:tempo/data/models/models.dart';
+import 'package:tempo/data/models/sync_change.dart';
 
 /// Epoch milliseconds for a wall-clock time in [zone].
 int wallMs(
@@ -1091,6 +1092,338 @@ void main() {
       });
       expect(record.durationMs, 60000);
       expect(record.toMap()['duration_ms'], 60000);
+    });
+  });
+
+  group('Change feed and intents', () {
+    int at(int hour, [int minute = 0]) =>
+        wallMs(zoneId, 2026, 6, 1, hour, minute);
+
+    test('a label applies at the tapped instant and zone', () async {
+      zoneId = 'America/Los_Angeles';
+      nowUtc = at(8);
+      await recorder.initialize();
+      final lapStart = recorder.lap!.startedAtEpochMs;
+      final tappedAt = at(9);
+      nowUtc = at(10);
+
+      final record = await recorder.label(
+        sleep.id,
+        atEpochMs: tappedAt,
+        atZoneId: 'Asia/Tokyo',
+      );
+
+      expect(record.startedAtEpochMs, lapStart);
+      expect(record.endedAtEpochMs, tappedAt);
+      expect(record.durationMs, tappedAt - lapStart);
+      expect(record.timezoneId, 'America/Los_Angeles');
+      expect(record.endTimezoneId, 'Asia/Tokyo');
+      expect(recorder.lap!.startedAtEpochMs, tappedAt);
+      expect(recorder.lap!.startedTimezoneId, 'Asia/Tokyo');
+    });
+
+    test('a tap later than now is clamped to now', () async {
+      zoneId = 'America/Los_Angeles';
+      nowUtc = at(8);
+      await recorder.initialize();
+      nowUtc = at(9);
+
+      final record = await recorder.label(sleep.id, atEpochMs: at(10));
+
+      expect(record.endedAtEpochMs, at(9));
+      expect(recorder.lap!.startedAtEpochMs, at(9));
+    });
+
+    test('a tap before the Lap started is clamped to the Lap start', () async {
+      zoneId = 'America/Los_Angeles';
+      nowUtc = at(8);
+      await recorder.initialize();
+      final lapStart = recorder.lap!.startedAtEpochMs;
+      nowUtc = at(9);
+
+      final record = await recorder.label(sleep.id, atEpochMs: at(7));
+
+      expect(record.startedAtEpochMs, lapStart);
+      expect(record.endedAtEpochMs, lapStart);
+      expect(record.durationMs, 0);
+      expect(recorder.lap!.startedAtEpochMs, lapStart);
+    });
+
+    test('a label writes its Record and Lap change rows', () async {
+      zoneId = 'America/Los_Angeles';
+      nowUtc = at(8);
+      await recorder.initialize();
+      nowUtc = at(9);
+
+      final record = await recorder.label(sleep.id);
+      final changes = await db.changesAfter(0);
+
+      final recordChange = changes.firstWhere(
+        (change) => change.kind == SyncChangeKind.recordUpsert,
+      );
+      expect(recordChange.entityId, record.id);
+      expect(recordChange.atEpochMs, nowUtc);
+      expect(recordChange.record, equals(record));
+
+      final lapChange = changes.lastWhere(
+        (change) => change.kind == SyncChangeKind.lapSet,
+      );
+      expect(lapChange.lap!.startedAtEpochMs, record.endedAtEpochMs);
+      expect(lapChange.lap!.startedTimezoneId, 'America/Los_Angeles');
+    });
+
+    test('a failed mutation leaves no change row behind', () async {
+      zoneId = 'America/Los_Angeles';
+      nowUtc = at(8);
+      await recorder.initialize();
+      final before = await db.highestChangeSeq();
+      nowUtc = at(9);
+
+      // The unknown tag fails the record_tags foreign key inside the label's
+      // transaction, so the Record, its tags, and its change all roll back.
+      await expectLater(
+        recorder.label(sleep.id, tags: const ['missing-tag']),
+        throwsA(isA<DatabaseException>()),
+      );
+
+      expect(await db.getRecords(), isEmpty);
+      expect(await db.changesAfter(before), isEmpty);
+    });
+
+    test('a duplicate intent id is applied once', () async {
+      zoneId = 'America/Los_Angeles';
+      nowUtc = at(8);
+      await recorder.initialize();
+      final lapStart = recorder.lap!.startedAtEpochMs;
+      nowUtc = at(8, 6);
+
+      final intent = SyncIntent.label(
+        intentId: 'intent-1',
+        tappedAtEpochMs: at(8, 5),
+        tappedAtZoneId: zoneId,
+        expectedLapStartEpochMs: lapStart,
+        activityId: sleep.id,
+      );
+
+      final first = await recorder.applyIntent(intent);
+      final second = await recorder.applyIntent(intent);
+
+      expect(first.isApplied, isTrue);
+      expect(second, equals(first));
+      expect(await db.getRecords(), hasLength(1));
+      expect((await db.getRecords()).single.id, first.entityId);
+
+      final processed = await db.lookupProcessedIntent(
+        await db.getLogEpoch(),
+        'intent-1',
+      );
+      expect(processed!.entityId, first.entityId);
+      expect(processed.result, IntentResult.appliedStatus);
+    });
+
+    test('an intent against a moved Lap is rejected with lap-moved', () async {
+      zoneId = 'America/Los_Angeles';
+      nowUtc = at(8);
+      await recorder.initialize();
+      final lapStart = recorder.lap!.startedAtEpochMs;
+      nowUtc = at(8, 6);
+
+      final intent = SyncIntent.label(
+        intentId: 'intent-moved',
+        tappedAtEpochMs: at(8, 5),
+        tappedAtZoneId: zoneId,
+        expectedLapStartEpochMs: lapStart - 60000,
+        activityId: sleep.id,
+      );
+
+      final result = await recorder.applyIntent(intent);
+
+      expect(result.status, IntentResult.rejectedStatus);
+      expect(result.reason, IntentResult.reasonLapMoved);
+      expect(await db.getRecords(), isEmpty);
+      expect(recorder.lap!.startedAtEpochMs, lapStart);
+
+      final processed = await db.lookupProcessedIntent(
+        await db.getLogEpoch(),
+        'intent-moved',
+      );
+      expect(processed!.reason, IntentResult.reasonLapMoved);
+    });
+
+    test(
+      'an edit overlapping a labelled Record is rejected with overlap',
+      () async {
+        zoneId = 'America/Los_Angeles';
+        nowUtc = at(10);
+        await recorder.initialize();
+        final lapStart = recorder.lap!.startedAtEpochMs;
+
+        await db.insertRecord(
+          Record(
+            id: 'rec-a',
+            activityId: sleep.id,
+            startedAtEpochMs: at(8),
+            endedAtEpochMs: at(9),
+            timezoneId: zoneId,
+            endTimezoneId: zoneId,
+            createdAtEpochMs: at(8),
+            updatedAtEpochMs: at(8),
+          ),
+        );
+        await db.insertRecord(
+          Record(
+            id: 'rec-b',
+            activityId: meals.id,
+            startedAtEpochMs: at(9),
+            endedAtEpochMs: at(10),
+            timezoneId: zoneId,
+            endTimezoneId: zoneId,
+            createdAtEpochMs: at(9),
+            updatedAtEpochMs: at(9),
+          ),
+        );
+
+        nowUtc = at(10, 1);
+        final intent = SyncIntent.adjustEdges(
+          intentId: 'intent-overlap',
+          tappedAtEpochMs: nowUtc,
+          tappedAtZoneId: zoneId,
+          expectedLapStartEpochMs: lapStart,
+          recordId: 'rec-a',
+          endEpochMs: at(9, 30),
+        );
+
+        final result = await recorder.applyIntent(intent);
+
+        expect(result.status, IntentResult.rejectedStatus);
+        expect(result.reason, IntentResult.reasonOverlap);
+        expect((await db.getRecordById('rec-a'))!.endedAtEpochMs, at(9));
+        expect((await db.getRecordById('rec-b'))!.startedAtEpochMs, at(9));
+      },
+    );
+
+    test(
+      'an intent far from the phone clock is rejected with clock-skew',
+      () async {
+        zoneId = 'America/Los_Angeles';
+        nowUtc = at(8);
+        await recorder.initialize();
+        final lapStart = recorder.lap!.startedAtEpochMs;
+        nowUtc = at(9);
+
+        final intent = SyncIntent.label(
+          intentId: 'intent-skew',
+          tappedAtEpochMs: at(8, 30),
+          tappedAtZoneId: zoneId,
+          expectedLapStartEpochMs: lapStart,
+          activityId: sleep.id,
+        );
+
+        final result = await recorder.applyIntent(intent);
+
+        expect(result.reason, IntentResult.reasonClockSkew);
+        expect(await db.getRecords(), isEmpty);
+      },
+    );
+
+    test(
+      'an undo intent removes the Record it targets and restores the Lap',
+      () async {
+        zoneId = 'America/Los_Angeles';
+        nowUtc = at(8);
+        await recorder.initialize();
+        nowUtc = at(8, 1);
+        final record = await recorder.label(sleep.id);
+        final lapAfter = recorder.lap!;
+
+        final intent = SyncIntent.undoRecord(
+          intentId: 'undo-1',
+          tappedAtEpochMs: nowUtc,
+          tappedAtZoneId: zoneId,
+          expectedLapStartEpochMs: lapAfter.startedAtEpochMs,
+          recordId: record.id,
+        );
+
+        final result = await recorder.applyIntent(intent);
+
+        expect(result.isApplied, isTrue);
+        expect(await db.getRecordById(record.id), isNull);
+        expect(recorder.lap!.startedAtEpochMs, record.startedAtEpochMs);
+        expect(recorder.lap!.startedTimezoneId, record.timezoneId);
+
+        final changes = await db.changesAfter(0);
+        expect(
+          changes.any(
+            (change) =>
+                change.kind == SyncChangeKind.recordRemove &&
+                change.entityId == record.id,
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'an undo by watch action id resolves through processed intents',
+      () async {
+        zoneId = 'America/Los_Angeles';
+        nowUtc = at(8);
+        await recorder.initialize();
+        final lapStart = recorder.lap!.startedAtEpochMs;
+        nowUtc = at(8, 2);
+
+        final labelIntent = SyncIntent.label(
+          intentId: 'watch-action-1',
+          tappedAtEpochMs: at(8, 1),
+          tappedAtZoneId: zoneId,
+          expectedLapStartEpochMs: lapStart,
+          activityId: sleep.id,
+        );
+        final applied = await recorder.applyIntent(labelIntent);
+        expect(applied.isApplied, isTrue);
+
+        nowUtc = at(8, 3);
+        final undoIntent = SyncIntent.undoAction(
+          intentId: 'watch-undo-1',
+          tappedAtEpochMs: nowUtc,
+          tappedAtZoneId: zoneId,
+          expectedLapStartEpochMs: recorder.lap!.startedAtEpochMs,
+          actionId: 'watch-action-1',
+        );
+
+        final result = await recorder.applyIntent(undoIntent);
+
+        expect(result.isApplied, isTrue);
+        expect(await db.getRecordById(applied.entityId), isNull);
+      },
+    );
+
+    test('an automatic midnight split emits its changes', () async {
+      zoneId = 'America/Los_Angeles';
+      nowUtc = wallMs(zoneId, 2026, 6, 1, 22);
+      await recorder.initialize();
+
+      nowUtc = wallMs(zoneId, 2026, 6, 2, 1);
+      await recorder.applyMidnightSplits();
+
+      final split = (await db.getRecords()).single;
+      final changes = await db.changesAfter(0);
+      expect(
+        changes.any(
+          (change) =>
+              change.kind == SyncChangeKind.recordUpsert &&
+              change.entityId == split.id,
+        ),
+        isTrue,
+      );
+      expect(
+        changes.any(
+          (change) =>
+              change.kind == SyncChangeKind.lapSet &&
+              change.lap!.startedAtEpochMs == split.endedAtEpochMs,
+        ),
+        isTrue,
+      );
     });
   });
 }

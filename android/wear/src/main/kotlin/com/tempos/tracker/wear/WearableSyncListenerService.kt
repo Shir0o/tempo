@@ -36,7 +36,15 @@ class WearableSyncListenerService : WearableListenerService() {
                 when (path) {
                     PATH_LAP -> {
                         val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
-                        Log.d(TAG, "Received Lap update from phone: start=${dataMap.getLong("lapStartedAtEpochMs", 0L)}")
+                        val appliedActionSeq = dataMap.getLong("appliedActionSeq", 0L)
+                        val rejectedActionIds =
+                            dataMap.getStringArrayList("rejectedActionIds") ?: emptyList()
+                        Log.d(
+                            TAG,
+                            "Received Lap update from phone: start=${dataMap.getLong("lapStartedAtEpochMs", 0L)}, " +
+                                "appliedActionSeq=$appliedActionSeq, rejected=${rejectedActionIds.size}"
+                        )
+                        repository.applyAcknowledgement(appliedActionSeq, rejectedActionIds)
                         repository.updateFromPhone(dataMap)
                     }
                     PATH_ACTIVITIES -> {

@@ -23,6 +23,9 @@ dependencies:
   timezone: ^0.11.2
   flutter_timezone: ^5.1.1
   file_picker: ^13.3.2
+  bonsoir: ^7.1.6
+  qr_flutter: ^4.1.0
+  mobile_scanner: ^7.5.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

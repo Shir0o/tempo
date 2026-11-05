@@ -177,34 +177,6 @@ void main() {
     });
 
     test(
-      'backupDatabaseToDrive and restoreDatabaseFromDrive round-trip',
-      () async {
-        final dummyDb = File('${tempDir.path}/tempo.db');
-        await dummyDb.writeAsString('SQLITE_MOCK_DATABASE_CONTENT');
-
-        // Backup
-        final backupId = await syncService.backupDatabaseToDrive(
-          dbFile: dummyDb,
-        );
-        expect(backupId, isNotEmpty);
-        expect(syncService.lastError, isNull);
-
-        // Setup mock restore content
-        mockClient.downloadMediaContent = 'RESTORED_SQLITE_CONTENT';
-        mockClient.driveFiles.add({'id': backupId, 'name': 'tempo_backup.db'});
-
-        // Restore
-        final restoredFile = File('${tempDir.path}/restored_tempo.db');
-        final resultFile = await syncService.restoreDatabaseFromDrive(
-          targetFile: restoredFile,
-        );
-
-        expect(await resultFile.exists(), isTrue);
-        expect(await resultFile.readAsString(), 'RESTORED_SQLITE_CONTENT');
-      },
-    );
-
-    test(
       'attachToExportEngine triggers automatic CSV sync upon export',
       () async {
         final db = await TempoDatabase.openInMemory();

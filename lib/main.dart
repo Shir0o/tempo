@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' show DartPluginRegistrant;
 
@@ -10,10 +11,20 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
+import 'core/backup/backup_destination.dart';
+import 'core/backup/backup_service.dart';
 import 'core/export/csv_export_engine.dart';
 import 'core/state/day_recorder.dart';
+import 'core/state/record_commands.dart';
+import 'core/sync/discovery.dart';
 import 'core/sync/google_drive_sync_service.dart';
 import 'core/sync/google_oauth_config.dart';
+import 'core/sync/intent_queue.dart';
+import 'core/sync/peer_pairing.dart';
+import 'core/sync/replica_applier.dart';
+import 'core/sync/sync_client.dart';
+import 'core/sync/sync_listener.dart';
+import 'data/database/store_lifecycle.dart';
 import 'data/database/tempo_database.dart';
 import 'data/models/models.dart';
 import 'desktop/deep_link_service.dart';
@@ -25,26 +36,77 @@ import 'wearable/wearable_sync_service.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // The Mac is a read replica. It opens the phone's tables and proposes
+  // intents instead; a DayRecorder here would create a Lap and midnight
+  // splits, making the Mac a second writer.
+  if (!kIsWeb && Platform.isMacOS) {
+    await _startReplica();
+    return;
+  }
+
   // 1-4. Open the database, CSV export and the always-running Lap
   WearableSyncService? wearableSyncService;
+  SyncListener? syncListener;
+  PeerPairing? pairing;
+  final storeLifecycle = StoreLifecycle.instance;
   final (:database, :exportEngine, :dayRecorder) = await _openDayRecorder(
+    storeLifecycle: storeLifecycle,
     // The watch tile ranks Activities by recent use, so keep its slots current.
     onRecordCommitted: (_) async {
+      // A held change request on the Mac completes the moment a Record lands.
+      syncListener?.notifyChanged();
       await wearableSyncService?.refreshActivities();
     },
   );
+  final commands = PhoneRecordCommands(dayRecorder: dayRecorder);
 
   // 5. Initialize Google Drive Sync Service
   await _initializeGoogleSignIn();
   final driveSyncService = GoogleDriveSyncService(database: database);
   driveSyncService.attachToExportEngine(exportEngine);
 
-  // 6. Initialize Universal Deep Link Bus (tempo:// & timetracker://)
-  DeepLinkService(dayRecorder: dayRecorder, database: database);
+  // 6. Automatic backup: local rolling snapshot, promoted to the destination
+  final backupService = BackupService(
+    database: database,
+    lifecycle: storeLifecycle,
+    destinationLoader: openBackupDestination,
+  );
+  backupService.startScheduler();
+  WidgetsBinding.instance.addObserver(_BackupPauseObserver(backupService));
 
-  // 7. Platform-specific integrations
+  // 7. Initialize Universal Deep Link Bus (tempo:// & timetracker://)
+  DeepLinkService(
+    commands: commands,
+    database: database,
+    createMissingTags: !Platform.isMacOS,
+  );
+
+  // 8. Platform-specific integrations
   if (!kIsWeb) {
     if (Platform.isAndroid) {
+      // The phone is the single writer: it serves the change feed and applies
+      // every intent the Mac and the watch send.
+      final phonePairing = PeerPairing(
+        database: database,
+        secrets: const PlatformPeerSecretStore(),
+      );
+      pairing = phonePairing;
+      await _applyPendingRestoreIdentity(database, phonePairing);
+      syncListener = SyncListener(
+        database: database,
+        dayRecorder: dayRecorder,
+        pairing: phonePairing,
+        advertiser: BonsoirPeerAdvertiser(),
+      );
+      try {
+        // `replicate_enabled` alone gates the listener; an unpaired client is
+        // still refused 401, so the phone may listen before any Mac is paired.
+        await syncListener.applyReplicationSetting();
+      } catch (e) {
+        // The phone still records the day when the port is taken; the Mac
+        // reports that it is waiting for the phone.
+        debugPrint('SyncListener failed to start: $e');
+      }
       // Connect Wear OS Companion synchronization
       wearableSyncService = WearableSyncService(
         dayRecorder: dayRecorder,
@@ -60,19 +122,103 @@ Future<void> main() async {
       );
       lapNotificationService.initialize();
       lapNotificationService.publish();
-    } else if (Platform.isMacOS) {
-      // Connect macOS menu bar status item
-      MenuBarService(dayRecorder: dayRecorder);
     }
   }
 
   runApp(
     TempoApp(
+      commands: commands,
       dayRecorder: dayRecorder,
       database: database,
+      pairing: pairing,
+      syncListener: syncListener,
       syncService: driveSyncService,
+      backupService: backupService,
       exportEngine: exportEngine,
     ),
+  );
+}
+
+/// Starts the Mac's side of replication: the phone's tables as a replica, the
+/// durable intent queue, and the client that pulls changes and sends
+/// proposals.
+///
+/// There is no DayRecorder, no CSV exporter, and no backup scheduler here.
+/// Every mutation becomes an intent, and only the phone turns one into a
+/// Record.
+Future<void> _startReplica() async {
+  await StoreLifecycle.instance.assertUnlocked();
+  final database = await TempoDatabase.open();
+
+  final queue = IntentQueue(database);
+  await queue.ensureTable();
+  final pairing = PeerPairing(
+    database: database,
+    secrets: const PlatformPeerSecretStore(),
+  );
+  final client = SyncClient(
+    database: database,
+    pairing: pairing,
+    applier: ReplicaApplier(database),
+    queue: queue,
+    discovery: BonsoirPeerDiscovery(),
+  );
+  final commands = RemoteRecordCommands(
+    database: database,
+    queue: queue,
+    // The intent is already durable; exchanging now means its answer arrives
+    // without waiting for the next poll.
+    onQueued: () async => client.notifyIntentQueued(),
+  );
+
+  // Same rule as the phone: the flag gates replication, never the store, so
+  // the Day renders from an idle replica.
+  await client.applyReplicationSetting();
+  final menuBar = MenuBarService(commands: commands, database: database);
+  // A finished pull may have moved the Lap; refresh the status item at once
+  // instead of waiting for its minute's replica read.
+  client.status.addListener(() {
+    if (client.status.value == SyncClientStatus.upToDate) {
+      unawaited(menuBar.refreshLap());
+    }
+  });
+  // Deep links arrive through the same command seam as the UI: `start` queues a
+  // label at the current time and `split` queues a split.
+  DeepLinkService(
+    commands: commands,
+    database: database,
+    createMissingTags: !Platform.isMacOS,
+  );
+  runApp(
+    TempoApp(
+      commands: commands,
+      database: database,
+      intentQueue: queue,
+      syncClient: client,
+      pairing: pairing,
+    ),
+  );
+}
+
+/// The first start after a restore reissues this device's identity: the store
+/// is now the snapshot's, and keeping its `device_id` and `log_epoch` would let
+/// a paired Mac keep a cursor into a log that no longer exists.
+Future<void> _applyPendingRestoreIdentity(
+  TempoDatabase database,
+  PeerPairing pairing,
+) async {
+  final pending = await database.getSetting(
+    BackupService.restorePendingSetting,
+  );
+  if (pending != 'true') return;
+
+  await database.setSetting(SyncSettingKeys.deviceId, const Uuid().v4());
+  await database.setSetting(SyncSettingKeys.logEpoch, const Uuid().v4());
+  await pairing.rotateOnRestore();
+  await database.setSetting(BackupService.restorePendingSetting, '');
+  debugPrint(
+    'Tempo: restored store adopted; device_id and log_epoch renewed, '
+    'paired devices must pair again',
   );
 }
 
@@ -86,7 +232,9 @@ Future<void> notificationActionMain() async {
   DartPluginRegistrant.ensureInitialized();
   const channel = MethodChannel(LapNotificationService.channelName);
 
-  final (:database, :exportEngine, :dayRecorder) = await _openDayRecorder();
+  final (:database, :exportEngine, :dayRecorder) = await _openDayRecorder(
+    storeLifecycle: StoreLifecycle.instance,
+  );
   LapNotificationService(
     dayRecorder: dayRecorder,
     database: database,
@@ -110,6 +258,10 @@ Future<void> notificationActionMain() async {
 /// Opens the database and the CSV export engine and starts the DayRecorder
 /// over them, so the app and a headless notification action write the Day
 /// the same way.
+///
+/// The store is only opened when no restore holds the advisory lock: a restore
+/// swaps the file while this process is starting up, and opening it mid-swap
+/// would bring back a store that is about to be replaced.
 Future<
   ({
     TempoDatabase database,
@@ -118,8 +270,12 @@ Future<
   })
 >
 _openDayRecorder({
+  StoreLifecycle? storeLifecycle,
   Future<void> Function(Record record)? onRecordCommitted,
 }) async {
+  final lifecycle = storeLifecycle ?? StoreLifecycle.instance;
+  await lifecycle.assertUnlocked();
+
   // 1. Open local SQLite database
   final database = await TempoDatabase.open();
 
@@ -244,5 +400,21 @@ Future<void> _seedDefaultActivitiesIfEmpty(TempoDatabase db) async {
 
   for (final act in defaultActivities) {
     await db.insertActivity(act);
+  }
+}
+
+/// Promotes a snapshot when the app leaves the foreground, so a phone left in
+/// a pocket for the evening still has a fresh generation in the chosen folder.
+class _BackupPauseObserver extends WidgetsBindingObserver {
+  final BackupService backupService;
+
+  _BackupPauseObserver(this.backupService);
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      unawaited(backupService.onAppPause());
+    }
   }
 }

@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
+import '../../data/models/sync_change.dart';
 import '../export/csv_export_engine.dart';
 import '../time/timezone_id.dart';
 
@@ -15,6 +16,10 @@ import '../time/timezone_id.dart';
 class DayRecorder {
   /// The interval after a label or split during which [undoLast] still works.
   static const Duration defaultUndoGraceWindow = Duration(seconds: 3);
+
+  /// A tapped instant further than this from the phone clock is a wrong clock
+  /// rather than a late action, so an intent is rejected as `clock-skew`.
+  static const Duration intentClockSkew = Duration(minutes: 10);
 
   final TempoDatabase _db;
   final int Function() _nowUtcMs;
@@ -96,12 +101,27 @@ class DayRecorder {
 
   /// Closes the open Lap as a labelled Record ending now and opens a new Lap at
   /// the same instant. Returns the Record that was just written.
+  ///
+  /// [atEpochMs] and [atZoneId] place the label at the instant and zone it was
+  /// tapped at (a watch or Mac intent), clamped to `[lap start, now]`. When
+  /// [intentId] is given, the applied intent is recorded in the same
+  /// transaction, keyed by the current `log_epoch`.
   Future<Record> label(
     String activityId, {
     String comment = '',
     List<String> tags = const [],
+    int? atEpochMs,
+    String? atZoneId,
+    String? intentId,
   }) => _synchronized(
-    () => _closeLapLocked(activityId: activityId, comment: comment, tags: tags),
+    () => _closeLapLocked(
+      activityId: activityId,
+      comment: comment,
+      tags: tags,
+      atEpochMs: atEpochMs,
+      atZoneId: atZoneId,
+      intentId: intentId,
+    ),
   );
 
   /// Synchronizes the in-memory Lap with the latest state in the database,
@@ -110,7 +130,23 @@ class DayRecorder {
   Future<void> reloadLapFromDatabase() => _synchronized(() async {
     final current = await _db.getLap();
     if (current != null) {
+      final previous = _lapNotifier.value;
+      final moved =
+          previous == null ||
+          previous.startedAtEpochMs != current.startedAtEpochMs ||
+          previous.startedTimezoneId != current.startedTimezoneId;
       _updateLap(current);
+      if (moved) {
+        // An importer or migration wrote the Lap row behind the recorder's
+        // back; a replica needs the new start or it rejects every intent as
+        // `lap-moved`.
+        await _appendLapSet(
+          _db.db,
+          current,
+          _nowUtcMs(),
+          endTimezoneId: current.startedTimezoneId,
+        );
+      }
       await _applyMidnightSplitsLocked();
       await _armMidnightTimer();
     }
@@ -118,29 +154,43 @@ class DayRecorder {
 
   /// Closes the open Lap as an Untracked Record and opens a new Lap at the same
   /// instant, so the boundary is marked without deciding what the time was.
-  Future<Record> split() => _synchronized(() => _closeLapLocked());
+  /// [atEpochMs] and [atZoneId] place the Split at the instant it was tapped
+  /// at, clamped to `[lap start, now]`.
+  Future<Record> split({int? atEpochMs, String? atZoneId, String? intentId}) =>
+      _synchronized(
+        () => _closeLapLocked(
+          atEpochMs: atEpochMs,
+          atZoneId: atZoneId,
+          intentId: intentId,
+        ),
+      );
 
   /// Labels an existing Record, including an Untracked one, with [activityId].
   /// Passing null turns a labelled Record back into an Untracked Record.
-  Future<Record> relabel(String recordId, String? activityId) => _synchronized(
-    () async {
-      await _ensureInitializedLocked();
-      final record = await _recordOrThrow(recordId);
-      if (activityId != null) {
-        final activity = await _db.getActivityById(activityId);
-        if (activity == null) {
-          throw ArgumentError('Activity with id "$activityId" does not exist.');
-        }
-      }
+  Future<Record> relabel(String recordId, String? activityId) =>
+      _synchronized(() => _relabelLocked(recordId, activityId));
 
-      final updated = record
-          .withActivity(activityId)
-          .copyWith(updatedAtEpochMs: _nowUtcMs());
-      await _db.updateRecord(updated);
-      await _requestExport();
-      return updated;
-    },
-  );
+  Future<Record> _relabelLocked(String recordId, String? activityId) async {
+    await _ensureInitializedLocked();
+    final record = await _recordOrThrow(recordId);
+    if (activityId != null) {
+      final activity = await _db.getActivityById(activityId);
+      if (activity == null) {
+        throw ArgumentError('Activity with id "$activityId" does not exist.');
+      }
+    }
+
+    final now = _nowUtcMs();
+    final updated = record
+        .withActivity(activityId)
+        .copyWith(updatedAtEpochMs: now);
+    await _db.db.transaction((txn) async {
+      await _updateRecordInTxn(txn, updated);
+      await _appendRecordUpsert(txn, updated, now);
+    });
+    await _requestExport();
+    return updated;
+  }
 
   /// Replaces the comment and tags of [recordId], leaving its time and
   /// Activity alone.
@@ -148,18 +198,30 @@ class DayRecorder {
     String recordId, {
     required String comment,
     required List<String> tagIds,
-  }) => _synchronized(() async {
+  }) => _synchronized(
+    () => _annotateLocked(recordId, comment: comment, tagIds: tagIds),
+  );
+
+  Future<Record> _annotateLocked(
+    String recordId, {
+    required String comment,
+    required List<String> tagIds,
+  }) async {
     await _ensureInitializedLocked();
     final record = await _recordOrThrow(recordId);
+    final now = _nowUtcMs();
     final updated = record.copyWith(
       comment: comment,
       tagIds: List.unmodifiable(tagIds),
-      updatedAtEpochMs: _nowUtcMs(),
+      updatedAtEpochMs: now,
     );
-    await _db.updateRecord(updated);
+    await _db.db.transaction((txn) async {
+      await _updateRecordInTxn(txn, updated);
+      await _appendRecordUpsert(txn, updated, now);
+    });
     await _requestExport();
     return updated;
-  });
+  }
 
   /// Moves one or both Edges of [recordId] to [startEpochMs] and [endEpochMs].
   ///
@@ -172,7 +234,19 @@ class DayRecorder {
     String recordId, {
     int? startEpochMs,
     int? endEpochMs,
-  }) => _synchronized(() async {
+  }) => _synchronized(
+    () => _adjustEdgesLocked(
+      recordId,
+      startEpochMs: startEpochMs,
+      endEpochMs: endEpochMs,
+    ),
+  );
+
+  Future<Record> _adjustEdgesLocked(
+    String recordId, {
+    int? startEpochMs,
+    int? endEpochMs,
+  }) async {
     await _ensureInitializedLocked();
     final record = await _recordOrThrow(recordId);
     final newStart = startEpochMs ?? record.startedAtEpochMs;
@@ -328,12 +402,15 @@ class DayRecorder {
           ).toMap(),
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
+        await _appendRecordRemove(txn, record.id, now);
       }
       for (final record in rewritten) {
         await _updateRecordInTxn(txn, record);
+        await _appendRecordUpsert(txn, record, now);
       }
       for (final record in created) {
         await _insertRecordInTxn(txn, record);
+        await _appendRecordUpsert(txn, record, now);
       }
       for (var i = 0; i < slices.length; i++) {
         if (i == 0) {
@@ -341,6 +418,7 @@ class DayRecorder {
         } else {
           await _insertRecordInTxn(txn, slices[i]);
         }
+        await _appendRecordUpsert(txn, slices[i], now);
       }
       if (updatedLap != null) {
         await txn.insert(
@@ -348,6 +426,7 @@ class DayRecorder {
           updatedLap.toMap(),
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
+        await _appendLapSet(txn, updatedLap, now);
       }
     });
 
@@ -355,45 +434,49 @@ class DayRecorder {
     if (updatedLap != null) _updateLap(updatedLap);
     await _requestExport();
     return slices.first;
-  });
+  }
 
   /// Splits [recordId] at [atEpochMs] into two neighbouring Records that share
   /// its Activity, comment and tags. The earlier half keeps the original id.
   /// Refused when [atEpochMs] is not strictly inside the Record.
   Future<Record> splitRecord(String recordId, int atEpochMs) =>
-      _synchronized(() async {
-        await _ensureInitializedLocked();
-        final record = await _recordOrThrow(recordId);
-        if (atEpochMs <= record.startedAtEpochMs ||
-            atEpochMs >= record.endedAtEpochMs) {
-          throw const RecordEditRefused(
-            "That time is outside this Record, so it can't be split there.",
-          );
-        }
+      _synchronized(() => _splitRecordLocked(recordId, atEpochMs));
 
-        final now = _nowUtcMs();
-        final earlier = record.copyWith(
-          endedAtEpochMs: atEpochMs,
-          updatedAtEpochMs: now,
-        );
-        // The instant a Record crossed from its start zone to its end zone is
-        // not stored, so the later half starts in the zone the Record ended in.
-        final later = record.copyWith(
-          id: _generateId(),
-          startedAtEpochMs: atEpochMs,
-          timezoneId: record.endTimezoneId,
-          createdAtEpochMs: now,
-          updatedAtEpochMs: now,
-        );
+  Future<Record> _splitRecordLocked(String recordId, int atEpochMs) async {
+    await _ensureInitializedLocked();
+    final record = await _recordOrThrow(recordId);
+    if (atEpochMs <= record.startedAtEpochMs ||
+        atEpochMs >= record.endedAtEpochMs) {
+      throw const RecordEditRefused(
+        "That time is outside this Record, so it can't be split there.",
+      );
+    }
 
-        await _db.db.transaction((txn) async {
-          await _updateRecordInTxn(txn, earlier);
-          await _insertRecordInTxn(txn, later);
-        });
-        _lastOperation = null;
-        await _requestExport();
-        return later;
-      });
+    final now = _nowUtcMs();
+    final earlier = record.copyWith(
+      endedAtEpochMs: atEpochMs,
+      updatedAtEpochMs: now,
+    );
+    // The instant a Record crossed from its start zone to its end zone is
+    // not stored, so the later half starts in the zone the Record ended in.
+    final later = record.copyWith(
+      id: _generateId(),
+      startedAtEpochMs: atEpochMs,
+      timezoneId: record.endTimezoneId,
+      createdAtEpochMs: now,
+      updatedAtEpochMs: now,
+    );
+
+    await _db.db.transaction((txn) async {
+      await _updateRecordInTxn(txn, earlier);
+      await _insertRecordInTxn(txn, later);
+      await _appendRecordUpsert(txn, earlier, now);
+      await _appendRecordUpsert(txn, later, now);
+    });
+    _lastOperation = null;
+    await _requestExport();
+    return later;
+  }
 
   /// Joins two neighbouring Records into one, keeping the earlier Record's
   /// Activity, comment and tags and taking the later Record's end. The later
@@ -402,75 +485,84 @@ class DayRecorder {
   /// Refused when the two Records are not directly adjacent, or when they meet
   /// at a local midnight: a Record never crosses 00:00.
   Future<Record> merge(String leftRecordId, String rightRecordId) =>
-      _synchronized(() async {
-        await _ensureInitializedLocked();
-        final first = await _recordOrThrow(leftRecordId);
-        final second = await _recordOrThrow(rightRecordId);
-        final earlier = first.startedAtEpochMs <= second.startedAtEpochMs
-            ? first
-            : second;
-        final later = identical(earlier, first) ? second : first;
-        if (earlier.id == later.id ||
-            earlier.endedAtEpochMs != later.startedAtEpochMs) {
-          throw const RecordEditRefused(
-            "Those Records aren't next to each other, so they can't be merged.",
-          );
-        }
+      _synchronized(() => _mergeLocked(leftRecordId, rightRecordId));
 
-        final now = _nowUtcMs();
-        final merged = earlier.copyWith(
-          endedAtEpochMs: later.endedAtEpochMs,
-          endTimezoneId: later.endTimezoneId,
-          updatedAtEpochMs: now,
-        );
-        if (_crossesMidnight(merged)) {
-          throw const RecordEditRefused(
-            "Those Records are on different Days, so they can't be merged.",
-          );
-        }
+  Future<Record> _mergeLocked(String leftRecordId, String rightRecordId) async {
+    await _ensureInitializedLocked();
+    final first = await _recordOrThrow(leftRecordId);
+    final second = await _recordOrThrow(rightRecordId);
+    final earlier = first.startedAtEpochMs <= second.startedAtEpochMs
+        ? first
+        : second;
+    final later = identical(earlier, first) ? second : first;
+    if (earlier.id == later.id ||
+        earlier.endedAtEpochMs != later.startedAtEpochMs) {
+      throw const RecordEditRefused(
+        "Those Records aren't next to each other, so they can't be merged.",
+      );
+    }
 
-        await _db.db.transaction((txn) async {
-          await _updateRecordInTxn(txn, merged);
-          await txn.delete('records', where: 'id = ?', whereArgs: [later.id]);
-          await txn.insert(
-            'tombstones',
-            Tombstone(
-              entityId: later.id,
-              entityType: 'record',
-              deletedAtEpochMs: now,
-            ).toMap(),
-            conflictAlgorithm: ConflictAlgorithm.replace,
-          );
-        });
-        _lastOperation = null;
-        await _requestExport();
-        return merged;
-      });
+    final now = _nowUtcMs();
+    final merged = earlier.copyWith(
+      endedAtEpochMs: later.endedAtEpochMs,
+      endTimezoneId: later.endTimezoneId,
+      updatedAtEpochMs: now,
+    );
+    if (_crossesMidnight(merged)) {
+      throw const RecordEditRefused(
+        "Those Records are on different Days, so they can't be merged.",
+      );
+    }
+
+    await _db.db.transaction((txn) async {
+      await _updateRecordInTxn(txn, merged);
+      await txn.delete('records', where: 'id = ?', whereArgs: [later.id]);
+      await txn.insert(
+        'tombstones',
+        Tombstone(
+          entityId: later.id,
+          entityType: 'record',
+          deletedAtEpochMs: now,
+        ).toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      await _appendRecordUpsert(txn, merged, now);
+      await _appendRecordRemove(txn, later.id, now);
+    });
+    _lastOperation = null;
+    await _requestExport();
+    return merged;
+  }
 
   /// Turns a Record into an Untracked Record in place, so its time stays in the
   /// Day. Its Activity, comment and tags are cleared.
-  Future<Record> delete(String recordId) => _synchronized(() async {
+  Future<Record> delete(String recordId) =>
+      _synchronized(() => _deleteLocked(recordId));
+
+  Future<Record> _deleteLocked(String recordId) async {
     await _ensureInitializedLocked();
     final record = await _recordOrThrow(recordId);
     if (record.isUntracked) return record;
 
+    final now = _nowUtcMs();
     final updated = record
         .withActivity(null)
-        .copyWith(
-          comment: '',
-          tagIds: const <String>[],
-          updatedAtEpochMs: _nowUtcMs(),
-        );
-    await _db.updateRecord(updated);
+        .copyWith(comment: '', tagIds: const <String>[], updatedAtEpochMs: now);
+    await _db.db.transaction((txn) async {
+      await _updateRecordInTxn(txn, updated);
+      await _appendRecordUpsert(txn, updated, now);
+    });
     _lastOperation = null;
     await _requestExport();
     return updated;
-  });
+  }
 
   /// Reverses the most recent [label] or [split] when called inside the
   /// [undoGraceWindow]: the Record is deleted (with a Tombstone) and the Lap is
   /// restored to its previous start. Returns false when nothing is undoable.
-  Future<bool> undoLast() => _synchronized(() async {
+  Future<bool> undoLast() => _synchronized(() => _undoLastLocked());
+
+  Future<bool> _undoLastLocked() async {
     await _ensureInitializedLocked();
     final undo = _lastOperation;
     if (undo == null) return false;
@@ -493,22 +585,290 @@ class DayRecorder {
           ).toMap(),
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
+        await _appendRecordRemove(txn, record.id, now);
       }
       for (final record in undo.previousRecords) {
         await _updateRecordInTxn(txn, record);
+        await _appendRecordUpsert(txn, record, now);
       }
       await txn.insert(
         'lap',
         undo.previousLap.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
+      await _appendLapSet(txn, undo.previousLap, now);
     });
 
     _updateLap(undo.previousLap);
     await _requestExport();
     await _armMidnightTimer();
     return true;
-  });
+  }
+
+  /// Removes [recordId] and, when it is the Record immediately before the open
+  /// Lap, reopens the Lap at the instant that Record started. This is the
+  /// compensating command behind an undo intent, which carries the target
+  /// Record id or resolves a watch action id to one. Returns false when the
+  /// Record is already gone.
+  Future<bool> _undoRecordLocked(String recordId) async {
+    final record = await _db.getRecordById(recordId);
+    if (record == null) return false;
+
+    final now = _nowUtcMs();
+    final lap = _lapNotifier.value;
+    final restoredLap =
+        lap != null && lap.startedAtEpochMs == record.endedAtEpochMs
+        ? lap.copyWith(
+            startedAtEpochMs: record.startedAtEpochMs,
+            startedTimezoneId: record.timezoneId,
+            revision: lap.revision + 1,
+          )
+        : null;
+
+    await _db.db.transaction((txn) async {
+      await txn.delete('records', where: 'id = ?', whereArgs: [recordId]);
+      await txn.insert(
+        'tombstones',
+        Tombstone(
+          entityId: recordId,
+          entityType: 'record',
+          deletedAtEpochMs: now,
+        ).toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      await _appendRecordRemove(txn, recordId, now);
+      if (restoredLap != null) {
+        await txn.insert(
+          'lap',
+          restoredLap.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+        await _appendLapSet(txn, restoredLap, now);
+      }
+    });
+
+    _lastOperation = null;
+    if (restoredLap != null) _updateLap(restoredLap);
+    await _requestExport();
+    await _armMidnightTimer();
+    return true;
+  }
+
+  /// Applies an intent proposed by the Mac or the watch.
+  ///
+  /// The intent runs at the instant and zone it was tapped at, and only when
+  /// the open Lap still starts where its author saw it start. Anything else is
+  /// rejected with a reason and is never re-placed. The outcome is recorded in
+  /// `processed_intents` keyed by `(log_epoch, intent_id)`, so a resent intent
+  /// or a duplicated watch action is a no-op.
+  Future<IntentResult> applyIntent(SyncIntent intent) =>
+      _synchronized(() => _applyIntentLocked(intent));
+
+  Future<IntentResult> _applyIntentLocked(SyncIntent intent) async {
+    await _ensureInitializedLocked();
+    final logEpoch = await _db.getLogEpoch();
+    final processed = await _db.lookupProcessedIntent(
+      logEpoch,
+      intent.intentId,
+    );
+    if (processed != null) return processed.toIntentResult();
+
+    final now = _nowUtcMs();
+    if ((now - intent.tappedAtEpochMs).abs() > intentClockSkew.inMilliseconds) {
+      return await _rejectIntent(intent, IntentResult.reasonClockSkew);
+    }
+
+    final lap = _lapNotifier.value;
+    if (lap == null || lap.startedAtEpochMs != intent.expectedLapStartEpochMs) {
+      return await _rejectIntent(intent, IntentResult.reasonLapMoved);
+    }
+
+    try {
+      switch (intent.kind) {
+        case SyncIntentKind.label:
+          final activityId = intent.activityId;
+          if (activityId == null ||
+              await _db.getActivityById(activityId) == null) {
+            return await _rejectIntent(
+              intent,
+              IntentResult.reasonUnknownActivity,
+            );
+          }
+          final record = await _closeLapLocked(
+            activityId: activityId,
+            comment: intent.comment,
+            tags: intent.tagIds,
+            atEpochMs: intent.tappedAtEpochMs,
+            atZoneId: intent.tappedAtZoneId,
+            intentId: intent.intentId,
+          );
+          return IntentResult.applied(
+            entityId: record.id,
+            appliedAtEpochMs: record.endedAtEpochMs,
+          );
+
+        case SyncIntentKind.split:
+          final record = await _closeLapLocked(
+            atEpochMs: intent.tappedAtEpochMs,
+            atZoneId: intent.tappedAtZoneId,
+            intentId: intent.intentId,
+          );
+          return IntentResult.applied(
+            entityId: record.id,
+            appliedAtEpochMs: record.endedAtEpochMs,
+          );
+
+        case SyncIntentKind.relabel:
+          final recordId = intent.recordId;
+          if (recordId == null || await _db.getRecordById(recordId) == null) {
+            return await _rejectIntent(
+              intent,
+              IntentResult.reasonUnknownRecord,
+            );
+          }
+          final activityId = intent.activityId;
+          if (activityId != null &&
+              await _db.getActivityById(activityId) == null) {
+            return await _rejectIntent(
+              intent,
+              IntentResult.reasonUnknownActivity,
+            );
+          }
+          final record = await _relabelLocked(recordId, activityId);
+          return await _markApplied(intent, record.id, now);
+
+        case SyncIntentKind.annotate:
+          final recordId = intent.recordId;
+          if (recordId == null || await _db.getRecordById(recordId) == null) {
+            return await _rejectIntent(
+              intent,
+              IntentResult.reasonUnknownRecord,
+            );
+          }
+          final record = await _annotateLocked(
+            recordId,
+            comment: intent.comment,
+            tagIds: intent.tagIds,
+          );
+          return await _markApplied(intent, record.id, now);
+
+        case SyncIntentKind.adjustEdges:
+          final recordId = intent.recordId;
+          if (recordId == null || await _db.getRecordById(recordId) == null) {
+            return await _rejectIntent(
+              intent,
+              IntentResult.reasonUnknownRecord,
+            );
+          }
+          final record = await _adjustEdgesLocked(
+            recordId,
+            startEpochMs: intent.startEpochMs,
+            endEpochMs: intent.endEpochMs,
+          );
+          return await _markApplied(intent, record.id, now);
+
+        case SyncIntentKind.clear:
+          final recordId = intent.recordId;
+          if (recordId == null || await _db.getRecordById(recordId) == null) {
+            return await _rejectIntent(
+              intent,
+              IntentResult.reasonUnknownRecord,
+            );
+          }
+          final record = await _deleteLocked(recordId);
+          return await _markApplied(intent, record.id, now);
+
+        case SyncIntentKind.undo:
+          var targetId = intent.recordId;
+          if (targetId == null || targetId.isEmpty) {
+            final actionId = intent.actionId;
+            if (actionId == null || actionId.isEmpty) {
+              return await _rejectIntent(
+                intent,
+                IntentResult.reasonUnknownRecord,
+              );
+            }
+            final action = await _db.lookupProcessedIntent(logEpoch, actionId);
+            targetId = action?.entityId;
+          }
+          if (targetId == null || targetId.isEmpty) {
+            return await _rejectIntent(
+              intent,
+              IntentResult.reasonUnknownRecord,
+            );
+          }
+          // Already gone means the undo arrived after its first application.
+          await _undoRecordLocked(targetId);
+          return await _markApplied(intent, targetId, now);
+
+        case SyncIntentKind.merge:
+          final leftId = intent.leftRecordId;
+          final rightId = intent.rightRecordId;
+          if (leftId == null ||
+              rightId == null ||
+              await _db.getRecordById(leftId) == null ||
+              await _db.getRecordById(rightId) == null) {
+            return await _rejectIntent(
+              intent,
+              IntentResult.reasonUnknownRecord,
+            );
+          }
+          final record = await _mergeLocked(leftId, rightId);
+          return await _markApplied(intent, record.id, now);
+
+        case SyncIntentKind.splitRecord:
+          final recordId = intent.recordId;
+          final atEpochMs = intent.atEpochMs;
+          if (recordId == null ||
+              atEpochMs == null ||
+              await _db.getRecordById(recordId) == null) {
+            return await _rejectIntent(
+              intent,
+              IntentResult.reasonUnknownRecord,
+            );
+          }
+          final record = await _splitRecordLocked(recordId, atEpochMs);
+          return await _markApplied(intent, record.id, now);
+      }
+    } on RecordEditRefused {
+      return await _rejectIntent(intent, IntentResult.reasonOverlap);
+    }
+  }
+
+  Future<IntentResult> _markApplied(
+    SyncIntent intent,
+    String entityId,
+    int appliedAtEpochMs,
+  ) async {
+    final result = IntentResult.applied(
+      entityId: entityId,
+      appliedAtEpochMs: appliedAtEpochMs,
+    );
+    await _db.markProcessedIntent(
+      ProcessedIntent(
+        logEpoch: await _db.getLogEpoch(),
+        intentId: intent.intentId,
+        entityId: entityId,
+        appliedAtEpochMs: appliedAtEpochMs,
+        result: result.status,
+      ),
+    );
+    return result;
+  }
+
+  Future<IntentResult> _rejectIntent(SyncIntent intent, String reason) async {
+    final result = IntentResult.rejected(reason);
+    await _db.markProcessedIntent(
+      ProcessedIntent(
+        logEpoch: await _db.getLogEpoch(),
+        intentId: intent.intentId,
+        appliedAtEpochMs: 0,
+        result: result.status,
+        reason: reason,
+      ),
+    );
+    return result;
+  }
 
   /// Labels the open Lap with the Activity of the most recent labelled Record.
   /// Returns null when no labelled Record exists.
@@ -526,12 +886,28 @@ class DayRecorder {
   Future<Lap> _initializeLocked() async {
     var current = await _db.getLap();
     if (current == null) {
-      current = Lap(
-        startedAtEpochMs: _nowUtcMs(),
+      final startedAt = _nowUtcMs();
+      final opened = Lap(
+        startedAtEpochMs: startedAt,
         startedTimezoneId: await _currentTimezoneId(),
         revision: 1,
       );
-      await _db.setLap(current);
+      // A replica has no Lap of its own, so the first write of the row has to
+      // announce it or every intent is rejected as `lap-moved`.
+      await _db.db.transaction((txn) async {
+        await txn.insert(
+          'lap',
+          opened.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+        await _appendLapSet(
+          txn,
+          opened,
+          startedAt,
+          endTimezoneId: opened.startedTimezoneId,
+        );
+      });
+      current = opened;
     }
     _updateLap(current);
     _isInitialized = true;
@@ -551,6 +927,9 @@ class DayRecorder {
     String? activityId,
     String comment = '',
     List<String> tags = const [],
+    int? atEpochMs,
+    String? atZoneId,
+    String? intentId,
   }) async {
     await _ensureInitializedLocked();
 
@@ -561,15 +940,21 @@ class DayRecorder {
       }
     }
 
-    // Afterwards the Lap starts at or after the last local midnight, so the
-    // span closed here never crosses 00:00.
-    await _applyMidnightSplitsLocked();
+    // A tapped instant in the future closes the Lap at now; one before the Lap
+    // started closes an empty span at the Lap start.
+    final nowUtc = _nowUtcMs();
+    final requested = atEpochMs ?? nowUtc;
+    final tappedAt = requested > nowUtc ? nowUtc : requested;
+
+    // Afterwards the Lap starts at or after the last local midnight at or
+    // before the tapped instant, so the span closed here never crosses 00:00.
+    await _applyMidnightSplitsLocked(untilEpochMs: tappedAt, zoneId: atZoneId);
 
     final current = _lapNotifier.value!;
     // A clock that moved back before the Lap started closes an empty span
     // instead of writing a Record that ends before it starts.
-    final now = max(_nowUtcMs(), current.startedAtEpochMs);
-    final endTimezoneId = await _currentTimezoneId();
+    final now = max(tappedAt, current.startedAtEpochMs);
+    final endTimezoneId = atZoneId ?? await _currentTimezoneId();
     final startTimezoneId = current.startTimezoneOr(endTimezoneId);
 
     // A label covers the whole unlabeled span, including the MidnightSplit
@@ -613,15 +998,25 @@ class DayRecorder {
     await _db.db.transaction((txn) async {
       for (final record in labelled) {
         await _updateRecordInTxn(txn, record);
+        await _appendRecordUpsert(txn, record, now);
       }
       for (final record in written) {
         await _insertRecordInTxn(txn, record);
+        await _appendRecordUpsert(txn, record, now);
       }
       await txn.insert(
         'lap',
         nextLap.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
+      await _appendLapSet(txn, nextLap, now, endTimezoneId: endTimezoneId);
+      if (intentId != null) {
+        await _markIntentInTxn(
+          txn,
+          intentId,
+          IntentResult.applied(entityId: closing.id, appliedAtEpochMs: now),
+        );
+      }
     });
 
     _lastOperation = _UndoSnapshot(
@@ -643,17 +1038,25 @@ class DayRecorder {
 
   /// Closes the open Lap at each local midnight it has crossed and reopens it
   /// at the last one, writing one Untracked Record per Day.
-  Future<void> _applyMidnightSplitsLocked() async {
+  ///
+  /// [untilEpochMs] bounds the split to an instant in the past, used when an
+  /// intent is applied at the time it was tapped. [zoneId] is the zone that
+  /// instant was lived in, when the caller knows it.
+  Future<void> _applyMidnightSplitsLocked({
+    int? untilEpochMs,
+    String? zoneId,
+  }) async {
     await _ensureInitializedLocked();
     final current = _lapNotifier.value!;
     final now = _nowUtcMs();
-    if (now <= current.startedAtEpochMs) return;
+    final limit = untilEpochMs ?? now;
+    if (limit <= current.startedAtEpochMs) return;
 
     // When the app returns to the foreground, the best available reading of
     // "the zone the user was in at that midnight" is the device's current
     // zone; while running, this is the zone at the instant the midnight timer
     // fires.
-    final zoneAtMidnight = await _currentTimezoneId();
+    final zoneAtMidnight = zoneId ?? await _currentTimezoneId();
     var cursor = current.startedAtEpochMs;
     var cursorTimezoneId = current.startTimezoneOr(zoneAtMidnight);
     var revision = current.revision;
@@ -661,7 +1064,7 @@ class DayRecorder {
 
     while (true) {
       final boundary = nextLocalMidnightUtcMs(zoneAtMidnight, cursor);
-      if (boundary > now) break;
+      if (boundary > limit) break;
       created.add(
         Record(
           id: _generateId(),
@@ -689,12 +1092,14 @@ class DayRecorder {
     await _db.db.transaction((txn) async {
       for (final record in created) {
         await _insertRecordInTxn(txn, record);
+        await _appendRecordUpsert(txn, record, now);
       }
       await txn.insert(
         'lap',
         nextLap.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
+      await _appendLapSet(txn, nextLap, now, endTimezoneId: zoneAtMidnight);
     });
 
     // The Lap moved, so a label still inside its undo window can no longer be
@@ -873,6 +1278,75 @@ class DayRecorder {
         'tag_id': tagId,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
+  }
+
+  Future<void> _appendRecordUpsert(
+    DatabaseExecutor txn,
+    Record record,
+    int atEpochMs,
+  ) async {
+    await _db.appendChange(
+      SyncChange.recordUpsert(record, atEpochMs: atEpochMs),
+      executor: txn,
+    );
+  }
+
+  Future<void> _appendRecordRemove(
+    DatabaseExecutor txn,
+    String recordId,
+    int atEpochMs,
+  ) async {
+    await _db.appendChange(
+      SyncChange.recordRemove(recordId, atEpochMs: atEpochMs),
+      executor: txn,
+    );
+  }
+
+  Future<void> _appendLapSet(
+    DatabaseExecutor txn,
+    Lap lap,
+    int atEpochMs, {
+    String? endTimezoneId,
+  }) async {
+    await _db.appendChange(
+      SyncChange.lapSet(
+        lap,
+        atEpochMs: atEpochMs,
+        endTimezoneId: endTimezoneId,
+      ),
+      executor: txn,
+    );
+  }
+
+  Future<String> _logEpochInTxn(DatabaseExecutor txn) async {
+    final rows = await txn.query(
+      'settings',
+      columns: ['value'],
+      where: 'key = ?',
+      whereArgs: [SyncSettingKeys.logEpoch],
+      limit: 1,
+    );
+    return rows.isEmpty ? '' : rows.first['value'] as String;
+  }
+
+  /// Records an applied intent inside the mutation's own transaction, so the
+  /// intent and the Record it produced can never disagree.
+  Future<void> _markIntentInTxn(
+    DatabaseExecutor txn,
+    String intentId,
+    IntentResult result,
+  ) async {
+    await _db.markProcessedIntent(
+      ProcessedIntent(
+        logEpoch: await _logEpochInTxn(txn),
+        intentId: intentId,
+        entityId: result.entityId,
+        appliedAtEpochMs: result.appliedAtEpochMs,
+        result: result.status,
+        reason: result.reason,
+      ),
+      executor: txn,
+    );
   }
 
   /// Arms a one-shot timer for the next local midnight so an open app splits

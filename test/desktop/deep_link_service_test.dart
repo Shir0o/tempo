@@ -1,8 +1,11 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:tempo/core/state/day_recorder.dart';
+import 'package:tempo/core/state/record_commands.dart';
+import 'package:tempo/core/sync/intent_queue.dart';
 import 'package:tempo/data/database/tempo_database.dart';
 import 'package:tempo/data/models/models.dart';
+import 'package:tempo/data/models/sync_change.dart';
 import 'package:tempo/desktop/deep_link_service.dart';
 
 void main() {
@@ -65,7 +68,7 @@ void main() {
       await dayRecorder.initialize();
 
       deepLinkService = DeepLinkService(
-        dayRecorder: dayRecorder,
+        commands: PhoneRecordCommands(dayRecorder: dayRecorder),
         database: db,
         nowUtcMs: () => mockTime,
         generateId: () => 'gen-${++idCounter}',
@@ -286,6 +289,76 @@ void main() {
         final act = await db.getActivityById(records.first.activityId!);
         expect(act?.name, equals('Research 🚀'));
         expect(records.first.comment, equals('✨ Testing'));
+      });
+    });
+
+    group('on the Mac replica', () {
+      late IntentQueue queue;
+      late RemoteRecordCommands remoteCommands;
+      late DeepLinkService replicaDeepLinks;
+      late int intentCounter;
+
+      setUp(() async {
+        queue = IntentQueue(db);
+        await queue.ensureTable();
+        intentCounter = 0;
+        remoteCommands = RemoteRecordCommands(
+          database: db,
+          queue: queue,
+          nowUtcMs: () => mockTime,
+          zoneId: () => 'America/Los_Angeles',
+          generateIntentId: () => 'intent-${++intentCounter}',
+        );
+        replicaDeepLinks = DeepLinkService(
+          commands: remoteCommands,
+          database: db,
+          nowUtcMs: () => mockTime,
+          generateId: () => 'gen-${++idCounter}',
+          onError: errors.add,
+        );
+      });
+
+      test('tempo://start queues a label at the current time', () async {
+        mockTime += 90000;
+
+        final success = await replicaDeepLinks.handleUrl(
+          'tempo://start?activity=Coding&comment=From%20the%20Mac&tags=DeepWork',
+        );
+
+        expect(success, isTrue);
+        final pending = await queue.pendingIntents();
+        expect(pending, hasLength(1));
+        final intent = pending.single.intent;
+        expect(intent.kind, equals(SyncIntentKind.label));
+        expect(intent.tappedAtEpochMs, equals(1000090000));
+        expect(intent.tappedAtZoneId, equals('America/Los_Angeles'));
+        expect(intent.payload['activity_id'], equals('act-coding'));
+        expect(intent.payload['comment'], equals('From the Mac'));
+        expect(intent.payload['tag_ids'], equals(['tag-deep']));
+        // The Mac proposes; it never writes a Record.
+        expect(await db.getRecords(), isEmpty);
+      });
+
+      test('tempo://split queues a split', () async {
+        final success = await replicaDeepLinks.handleUrl('tempo://split');
+
+        expect(success, isTrue);
+        final pending = await queue.pendingIntents();
+        expect(pending, hasLength(1));
+        expect(pending.single.intent.kind, equals(SyncIntentKind.split));
+        expect(pending.single.intent.tappedAtEpochMs, equals(1000000000));
+        expect(await db.getRecords(), isEmpty);
+      });
+
+      test('an unknown Activity queues nothing', () async {
+        final success = await replicaDeepLinks.handleUrl(
+          'tempo://start?activity=Guitar%20Practice',
+        );
+
+        expect(success, isFalse);
+        expect(replicaDeepLinks.lastError, contains('Guitar Practice'));
+        expect(await queue.pendingIntents(), isEmpty);
+        expect(await db.getRecords(), isEmpty);
       });
     });
   });

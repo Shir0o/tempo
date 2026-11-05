@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
+import '../../data/models/sync_change.dart';
 import '../export/csv_export_engine.dart';
 import '../time/timezone_id.dart';
 import 'stt_format_parser.dart';
@@ -71,14 +72,6 @@ class SttImportService {
       nowEpochMs: now,
     );
 
-    // 1. Non-destructive merge-update of Categories and Activities
-    final categoryMapping = await _upsertCategories(envelope.categories, now);
-    final activityMapping = await _upsertActivities(
-      envelope.activities,
-      categoryMapping,
-      now,
-    );
-
     // Upsert any tags present in the raw intervals (e.g. from STT CSV "record tags")
     final uniqueTagNames = <String>{};
     for (final interval in envelope.rawIntervals) {
@@ -89,28 +82,48 @@ class SttImportService {
         }
       }
     }
-    final tagMapping = await _upsertTags(uniqueTagNames.toList(), now);
 
     var recordsImported = 0;
     var syntheticCount = 0;
     var skippedCollisions = 0;
+    var importedHistory = false;
 
-    if (scope == SttImportScope.fullHistory &&
-        envelope.rawIntervals.isNotEmpty) {
-      final reconciliation = await _reconcileAndInsertHistory(
-        intervals: envelope.rawIntervals,
-        activityMapping: activityMapping,
-        tagMapping: tagMapping,
-        activeTz: activeTz,
-        now: now,
+    // One transaction for the whole import, so a Category, Activity, Tag or
+    // Record and its change row commit together.
+    await database.db.transaction((txn) async {
+      // 1. Non-destructive merge-update of Categories and Activities
+      final categoryMapping = await _upsertCategories(
+        envelope.categories,
+        now,
+        txn,
       );
-      recordsImported = reconciliation.recordsImported;
-      syntheticCount = reconciliation.syntheticRecordsCreated;
-      skippedCollisions = reconciliation.skippedDueToCollision;
+      final activityMapping = await _upsertActivities(
+        envelope.activities,
+        categoryMapping,
+        now,
+        txn,
+      );
+      final tagMapping = await _upsertTags(uniqueTagNames.toList(), now, txn);
 
-      if (csvExportEngine != null) {
-        csvExportEngine!.scheduleExport();
+      if (scope == SttImportScope.fullHistory &&
+          envelope.rawIntervals.isNotEmpty) {
+        importedHistory = true;
+        final reconciliation = await _reconcileAndInsertHistory(
+          intervals: envelope.rawIntervals,
+          activityMapping: activityMapping,
+          tagMapping: tagMapping,
+          activeTz: activeTz,
+          now: now,
+          txn: txn,
+        );
+        recordsImported = reconciliation.recordsImported;
+        syntheticCount = reconciliation.syntheticRecordsCreated;
+        skippedCollisions = reconciliation.skippedDueToCollision;
       }
+    });
+
+    if (importedHistory && csvExportEngine != null) {
+      csvExportEngine!.scheduleExport();
     }
 
     return SttImportResult(
@@ -127,8 +140,9 @@ class SttImportService {
   Future<Map<String, String>> _upsertCategories(
     List<Category> imported,
     int nowEpochMs,
+    Transaction txn,
   ) async {
-    final existing = await database.getCategories();
+    final existing = (await txn.query('categories')).map(Category.fromMap);
     final existingByName = <String, Category>{
       for (final cat in existing) cat.name.trim().toLowerCase(): cat,
     };
@@ -147,7 +161,11 @@ class SttImportService {
           createdAtEpochMs: nowEpochMs,
           updatedAtEpochMs: nowEpochMs,
         );
-        await database.upsertCategory(newCat);
+        await txn.insert('categories', newCat.toMap());
+        await database.appendChange(
+          SyncChange.categoryUpsert(newCat, atEpochMs: nowEpochMs),
+          executor: txn,
+        );
         existingByName[key] = newCat;
         idMapping[imp.id] = newCat.id;
       }
@@ -162,8 +180,11 @@ class SttImportService {
     List<Activity> imported,
     Map<String, String> categoryMapping,
     int nowEpochMs,
+    Transaction txn,
   ) async {
-    final existing = await database.getAllActivities(includeArchived: true);
+    final existing = (await txn.query('activities'))
+        .map(Activity.fromMap)
+        .toList();
     final existingByName = <String, Activity>{
       for (final act in existing) act.name.trim().toLowerCase(): act,
     };
@@ -172,21 +193,42 @@ class SttImportService {
       for (final act in existing) act.name.trim().toLowerCase(): act.id,
     };
 
+    final categoryColors = <String, String>{
+      for (final row in await txn.query(
+        'categories',
+        columns: ['id', 'color_hex'],
+      ))
+        row['id'] as String: row['color_hex'] as String? ?? '',
+    };
+
     for (final imp in imported) {
       final key = imp.name.trim().toLowerCase();
       final match = existingByName[key];
       final targetCatId = imp.categoryId != null
           ? categoryMapping[imp.categoryId]
           : null;
+      final targetCatColor = targetCatId == null
+          ? null
+          : categoryColors[targetCatId];
 
       if (match != null) {
         // If existing activity has no category, but imported one has, link it non-destructively
         if (match.categoryId == null && targetCatId != null) {
           final updated = match.copyWith(
             categoryId: targetCatId,
+            colorHex: targetCatColor,
             updatedAtEpochMs: nowEpochMs,
           );
-          await database.updateActivity(updated);
+          await txn.update(
+            'activities',
+            updated.toMap(),
+            where: 'id = ?',
+            whereArgs: [updated.id],
+          );
+          await database.appendChange(
+            SyncChange.activityUpsert(updated, atEpochMs: nowEpochMs),
+            executor: txn,
+          );
           existingByName[key] = updated;
         }
         nameToIdMapping[key] = match.id;
@@ -194,10 +236,15 @@ class SttImportService {
         final newAct = imp.copyWith(
           id: generateId(),
           categoryId: targetCatId,
+          colorHex: targetCatColor,
           createdAtEpochMs: nowEpochMs,
           updatedAtEpochMs: nowEpochMs,
         );
-        await database.insertActivity(newAct);
+        await txn.insert('activities', newAct.toMap());
+        await database.appendChange(
+          SyncChange.activityUpsert(newAct, atEpochMs: nowEpochMs),
+          executor: txn,
+        );
         existingByName[key] = newAct;
         nameToIdMapping[key] = newAct.id;
       }
@@ -211,12 +258,17 @@ class SttImportService {
   Future<Map<String, String>> _upsertTags(
     List<String> tagNames,
     int nowEpochMs,
+    Transaction txn,
   ) async {
+    final existingByName = <String, String>{
+      for (final row in await txn.query('tags', columns: ['id', 'name']))
+        row['name'] as String: row['id'] as String,
+    };
     final tagMapping = <String, String>{};
     for (final tag in tagNames) {
-      final existing = await database.getTagByName(tag);
-      if (existing != null) {
-        tagMapping[tag] = existing.id;
+      final existingId = existingByName[tag];
+      if (existingId != null) {
+        tagMapping[tag] = existingId;
       } else {
         final newId = generateId();
         final newTag = Tag(
@@ -226,7 +278,12 @@ class SttImportService {
           createdAtEpochMs: nowEpochMs,
           updatedAtEpochMs: nowEpochMs,
         );
-        await database.insertTag(newTag);
+        await txn.insert('tags', newTag.toMap());
+        await database.appendChange(
+          SyncChange.tagUpsert(newTag, atEpochMs: nowEpochMs),
+          executor: txn,
+        );
+        existingByName[tag] = newId;
         tagMapping[tag] = newId;
       }
     }
@@ -240,6 +297,7 @@ class SttImportService {
     required Map<String, String> tagMapping,
     required String activeTz,
     required int now,
+    required Transaction txn,
   }) async {
     // 1. Sort intervals chronologically
     final sorted = List<SttRawInterval>.from(intervals)
@@ -250,7 +308,8 @@ class SttImportService {
     }
 
     // 2. Clamp range: earliest midnight to latest midnight / pre-lap
-    final lap = await database.getLap();
+    final lapRows = await txn.query('lap', where: 'id = 1', limit: 1);
+    final lap = lapRows.isEmpty ? null : Lap.fromMap(lapRows.first);
     final lapStart = lap?.startedAtEpochMs ?? now;
 
     // Earliest start
@@ -321,11 +380,12 @@ class SttImportService {
     // Existing tracked user records (activityId != null) take absolute precedence.
     // Pre-existing synthetic untracked gaps (activityId == null) that collide with imported
     // historical activities are removed and replaced so imported records are not blocked.
-    final allExistingInRange = await database.getRecords(
-      startedAfter: earliestMidnight,
-      startedBefore: latestCeiling,
+    final allExistingInRange = (await txn.query(
+      'records',
+      where: 'started_at_epoch_ms >= ? AND started_at_epoch_ms <= ?',
+      whereArgs: [earliestMidnight, latestCeiling],
       orderBy: 'started_at_epoch_ms ASC',
-    );
+    )).map(Record.fromMap).toList();
 
     final existingTrackedRecords = allExistingInRange
         .where((r) => r.activityId != null)
@@ -355,7 +415,20 @@ class SttImportService {
             cand.endedAtEpochMs > exist.startedAtEpochMs;
       }).toList();
       for (final untracked in collidingUntracked) {
-        await database.deleteRecord(untracked.id);
+        await txn.delete('records', where: 'id = ?', whereArgs: [untracked.id]);
+        await txn.insert(
+          'tombstones',
+          Tombstone(
+            entityId: untracked.id,
+            entityType: 'record',
+            deletedAtEpochMs: now,
+          ).toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+        await database.appendChange(
+          SyncChange.recordRemove(untracked.id, atEpochMs: now),
+          executor: txn,
+        );
         allExistingInRange.remove(untracked);
       }
     }
@@ -446,30 +519,26 @@ class SttImportService {
       }
     }
 
-    // 6. Batch insert in transactions of 500 records
-    const chunkSize = 500;
-    for (var i = 0; i < recordsToInsert.length; i += chunkSize) {
-      final chunk = recordsToInsert.sublist(
-        i,
-        math.min(i + chunkSize, recordsToInsert.length),
+    // 6. Insert the reconciled Records, each with its change row, in the
+    // import's own transaction.
+    for (final rec in recordsToInsert) {
+      await txn.insert(
+        'records',
+        rec.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
       );
-      await database.db.transaction((txn) async {
-        for (final rec in chunk) {
-          await txn.insert(
-            'records',
-            rec.toMap(),
-            conflictAlgorithm: ConflictAlgorithm.replace,
-          );
-          if (rec.tagIds.isNotEmpty) {
-            for (final tagId in rec.tagIds) {
-              await txn.insert('record_tags', {
-                'record_id': rec.id,
-                'tag_id': tagId,
-              }, conflictAlgorithm: ConflictAlgorithm.replace);
-            }
-          }
+      if (rec.tagIds.isNotEmpty) {
+        for (final tagId in rec.tagIds) {
+          await txn.insert('record_tags', {
+            'record_id': rec.id,
+            'tag_id': tagId,
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
         }
-      });
+      }
+      await database.appendChange(
+        SyncChange.recordUpsert(rec, atEpochMs: now),
+        executor: txn,
+      );
     }
 
     // 7. If imported history advanced past or met the open Lap start time,
@@ -481,7 +550,15 @@ class SttImportService {
         startedTimezoneId: lap.startedTimezoneId,
         revision: lap.revision + 1,
       );
-      await database.setLap(updatedLap);
+      await txn.insert(
+        'lap',
+        updatedLap.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      await database.appendChange(
+        SyncChange.lapSet(updatedLap, atEpochMs: now),
+        executor: txn,
+      );
     }
 
     final trackedImported = recordsToInsert

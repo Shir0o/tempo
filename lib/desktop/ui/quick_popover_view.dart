@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/state/day_recorder.dart';
+import '../../core/state/record_commands.dart';
 import '../../core/time/timezone_id.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
@@ -24,11 +25,15 @@ class _UndoState {
   final String? subject;
   final String? range;
 
+  /// False for a proposal waiting on the phone: there is no Record to undo yet.
+  final bool undoable;
+
   const _UndoState({
     required this.message,
     required this.deadline,
     this.subject,
     this.range,
+    this.undoable = true,
   });
 
   int get secondsLeft {
@@ -52,8 +57,15 @@ class _UndoState {
 /// - `Cmd + O`: Opens the full window.
 /// - `Cmd + Q`: Quits the application.
 class QuickPopoverView extends StatefulWidget {
-  final DayRecorder dayRecorder;
+  /// The phone's always-running Lap. Null on the Mac, which reads the Lap from
+  /// the replica and never opens one of its own.
+  final DayRecorder? dayRecorder;
   final TempoDatabase database;
+
+  /// Every mutation goes through this seam. Defaults to the phone's
+  /// [PhoneRecordCommands]; the Mac passes [RemoteRecordCommands].
+  final RecordCommands? commands;
+
   final bool enableTicker;
   final VoidCallback? onClose;
   final VoidCallback? onOpenFullWindow;
@@ -62,8 +74,9 @@ class QuickPopoverView extends StatefulWidget {
 
   const QuickPopoverView({
     super.key,
-    required this.dayRecorder,
+    this.dayRecorder,
     required this.database,
+    this.commands,
     this.enableTicker = true,
     this.onClose,
     this.onOpenFullWindow,
@@ -76,6 +89,21 @@ class QuickPopoverView extends StatefulWidget {
 }
 
 class _QuickPopoverViewState extends State<QuickPopoverView> {
+  late final RecordCommands _commands = widget.commands ?? _phoneCommands();
+
+  /// The Lap read from the replica on a Mac, where no DayRecorder exists.
+  Lap? _replicaLap;
+
+  RecordCommands _phoneCommands() {
+    final recorder = widget.dayRecorder;
+    if (recorder == null) {
+      throw StateError('QuickPopoverView needs commands or a DayRecorder.');
+    }
+    return PhoneRecordCommands(dayRecorder: recorder);
+  }
+
+  Lap? get _lap => widget.dayRecorder?.lap ?? _replicaLap;
+
   final FocusNode _rootFocusNode = FocusNode();
   final FocusNode _searchFocusNode = FocusNode();
   final FocusNode _commentFocusNode = FocusNode();
@@ -90,6 +118,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
   Map<String, Activity> _activitiesById = {};
   List<Record> _todayRecords = [];
   Color? _lastActivityColor;
+  String? _lastActivityId;
   int _dayStartMs = 0;
   int _dayEndMs = 0;
   String _searchQuery = '';
@@ -100,7 +129,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
     super.initState();
     _loadData();
 
-    widget.dayRecorder.lapListenable.addListener(_onLapChanged);
+    widget.dayRecorder?.lapListenable.addListener(_onLapChanged);
     _onLapChanged();
   }
 
@@ -108,7 +137,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
   void dispose() {
     _liveTicker?.cancel();
     _liveTicker = null;
-    widget.dayRecorder.lapListenable.removeListener(_onLapChanged);
+    widget.dayRecorder?.lapListenable.removeListener(_onLapChanged);
     _rootFocusNode.dispose();
     _searchFocusNode.dispose();
     _commentFocusNode.dispose();
@@ -121,7 +150,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
     if (!widget.enableTicker) return;
     _liveTicker?.cancel();
     _liveTicker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (widget.dayRecorder.lap != null && mounted) {
+      if (_lap != null && mounted) {
         setState(() {
           if (_undo != null && _undo!.secondsLeft == 0) _undo = null;
         });
@@ -200,6 +229,11 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
       }
     }
 
+    // A Mac reads the Lap from the replica; it must never open one itself.
+    final replicaLap = widget.dayRecorder == null
+        ? await widget.database.getLap()
+        : null;
+
     final recent = <Activity>[];
     for (final id in recentIds) {
       final act = await widget.database.getActivityById(id);
@@ -219,6 +253,8 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
         _lastActivityColor = lastActivity == null
             ? null
             : UiHelpers.parseHexColor(lastActivity.colorHex);
+        _lastActivityId = lastActivity?.id;
+        _replicaLap = replicaLap;
         _dayStartMs = dayStartMs;
         _dayEndMs = dayEndMs;
         _isLoading = false;
@@ -227,7 +263,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
   }
 
   Future<void> _onLapChanged() async {
-    if (widget.dayRecorder.lap != null) {
+    if (_lap != null) {
       _startLiveTicker();
     } else {
       _liveTicker?.cancel();
@@ -315,41 +351,66 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
 
   Future<void> _labelWith(Activity activity) async {
     final comment = _commentController.text.trim();
-    final record = await widget.dayRecorder.label(
-      activity.id,
-      comment: comment,
-    );
+    final record = await _commands.label(activity.id, comment: comment);
     _commentController.clear();
     await _loadData();
+    if (record == null) {
+      _showPending('${activity.name} is waiting for the phone');
+      return;
+    }
     _showUndo('Logged ${activity.name}', record, subject: activity.name);
   }
 
   Future<void> _labelSameAsLast() async {
-    final record = await widget.dayRecorder.sameAsLast();
+    final lastId = _lastActivityId;
+    if (lastId == null) return;
+    final record = await _commands.label(lastId);
     _commentController.clear();
     await _loadData();
-    if (record != null) {
-      _showUndo(
-        'Logged same as last',
-        record,
-        subject: _activitiesById[record.activityId]?.name,
+    if (record == null) {
+      _showPending(
+        '${_activitiesById[lastId]?.name ?? 'Same as last'} is waiting for '
+        'the phone',
       );
+      return;
     }
+    _showUndo(
+      'Logged same as last',
+      record,
+      subject: _activitiesById[record.activityId]?.name,
+    );
   }
 
   Future<void> _split() async {
-    final record = await widget.dayRecorder.split();
+    final record = await _commands.split();
     await _loadData();
+    if (record == null) {
+      _showPending('The split is waiting for the phone');
+      return;
+    }
     _showUndo('Split at the current time', record);
   }
 
   Future<void> _undoLast() async {
-    final undone = await widget.dayRecorder.undoLast();
+    final undone = await _commands.undo();
     if (!mounted) return;
     setState(() => _undo = null);
     if (undone) {
       await _loadData();
     }
+  }
+
+  /// A proposal with no answer yet: state where it went, and offer no Undo
+  /// because there is no Record to reverse.
+  void _showPending(String message) {
+    if (!mounted) return;
+    setState(() {
+      _undo = _UndoState(
+        message: message,
+        deadline: DateTime.now().add(_undoWindow),
+        undoable: false,
+      );
+    });
   }
 
   void _showUndo(String message, Record record, {String? subject}) {
@@ -409,6 +470,13 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
         setState(() => _searchQuery = '');
         return;
       }
+    }
+
+    // A replica has no way to propose a new Activity; only the phone's
+    // DayRecorder can create one and publish it.
+    if (widget.dayRecorder == null) {
+      _showPending('Create “$trimmed” on the phone, then label it here');
+      return;
     }
 
     // Create and start new activity
@@ -473,7 +541,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
         ),
       );
     }
-    final lap = widget.dayRecorder.lap;
+    final lap = _lap;
     if (lap != null) {
       final start = fraction(lap.startedAtEpochMs);
       final end = fraction(DateTime.now().toUtc().millisecondsSinceEpoch);
@@ -496,7 +564,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
 
   @override
   Widget build(BuildContext context) {
-    final lap = widget.dayRecorder.lap;
+    final lap = _lap;
     final nowUtc = DateTime.now().toUtc().millisecondsSinceEpoch;
     final elapsedMs = lap?.elapsedMs(nowUtc) ?? 0;
 
@@ -803,7 +871,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
                   ),
           ),
           TextButton(
-            onPressed: _undoLast,
+            onPressed: undo.undoable ? _undoLast : null,
             style: TextButton.styleFrom(
               foregroundColor: TempoColors.accent,
               minimumSize: const Size(0, 32),
@@ -813,7 +881,9 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
               ),
               textStyle: TempoText.label.copyWith(fontWeight: FontWeight.w700),
             ),
-            child: Text('Undo · ${undo.secondsLeft}'),
+            child: undo.undoable
+                ? Text('Undo · ${undo.secondsLeft}')
+                : const Text('Pending'),
           ),
         ],
       ),

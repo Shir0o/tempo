@@ -4,8 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/state/day_recorder.dart';
+import '../../core/state/record_commands.dart';
+import '../../core/sync/intent_queue.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
+import '../../data/models/sync_change.dart';
 import '../core/time/timezone_id.dart';
 import 'helpers/ui_helpers.dart';
 import 'history/history_widgets.dart';
@@ -14,14 +17,31 @@ import 'theme/tempo_theme.dart';
 /// History: each Day as a header card with its 00–24 strip, then a timeline
 /// of its Records in lived-zone times. Tapping a Record opens the edit sheet;
 /// tapping an Untracked Record labels it.
+///
+/// On the Mac's replica the Day also shows the proposals the phone has not
+/// answered: a pending one outlined at its tapped time, a rejected one with the
+/// phone's reason and a way to place it at the current time.
 class HistoryView extends StatefulWidget {
   final TempoDatabase database;
-  final DayRecorder dayRecorder;
+
+  /// The phone's always-running Lap. Null on the Mac, which reads the Lap from
+  /// the replica and never opens one of its own.
+  final DayRecorder? dayRecorder;
+
+  /// Every mutation goes through this seam. Defaults to the phone's
+  /// [PhoneRecordCommands]; the Mac passes [RemoteRecordCommands].
+  final RecordCommands? commands;
+
+  /// The Mac's queue of proposed mutations. Null on the phone, where there is
+  /// nothing pending.
+  final IntentQueue? intentQueue;
 
   const HistoryView({
     super.key,
     required this.database,
-    required this.dayRecorder,
+    this.dayRecorder,
+    this.commands,
+    this.intentQueue,
   });
 
   @override
@@ -29,21 +49,40 @@ class HistoryView extends StatefulWidget {
 }
 
 class _HistoryViewState extends State<HistoryView> {
+  late final RecordCommands _commands = widget.commands ?? _phoneCommands();
+
   bool _isLoading = true;
   List<Record> _records = [];
   Map<String, Activity> _activitiesMap = {};
   Map<String, Tag> _tagsMap = {};
+  List<QueuedIntent> _intents = const [];
+
+  /// The Lap read from the replica on a Mac, where no DayRecorder exists.
+  Lap? _replicaLap;
+
+  RecordCommands _phoneCommands() {
+    final recorder = widget.dayRecorder;
+    if (recorder == null) {
+      throw StateError('HistoryView needs commands or a DayRecorder.');
+    }
+    return PhoneRecordCommands(dayRecorder: recorder);
+  }
+
+  Lap? get _lap => widget.dayRecorder?.lap ?? _replicaLap;
+
+  int get _elapsedMs =>
+      _lap?.elapsedMs(DateTime.now().toUtc().millisecondsSinceEpoch) ?? 0;
 
   @override
   void initState() {
     super.initState();
     _loadData();
-    widget.dayRecorder.lapListenable.addListener(_onLapChanged);
+    widget.dayRecorder?.lapListenable.addListener(_onLapChanged);
   }
 
   @override
   void dispose() {
-    widget.dayRecorder.lapListenable.removeListener(_onLapChanged);
+    widget.dayRecorder?.lapListenable.removeListener(_onLapChanged);
     super.dispose();
   }
 
@@ -65,12 +104,30 @@ class _HistoryViewState extends State<HistoryView> {
         includeArchived: true,
       );
       final tags = await widget.database.getAllTags();
+      final replicaLap = widget.dayRecorder == null
+          ? await widget.database.getLap()
+          : null;
+
+      // Proposals the phone has not answered, or refused, so the Day can show
+      // them in place. A queue that cannot be read must not hide the Records.
+      var intents = <QueuedIntent>[];
+      final queue = widget.intentQueue;
+      if (queue != null) {
+        try {
+          intents = [
+            ...await queue.pendingIntents(),
+            ...await queue.rejectedIntents(),
+          ]..sort((a, b) => a.tappedAtEpochMs.compareTo(b.tappedAtEpochMs));
+        } catch (_) {}
+      }
 
       if (mounted) {
         setState(() {
           _records = records;
           _activitiesMap = {for (final a in activities) a.id: a};
           _tagsMap = {for (final t in tags) t.id: t};
+          _intents = intents;
+          _replicaLap = replicaLap;
           _isLoading = false;
         });
       }
@@ -105,7 +162,7 @@ class _HistoryViewState extends State<HistoryView> {
   Future<void> _openLabelUntrackedDialog(Record record) async {
     final activity = await _pickActivity(record, offerCorrections: true);
     if (activity == null) return;
-    await _applyEdit(() => widget.dayRecorder.relabel(record.id, activity.id));
+    await _applyEdit(() => _commands.relabel(record.id, activity.id));
   }
 
   /// The Activity chooser. Returns null when the sheet is dismissed.
@@ -315,19 +372,17 @@ class _HistoryViewState extends State<HistoryView> {
           final endMs = pendingEndMs;
           if (ctx.mounted) Navigator.of(ctx).pop();
 
-          // Note and tags go through DayRecorder so the CSV export follows.
+          // Note and tags go through the commands seam so the CSV export
+          // follows on the phone and a replica queues a proposal.
           if (!await _applyEdit(
-            () => widget.dayRecorder.annotate(
-              record.id,
-              comment: comment,
-              tagIds: tagIds,
-            ),
+            () =>
+                _commands.annotate(record.id, comment: comment, tagIds: tagIds),
           )) {
             return;
           }
           if (activityId != null && activityId != record.activityId) {
             final ok = await _applyEdit(
-              () => widget.dayRecorder.relabel(record.id, activityId),
+              () => _commands.relabel(record.id, activityId),
             );
             if (!ok) return;
           }
@@ -337,7 +392,7 @@ class _HistoryViewState extends State<HistoryView> {
           final endChanged = endMs != record.endedAtEpochMs;
           if (startChanged || endChanged) {
             await _applyEdit(
-              () => widget.dayRecorder.adjustEdges(
+              () => _commands.adjustEdges(
                 record.id,
                 startEpochMs: startChanged ? startMs : null,
                 endEpochMs: endChanged ? endMs : null,
@@ -365,9 +420,7 @@ class _HistoryViewState extends State<HistoryView> {
             record.timezoneId,
             referenceEpochMs: record.startedAtEpochMs,
           );
-          await closeThenApply(
-            () => widget.dayRecorder.splitRecord(record.id, instant),
-          );
+          await closeThenApply(() => _commands.splitRecord(record.id, instant));
         }
 
         Future<void> untrack(BuildContext context) async {
@@ -397,7 +450,7 @@ class _HistoryViewState extends State<HistoryView> {
           );
 
           if (confirm == true) {
-            await closeThenApply(() => widget.dayRecorder.delete(record.id));
+            await closeThenApply(() => _commands.clear(record.id));
           }
         }
 
@@ -670,10 +723,7 @@ class _HistoryViewState extends State<HistoryView> {
                               onPressed: next == null
                                   ? null
                                   : () => closeThenApply(
-                                      () => widget.dayRecorder.merge(
-                                        record.id,
-                                        next.id,
-                                      ),
+                                      () => _commands.merge(record.id, next.id),
                                     ),
                             ),
                           ),
@@ -768,7 +818,7 @@ class _HistoryViewState extends State<HistoryView> {
     final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
     final todayKey = _dayKey(localTimezoneId(), nowMs);
 
-    final lap = widget.dayRecorder.lap;
+    final lap = _lap;
     String? lapKey;
     if (lap != null) {
       lapKey = _dayKey(
@@ -794,6 +844,15 @@ class _HistoryViewState extends State<HistoryView> {
           isToday: dateKey == todayKey,
           lap: dateKey == lapKey ? lap : null,
           nowMs: nowMs,
+          intents: [
+            for (final queued in _intents)
+              if (_dayKey(
+                    queued.intent.tappedAtZoneId,
+                    queued.tappedAtEpochMs,
+                  ) ==
+                  dateKey)
+                queued,
+          ],
         );
       },
     );
@@ -806,6 +865,7 @@ class _HistoryViewState extends State<HistoryView> {
     required bool isToday,
     required Lap? lap,
     required int nowMs,
+    List<QueuedIntent> intents = const [],
   }) {
     final lapZone = lap?.startTimezoneOr(localTimezoneId());
 
@@ -876,11 +936,13 @@ class _HistoryViewState extends State<HistoryView> {
                 '$zoneRoute, ${records.length} records',
           ),
           const SizedBox(height: 10),
-          if (lap != null)
+          // The open-Lap block needs the phone's live ticker; the replica
+          // shows the Lap in the strip above instead.
+          if (lap != null && widget.dayRecorder != null)
             HistoryTimelineRow(
               time: lapSince!,
               block: HistoryOpenLapBlock(
-                dayRecorder: widget.dayRecorder,
+                dayRecorder: widget.dayRecorder!,
                 since: lapSince,
               ),
             ),
@@ -891,9 +953,184 @@ class _HistoryViewState extends State<HistoryView> {
               ).format(wallClockAt(record.timezoneId, record.startedAtEpochMs)),
               block: _buildRecordBlock(record),
             ),
+          for (final queued in intents)
+            HistoryTimelineRow(
+              time: DateFormat('HH:mm').format(
+                wallClockAt(
+                  queued.intent.tappedAtZoneId,
+                  queued.tappedAtEpochMs,
+                ),
+              ),
+              block: _buildIntentBlock(queued),
+            ),
         ],
       ),
     );
+  }
+
+  // ------------------------------------------------------- Pending proposals
+
+  /// A proposal at its tapped time: outlined while the phone has not answered,
+  /// outlined in the refusal colour with the reason once it has.
+  Widget _buildIntentBlock(QueuedIntent queued) {
+    final rejected = queued.isRejected;
+    final title = _intentTitle(queued.intent);
+    final accentColor = rejected
+        ? const Color(0xFFE5534B)
+        : TempoColors.inkMuted;
+
+    return Semantics(
+      container: true,
+      label: rejected
+          ? '$title was not placed. ${_rejectionText(queued.reason)}'
+          : '$title is pending, waiting for the phone',
+      child: Container(
+        key: ValueKey('intent-${queued.intentId}'),
+        padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+        decoration: BoxDecoration(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(TempoRadii.row),
+          border: Border.all(color: accentColor, width: 1.4),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              rejected ? Icons.error_outline_rounded : Icons.schedule_rounded,
+              size: 18,
+              color: rejected ? accentColor : TempoColors.textMuted,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    rejected ? 'Not placed · $title' : 'Pending · $title',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TempoText.body.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    rejected
+                        ? _rejectionText(queued.reason)
+                        : 'Waiting for the phone',
+                    style: TempoText.label.copyWith(
+                      color: TempoColors.textMuted,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (rejected)
+              TextButton(
+                style: TextButton.styleFrom(
+                  foregroundColor: TempoColors.accent,
+                  minimumSize: const Size(0, 44),
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  textStyle: TempoText.label.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                onPressed: () => _placeAtNow(queued),
+                child: const Text('Place at now'),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _intentTitle(SyncIntent intent) {
+    switch (intent.kind) {
+      case SyncIntentKind.label:
+        return _activitiesMap[intent.activityId]?.name ?? 'Label';
+      case SyncIntentKind.split:
+        return 'Split';
+      case SyncIntentKind.relabel:
+        return 'Relabel';
+      case SyncIntentKind.annotate:
+        return 'Note';
+      case SyncIntentKind.adjustEdges:
+        return 'Edge change';
+      case SyncIntentKind.clear:
+        return 'Untrack';
+      case SyncIntentKind.undo:
+        return 'Undo';
+      case SyncIntentKind.merge:
+        return 'Merge';
+      case SyncIntentKind.splitRecord:
+        return 'Split';
+    }
+  }
+
+  /// The phone's refusal in plain language.
+  String _rejectionText(String reason) {
+    switch (reason) {
+      case IntentResult.reasonLapMoved:
+        return 'The Untracked span had already moved on the phone.';
+      case IntentResult.reasonOverlap:
+        return 'That edit would overlap a labelled Record.';
+      case IntentResult.reasonUnknownActivity:
+        return 'That Activity no longer exists on the phone.';
+      case IntentResult.reasonClockSkew:
+        return 'The Mac and phone clocks differ by more than ten minutes.';
+      case IntentResult.reasonUnknownRecord:
+        return 'That Record is not on the phone.';
+      default:
+        return reason.isEmpty ? 'The phone did not place it.' : reason;
+    }
+  }
+
+  /// Proposes the same change again at the current time, against the Lap start
+  /// the replica shows now.
+  Future<void> _placeAtNow(QueuedIntent queued) async {
+    final intent = queued.intent;
+    final ok = await _applyEdit(() async {
+      switch (intent.kind) {
+        case SyncIntentKind.label:
+          await _commands.label(
+            intent.activityId ?? '',
+            comment: intent.comment,
+            tags: intent.tagIds,
+          );
+        case SyncIntentKind.split:
+          await _commands.split();
+        case SyncIntentKind.relabel:
+          await _commands.relabel(intent.recordId!, intent.activityId);
+        case SyncIntentKind.annotate:
+          await _commands.annotate(
+            intent.recordId!,
+            comment: intent.comment,
+            tagIds: intent.tagIds,
+          );
+        case SyncIntentKind.adjustEdges:
+          await _commands.adjustEdges(
+            intent.recordId!,
+            startEpochMs: intent.startEpochMs,
+            endEpochMs: intent.endEpochMs,
+          );
+        case SyncIntentKind.clear:
+          await _commands.clear(intent.recordId!);
+        case SyncIntentKind.undo:
+          await _commands.undo(recordId: intent.recordId);
+        case SyncIntentKind.merge:
+          await _commands.merge(intent.leftRecordId!, intent.rightRecordId!);
+        case SyncIntentKind.splitRecord:
+          await _commands.splitRecord(
+            intent.recordId!,
+            intent.atEpochMs ?? intent.tappedAtEpochMs,
+          );
+      }
+      return null;
+    });
+    if (ok && mounted) {
+      _showEditMessage('Queued for the phone at the current time.');
+    }
   }
 
   List<DayStripSpan> _buildSpans(
@@ -944,7 +1181,7 @@ class _HistoryViewState extends State<HistoryView> {
           hatched: false,
           semanticsLabel:
               'Untracked since $lapSince, '
-              '${UiHelpers.formatDurationHuman(widget.dayRecorder.currentElapsedMs)}',
+              '${UiHelpers.formatDurationHuman(_elapsedMs)}',
         ),
       );
     }

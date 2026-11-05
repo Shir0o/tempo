@@ -4,6 +4,8 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/time/timezone_id.dart';
+import '../models/models.dart';
+import '../models/sync_change.dart';
 
 /// The single-row table holding the open Lap. Schema v3 replaces
 /// `active_timer`; there is always exactly one row with `id = 1`.
@@ -15,6 +17,73 @@ CREATE TABLE IF NOT EXISTS lap (
     revision INTEGER NOT NULL DEFAULT 1
 );
 ''';
+
+/// The append-only change log. `seq` is the replication cursor; a client asks
+/// for every row past the one it has applied.
+const String createChangesTableSql = '''
+CREATE TABLE IF NOT EXISTS changes (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    change_id TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    at_epoch_ms INTEGER NOT NULL,
+    payload_json TEXT NOT NULL
+);
+''';
+
+/// Applied and rejected intents, keyed by `(log_epoch, intent_id)`, so a
+/// resent intent or a duplicated watch action is a no-op.
+const String createProcessedIntentsTableSql = '''
+CREATE TABLE IF NOT EXISTS processed_intents (
+    log_epoch TEXT NOT NULL,
+    intent_id TEXT NOT NULL,
+    entity_id TEXT NOT NULL DEFAULT '',
+    applied_at_epoch_ms INTEGER NOT NULL,
+    result TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (log_epoch, intent_id)
+);
+''';
+
+/// The highest watch `actionSeq` the phone has applied for each watch.
+const String createWatchWatermarksTableSql = '''
+CREATE TABLE IF NOT EXISTS watch_watermarks (
+    device_id TEXT PRIMARY KEY,
+    action_seq INTEGER NOT NULL
+);
+''';
+
+/// Paired clients. Pairing secrets live in platform secure storage, never in
+/// this table, so a snapshot never carries a credential.
+const String createSyncPeersTableSql = '''
+CREATE TABLE IF NOT EXISTS sync_peers (
+    peer_device_id TEXT PRIMARY KEY,
+    store_id TEXT NOT NULL,
+    host TEXT NOT NULL,
+    last_seen_epoch_ms INTEGER NOT NULL
+);
+''';
+
+/// Seeds the eight replication and backup settings. Existing values are kept,
+/// so a restore or bootstrap adoption can overwrite them afterwards.
+Future<void> seedSyncSettings(DatabaseExecutor db) async {
+  final defaults = <String, String>{
+    'store_id': const Uuid().v4(),
+    'device_id': const Uuid().v4(),
+    'log_epoch': const Uuid().v4(),
+    'backup_enabled': 'false',
+    'backup_destination': '',
+    'backup_generations': '5',
+    'export_redact_comments': 'false',
+    'replicate_enabled': 'false',
+  };
+  for (final entry in defaults.entries) {
+    await db.insert('settings', {
+      'key': entry.key,
+      'value': entry.value,
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
+  }
+}
 
 /// Version 2: Records remember the zone they ended in, timers remember the
 /// zone they started in, and legacy abbreviation zone ids are upgraded to
@@ -392,4 +461,78 @@ WHERE category_id IS NOT NULL
         AND categories.color_hex != ''
   );
 ''');
+}
+
+/// Version 10: the change feed. Creates the replication tables, seeds the eight
+/// settings, and backfills one change per existing row so a replica that pairs
+/// after the upgrade still converges. No existing table is altered.
+Future<void> migrateV9ToV10(DatabaseExecutor db) async {
+  await db.execute(createChangesTableSql);
+  await db.execute(createProcessedIntentsTableSql);
+  await db.execute(createWatchWatermarksTableSql);
+  await db.execute(createSyncPeersTableSql);
+  await seedSyncSettings(db);
+
+  // Changes are applied in the order categories, activities, tags, records,
+  // lap, so the backfill appends them in that same order.
+  final categoryRows = await db.query('categories');
+  for (final row in categoryRows) {
+    final category = Category.fromMap(row);
+    await _backfillChange(
+      db,
+      SyncChange.categoryUpsert(category, atEpochMs: category.updatedAtEpochMs),
+    );
+  }
+
+  final activityRows = await db.query('activities');
+  for (final row in activityRows) {
+    final activity = Activity.fromMap(row);
+    await _backfillChange(
+      db,
+      SyncChange.activityUpsert(activity, atEpochMs: activity.updatedAtEpochMs),
+    );
+  }
+
+  final tagRows = await db.query('tags');
+  for (final row in tagRows) {
+    final tag = Tag.fromMap(row);
+    await _backfillChange(
+      db,
+      SyncChange.tagUpsert(tag, atEpochMs: tag.updatedAtEpochMs),
+    );
+  }
+
+  final tagIdsByRecord = <String, List<String>>{};
+  for (final row in await db.query('record_tags')) {
+    final recordId = row['record_id'] as String;
+    (tagIdsByRecord[recordId] ??= []).add(row['tag_id'] as String);
+  }
+  final recordRows = await db.query('records');
+  for (final row in recordRows) {
+    final record = Record.fromMap(
+      row,
+      tagIds: tagIdsByRecord[row['id']] ?? const [],
+    );
+    await _backfillChange(
+      db,
+      SyncChange.recordUpsert(record, atEpochMs: record.updatedAtEpochMs),
+    );
+  }
+
+  final lapRows = await db.query('lap', where: 'id = 1', limit: 1);
+  if (lapRows.isNotEmpty) {
+    final lap = Lap.fromMap(lapRows.first);
+    await _backfillChange(
+      db,
+      SyncChange.lapSet(
+        lap,
+        atEpochMs: lap.startedAtEpochMs,
+        endTimezoneId: lap.startedTimezoneId,
+      ),
+    );
+  }
+}
+
+Future<void> _backfillChange(DatabaseExecutor db, SyncChange change) async {
+  await db.insert('changes', change.toChangeRow());
 }

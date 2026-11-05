@@ -4,11 +4,24 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../models/models.dart';
+import '../models/sync_change.dart';
 import 'migrations.dart';
 
 const bool _kIsWeb =
     bool.fromEnvironment('dart.library.js_util') ||
     bool.fromEnvironment('dart.library.js_interop');
+
+/// The eight settings seeded at schema v10.
+class SyncSettingKeys {
+  static const String storeId = 'store_id';
+  static const String deviceId = 'device_id';
+  static const String logEpoch = 'log_epoch';
+  static const String backupEnabled = 'backup_enabled';
+  static const String backupDestination = 'backup_destination';
+  static const String backupGenerations = 'backup_generations';
+  static const String exportRedactComments = 'export_redact_comments';
+  static const String replicateEnabled = 'replicate_enabled';
+}
 
 class TempoDatabase {
   final Database _db;
@@ -17,7 +30,7 @@ class TempoDatabase {
 
   Database get db => _db;
 
-  static const int databaseVersion = 9;
+  static const int databaseVersion = 10;
   static const String databaseFileName = 'tempo.db';
 
   // --- DDL Constants (schema v6) ---
@@ -115,9 +128,14 @@ CREATE TABLE IF NOT EXISTS settings (
     await db.execute(createLapTableSql);
     await db.execute(createTombstonesTable);
     await db.execute(createSettingsTable);
+    await db.execute(createChangesTableSql);
+    await db.execute(createProcessedIntentsTableSql);
+    await db.execute(createWatchWatermarksTableSql);
+    await db.execute(createSyncPeersTableSql);
     for (final indexSql in createIndexes) {
       await db.execute(indexSql);
     }
+    await seedSyncSettings(db);
   }
 
   static DatabaseFactory _resolveDatabaseFactory(DatabaseFactory? factory) {
@@ -175,6 +193,9 @@ CREATE TABLE IF NOT EXISTS settings (
           if (oldVersion < 9) {
             await migrateV8ToV9(db);
           }
+          if (oldVersion < 10) {
+            await migrateV9ToV10(db);
+          }
         },
       ),
     );
@@ -210,11 +231,20 @@ CREATE TABLE IF NOT EXISTS settings (
 
   Future<void> insertActivity(Activity activity) async {
     final normalized = await _withCategoryColor(activity);
-    await _db.insert(
-      'activities',
-      normalized.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.abort,
-    );
+    await _db.transaction((txn) async {
+      await txn.insert(
+        'activities',
+        normalized.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.abort,
+      );
+      await appendChange(
+        SyncChange.activityUpsert(
+          normalized,
+          atEpochMs: normalized.updatedAtEpochMs,
+        ),
+        executor: txn,
+      );
+    });
   }
 
   /// Creates and inserts an activity, looking up and inheriting the parent
@@ -259,12 +289,21 @@ CREATE TABLE IF NOT EXISTS settings (
 
   Future<void> updateActivity(Activity activity) async {
     final normalized = await _withCategoryColor(activity);
-    await _db.update(
-      'activities',
-      normalized.toMap(),
-      where: 'id = ?',
-      whereArgs: [normalized.id],
-    );
+    await _db.transaction((txn) async {
+      await txn.update(
+        'activities',
+        normalized.toMap(),
+        where: 'id = ?',
+        whereArgs: [normalized.id],
+      );
+      await appendChange(
+        SyncChange.activityUpsert(
+          normalized,
+          atEpochMs: normalized.updatedAtEpochMs,
+        ),
+        executor: txn,
+      );
+    });
   }
 
   /// An Activity in a Category always wears the Category's colour, so one
@@ -300,41 +339,77 @@ CREATE TABLE IF NOT EXISTS settings (
     return results.map(Activity.fromMap).toList();
   }
 
+  /// The one path every catalog delete takes: the row, its tombstone, and its
+  /// removal change commit together, so the rows and the change log can never
+  /// disagree. Cascaded tombstones and changes are written in the same
+  /// transaction, before the entity's own removal.
+  Future<void> _deleteWithTombstone(
+    DatabaseExecutor txn, {
+    required String table,
+    required String entityId,
+    required String entityType,
+    required int deletedAtEpochMs,
+    required SyncChange change,
+    List<Tombstone> cascadedTombstones = const [],
+    List<SyncChange> cascadedChanges = const [],
+  }) async {
+    await txn.delete(table, where: 'id = ?', whereArgs: [entityId]);
+    await txn.insert(
+      'tombstones',
+      Tombstone(
+        entityId: entityId,
+        entityType: entityType,
+        deletedAtEpochMs: deletedAtEpochMs,
+      ).toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    for (final tombstone in cascadedTombstones) {
+      await txn.insert(
+        'tombstones',
+        tombstone.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    for (final cascaded in cascadedChanges) {
+      await appendChange(cascaded, executor: txn);
+    }
+    await appendChange(change, executor: txn);
+  }
+
   Future<void> deleteActivity(String id, {int? deletedAtEpochMs}) async {
     final deletedAt =
         deletedAtEpochMs ?? DateTime.now().toUtc().millisecondsSinceEpoch;
     await _db.transaction((txn) async {
+      // The activity's Records go with it, so each one needs its own
+      // `record_remove` or a replica would keep them forever.
       final recordRows = await txn.query(
         'records',
         columns: ['id'],
         where: 'activity_id = ?',
         whereArgs: [id],
       );
+      final recordIds = [for (final row in recordRows) row['id'] as String];
 
-      await txn.delete('activities', where: 'id = ?', whereArgs: [id]);
-
-      await txn.insert(
-        'tombstones',
-        Tombstone(
-          entityId: id,
-          entityType: 'activity',
-          deletedAtEpochMs: deletedAt,
-        ).toMap(),
-        conflictAlgorithm: ConflictAlgorithm.replace,
+      await _deleteWithTombstone(
+        txn,
+        table: 'activities',
+        entityId: id,
+        entityType: 'activity',
+        deletedAtEpochMs: deletedAt,
+        change: SyncChange.activityRemove(id, atEpochMs: deletedAt),
+        cascadedTombstones: [
+          for (final recordId in recordIds)
+            Tombstone(
+              entityId: recordId,
+              entityType: 'record',
+              deletedAtEpochMs: deletedAt,
+            ),
+        ],
+        cascadedChanges: [
+          for (final recordId in recordIds)
+            SyncChange.recordRemove(recordId, atEpochMs: deletedAt),
+        ],
       );
-
-      for (final row in recordRows) {
-        final recordId = row['id'] as String;
-        await txn.insert(
-          'tombstones',
-          Tombstone(
-            entityId: recordId,
-            entityType: 'record',
-            deletedAtEpochMs: deletedAt,
-          ).toMap(),
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
-      }
     });
   }
 
@@ -362,8 +437,23 @@ CREATE TABLE IF NOT EXISTS settings (
       );
       if (updated == 0) {
         await txn.insert('categories', category.toMap());
+        await appendChange(
+          SyncChange.categoryUpsert(
+            category,
+            atEpochMs: category.updatedAtEpochMs,
+          ),
+          executor: txn,
+        );
         return;
       }
+
+      await appendChange(
+        SyncChange.categoryUpsert(
+          category,
+          atEpochMs: category.updatedAtEpochMs,
+        ),
+        executor: txn,
+      );
 
       final previousColor = before.isEmpty
           ? null
@@ -372,7 +462,8 @@ CREATE TABLE IF NOT EXISTS settings (
         return;
       }
 
-      // Keep the category's activities in step with its colour.
+      // Keep the category's activities in step with its colour. Each one is
+      // its own `activity_upsert`, because a replica applies the whole row.
       await txn.update(
         'activities',
         {
@@ -382,6 +473,20 @@ CREATE TABLE IF NOT EXISTS settings (
         where: 'category_id = ?',
         whereArgs: [category.id],
       );
+      final recolored = await txn.query(
+        'activities',
+        where: 'category_id = ?',
+        whereArgs: [category.id],
+      );
+      for (final row in recolored) {
+        await appendChange(
+          SyncChange.activityUpsert(
+            Activity.fromMap(row),
+            atEpochMs: category.updatedAtEpochMs,
+          ),
+          executor: txn,
+        );
+      }
     });
   }
 
@@ -408,15 +513,13 @@ CREATE TABLE IF NOT EXISTS settings (
     final deletedAt =
         deletedAtEpochMs ?? DateTime.now().toUtc().millisecondsSinceEpoch;
     await _db.transaction((txn) async {
-      await txn.delete('categories', where: 'id = ?', whereArgs: [id]);
-      await txn.insert(
-        'tombstones',
-        Tombstone(
-          entityId: id,
-          entityType: 'category',
-          deletedAtEpochMs: deletedAt,
-        ).toMap(),
-        conflictAlgorithm: ConflictAlgorithm.replace,
+      await _deleteWithTombstone(
+        txn,
+        table: 'categories',
+        entityId: id,
+        entityType: 'category',
+        deletedAtEpochMs: deletedAt,
+        change: SyncChange.categoryRemove(id, atEpochMs: deletedAt),
       );
     });
   }
@@ -445,19 +548,186 @@ CREATE TABLE IF NOT EXISTS settings (
   }
 
   // ==========================================
+  // Sync change feed
+  // ==========================================
+
+  /// Appends one Change to the log and returns its `seq`. Pass the mutation's
+  /// own [executor] (a [Transaction]) so the row and the change commit together.
+  Future<int> appendChange(
+    SyncChange change, {
+    DatabaseExecutor? executor,
+  }) async {
+    final target = executor ?? _db;
+    return target.insert('changes', change.toChangeRow());
+  }
+
+  /// The Changes past [seq], oldest first, at most [limit] of them.
+  Future<List<SyncChange>> changesAfter(int seq, [int limit = 500]) async {
+    final rows = await _db.query(
+      'changes',
+      where: 'seq > ?',
+      whereArgs: [seq],
+      orderBy: 'seq ASC',
+      limit: limit,
+    );
+    return rows.map(SyncChange.fromRow).toList();
+  }
+
+  /// The highest `seq` in the log, or 0 when it is empty.
+  Future<int> highestChangeSeq() async {
+    final rows = await _db.rawQuery('SELECT MAX(seq) AS seq FROM changes');
+    return (rows.first['seq'] as int?) ?? 0;
+  }
+
+  /// Records the outcome of an intent. The primary key is
+  /// `(log_epoch, intent_id)`, so recording the same intent twice keeps one row.
+  Future<void> markProcessedIntent(
+    ProcessedIntent entry, {
+    DatabaseExecutor? executor,
+  }) async {
+    final target = executor ?? _db;
+    await target.insert(
+      'processed_intents',
+      entry.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<ProcessedIntent?> lookupProcessedIntent(
+    String logEpoch,
+    String intentId,
+  ) async {
+    final rows = await _db.query(
+      'processed_intents',
+      where: 'log_epoch = ? AND intent_id = ?',
+      whereArgs: [logEpoch, intentId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return ProcessedIntent.fromMap(rows.first);
+  }
+
+  /// The highest watch `actionSeq` applied for [deviceId], or 0.
+  Future<int> getWatchWatermark(String deviceId) async {
+    final rows = await _db.query(
+      'watch_watermarks',
+      columns: ['action_seq'],
+      where: 'device_id = ?',
+      whereArgs: [deviceId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return 0;
+    return rows.first['action_seq'] as int? ?? 0;
+  }
+
+  Future<void> setWatchWatermark(String deviceId, int actionSeq) async {
+    await _db.insert('watch_watermarks', {
+      'device_id': deviceId,
+      'action_seq': actionSeq,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> upsertPeer(SyncPeer peer) async {
+    await _db.insert(
+      'sync_peers',
+      peer.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<SyncPeer?> getPeer(String peerDeviceId) async {
+    final rows = await _db.query(
+      'sync_peers',
+      where: 'peer_device_id = ?',
+      whereArgs: [peerDeviceId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return SyncPeer.fromMap(rows.first);
+  }
+
+  Future<List<SyncPeer>> getPeers() async {
+    final rows = await _db.query(
+      'sync_peers',
+      orderBy: 'last_seen_epoch_ms DESC',
+    );
+    return rows.map(SyncPeer.fromMap).toList();
+  }
+
+  Future<void> deletePeer(String peerDeviceId) async {
+    await _db.delete(
+      'sync_peers',
+      where: 'peer_device_id = ?',
+      whereArgs: [peerDeviceId],
+    );
+  }
+
+  /// Every settings row, as stored.
+  Future<Map<String, String>> getAllSettings() async {
+    final rows = await _db.query('settings');
+    return {
+      for (final row in rows) row['key'] as String: row['value'] as String,
+    };
+  }
+
+  /// The eight settings seeded at schema v10.
+  Future<SyncSettings> getSyncSettings() async {
+    final rows = await _db.query('settings');
+    final values = <String, String>{
+      for (final row in rows) row['key'] as String: row['value'] as String,
+    };
+    return SyncSettings.fromSettingsMap(values);
+  }
+
+  Future<void> setSyncSettings(
+    SyncSettings settings, {
+    DatabaseExecutor? executor,
+  }) async {
+    final target = executor ?? _db;
+    for (final entry in settings.toSettingsMap().entries) {
+      await target.insert('settings', {
+        'key': entry.key,
+        'value': entry.value,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+  }
+
+  /// The current `log_epoch`. A client that sees an unfamiliar value replays
+  /// from `seq = 0`.
+  Future<String> getLogEpoch() async =>
+      await getSetting(SyncSettingKeys.logEpoch) ?? '';
+
+  // ==========================================
   // Tags CRUD
   // ==========================================
 
   Future<void> insertTag(Tag tag) async {
-    await _db.insert(
-      'tags',
-      tag.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.abort,
-    );
+    await _db.transaction((txn) async {
+      await txn.insert(
+        'tags',
+        tag.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.abort,
+      );
+      await appendChange(
+        SyncChange.tagUpsert(tag, atEpochMs: tag.updatedAtEpochMs),
+        executor: txn,
+      );
+    });
   }
 
   Future<void> updateTag(Tag tag) async {
-    await _db.update('tags', tag.toMap(), where: 'id = ?', whereArgs: [tag.id]);
+    await _db.transaction((txn) async {
+      await txn.update(
+        'tags',
+        tag.toMap(),
+        where: 'id = ?',
+        whereArgs: [tag.id],
+      );
+      await appendChange(
+        SyncChange.tagUpsert(tag, atEpochMs: tag.updatedAtEpochMs),
+        executor: txn,
+      );
+    });
   }
 
   Future<Tag?> getTagById(String id) async {
@@ -491,15 +761,13 @@ CREATE TABLE IF NOT EXISTS settings (
     final deletedAt =
         deletedAtEpochMs ?? DateTime.now().toUtc().millisecondsSinceEpoch;
     await _db.transaction((txn) async {
-      await txn.delete('tags', where: 'id = ?', whereArgs: [id]);
-      await txn.insert(
-        'tombstones',
-        Tombstone(
-          entityId: id,
-          entityType: 'tag',
-          deletedAtEpochMs: deletedAt,
-        ).toMap(),
-        conflictAlgorithm: ConflictAlgorithm.replace,
+      await _deleteWithTombstone(
+        txn,
+        table: 'tags',
+        entityId: id,
+        entityType: 'tag',
+        deletedAtEpochMs: deletedAt,
+        change: SyncChange.tagRemove(id, atEpochMs: deletedAt),
       );
     });
   }

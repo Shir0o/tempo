@@ -88,6 +88,27 @@ void main() {
           .setMockMethodCallHandler(channel, null);
     });
 
+    /// Delivers one watch action the way MainActivity does, and waits for the
+    /// phone to finish applying it.
+    Future<void> receiveWatchAction(Map<String, dynamic> arguments) async {
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+            WearableSyncService.channelName,
+            const StandardMethodCodec().encodeMethodCall(
+              MethodCall('onWatchActionReceived', arguments),
+            ),
+            (ByteData? reply) {},
+          );
+      await pumpEventQueue();
+    }
+
+    Future<List<Map<String, Object?>>> watermarks(String deviceId) =>
+        db.db.query(
+          'watch_watermarks',
+          where: 'device_id = ?',
+          whereArgs: [deviceId],
+        );
+
     test('initialize performs initial sync with the open Lap', () async {
       syncService.initialize();
 
@@ -97,7 +118,9 @@ void main() {
       expect(args['lapStartedAtEpochMs'], mockTime);
       expect(args['lapStartedTimezoneId'], 'America/Los_Angeles');
       expect(args['revision'], dayRecorder.lap!.revision);
-      expect(args.keys, hasLength(4));
+      expect(args['appliedActionSeq'], 0);
+      expect(args['rejectedActionIds'], isEmpty);
+      expect(args.keys, hasLength(6));
     });
 
     test('labeling dispatches a fresh Lap snapshot to the watch', () async {
@@ -115,7 +138,7 @@ void main() {
       final args = lastCall.arguments as Map;
       expect(args['lapStartedAtEpochMs'], mockTime);
       expect(args['lapStartedTimezoneId'], 'America/Los_Angeles');
-      expect(args.keys, hasLength(4));
+      expect(args.keys, hasLength(6));
     });
 
     test(
@@ -239,6 +262,8 @@ void main() {
       syncService.initialize();
       await dayRecorder.label('act-coding');
       mockTime += 30000;
+      // The tap reached the phone ten seconds after it happened.
+      const tappedAt = 1700000020000;
 
       final messenger =
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -249,7 +274,7 @@ void main() {
         codec.encodeMethodCall(
           const MethodCall('onWatchActionReceived', {
             'action': 'SPLIT',
-            'timestampEpochMs': 1700000020000,
+            'timestampEpochMs': tappedAt,
             'actionId': 'evt-126',
           }),
         ),
@@ -259,7 +284,153 @@ void main() {
       final records = await db.getRecords();
       expect(records.length, equals(2));
       expect(records.first.activityId, isNull);
-      expect(dayRecorder.lap!.startedAtEpochMs, equals(mockTime));
+      expect(records.first.endedAtEpochMs, equals(tappedAt));
+      expect(dayRecorder.lap!.startedAtEpochMs, equals(tappedAt));
+    });
+
+    test(
+      'a delayed action is written at the instant and zone it was tapped',
+      () async {
+        syncService.initialize();
+        await pumpEventQueue();
+        final lapStart = mockTime;
+
+        // The phone hears about the tap thirty minutes after it happened.
+        mockTime += const Duration(minutes: 30).inMilliseconds;
+        final tappedAt = mockTime - const Duration(minutes: 10).inMilliseconds;
+
+        await receiveWatchAction({
+          'action': 'LABEL',
+          'activityId': 'act-workout',
+          'timestampEpochMs': tappedAt,
+          'zoneId': 'Europe/Berlin',
+          'actionId': 'evt-delayed',
+          'actionSeq': 1,
+          'deviceId': 'watch-1',
+        });
+
+        final record = (await db.getRecords()).single;
+        expect(record.startedAtEpochMs, lapStart);
+        expect(record.endedAtEpochMs, tappedAt);
+        expect(record.timezoneId, 'America/Los_Angeles');
+        expect(record.endTimezoneId, 'Europe/Berlin');
+        expect(dayRecorder.lap!.startedAtEpochMs, tappedAt);
+      },
+    );
+
+    test(
+      'an action older than the open Lap is rejected with lap-moved',
+      () async {
+        syncService.initialize();
+        await pumpEventQueue();
+        final lapStart = mockTime;
+
+        mockTime += const Duration(minutes: 1).inMilliseconds;
+        methodCalls.clear();
+
+        await receiveWatchAction({
+          'action': 'LABEL',
+          'activityId': 'act-workout',
+          'timestampEpochMs':
+              lapStart - const Duration(minutes: 1).inMilliseconds,
+          'zoneId': 'America/Los_Angeles',
+          'actionId': 'evt-stale',
+          'actionSeq': 2,
+          'deviceId': 'watch-1',
+        });
+
+        expect(await db.getRecords(), isEmpty);
+        expect(dayRecorder.lap!.startedAtEpochMs, lapStart);
+        final ack =
+            methodCalls.lastWhere((call) => call.method == 'syncLap').arguments
+                as Map;
+        expect(ack['rejectedActionIds'], ['evt-stale']);
+        expect(ack['appliedActionSeq'], 0);
+        expect(await watermarks('watch-1'), isEmpty);
+      },
+    );
+
+    test('an applied action is acknowledged with appliedActionSeq', () async {
+      syncService.initialize();
+      await pumpEventQueue();
+      mockTime += const Duration(minutes: 1).inMilliseconds;
+      methodCalls.clear();
+
+      await receiveWatchAction({
+        'action': 'LABEL',
+        'activityId': 'act-coding',
+        'timestampEpochMs': mockTime,
+        'zoneId': 'America/Los_Angeles',
+        'actionId': 'evt-applied',
+        'actionSeq': 3,
+        'deviceId': 'watch-1',
+      });
+
+      expect(await db.getRecords(), hasLength(1));
+      final acks = methodCalls
+          .where((call) => call.method == 'syncLap')
+          .map((call) => (call.arguments as Map)['appliedActionSeq']);
+      expect(acks, contains(3));
+      expect(await watermarks('watch-1'), [
+        {'device_id': 'watch-1', 'action_seq': 3},
+      ]);
+    });
+
+    test('the same action over both channels is applied once', () async {
+      syncService.initialize();
+      await pumpEventQueue();
+      mockTime += const Duration(minutes: 1).inMilliseconds;
+
+      final action = <String, dynamic>{
+        'action': 'LABEL',
+        'activityId': 'act-coding',
+        'timestampEpochMs': mockTime,
+        'zoneId': 'America/Los_Angeles',
+        'actionId': 'evt-dupe',
+        'actionSeq': 4,
+        'deviceId': 'watch-1',
+      };
+      await receiveWatchAction(action);
+      await receiveWatchAction(action);
+
+      expect(await db.getRecords(), hasLength(1));
+    });
+
+    test('the watermark survives a service restart', () async {
+      syncService.initialize();
+      await pumpEventQueue();
+      mockTime += const Duration(minutes: 1).inMilliseconds;
+
+      final action = <String, dynamic>{
+        'action': 'LABEL',
+        'activityId': 'act-coding',
+        'timestampEpochMs': mockTime,
+        'zoneId': 'America/Los_Angeles',
+        'actionId': 'evt-restart',
+        'actionSeq': 7,
+        'deviceId': 'watch-1',
+      };
+      await receiveWatchAction(action);
+      expect(await db.getRecords(), hasLength(1));
+
+      syncService.dispose();
+      syncService = WearableSyncService(
+        dayRecorder: dayRecorder,
+        database: db,
+        channel: channel,
+        nowUtcMs: () => mockTime,
+      );
+      syncService.initialize();
+      await pumpEventQueue();
+
+      // The watch re-sends what is still pending once the phone comes back.
+      await receiveWatchAction(action);
+
+      expect(await db.getRecords(), hasLength(1));
+      final acks = methodCalls
+          .where((call) => call.method == 'syncLap')
+          .map((call) => (call.arguments as Map)['appliedActionSeq']);
+      expect(acks, contains(7));
     });
 
     test('channel errors during sync do not crash the service', () async {

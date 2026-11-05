@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:tempo/core/state/day_recorder.dart';
+import 'package:tempo/core/state/record_commands.dart';
 import 'package:tempo/data/database/tempo_database.dart';
 import 'package:tempo/data/models/activity.dart';
 import 'package:tempo/ui/tempo_app.dart';
@@ -33,7 +34,13 @@ void main() {
     final dayRecorder = DayRecorder(database: db, autoSplitAtMidnight: false);
     await dayRecorder.initialize();
 
-    await tester.pumpWidget(TempoApp(dayRecorder: dayRecorder, database: db));
+    await tester.pumpWidget(
+      TempoApp(
+        dayRecorder: dayRecorder,
+        database: db,
+        commands: PhoneRecordCommands(dayRecorder: dayRecorder),
+      ),
+    );
 
     // Initial frame + data load
     await tester.pump();

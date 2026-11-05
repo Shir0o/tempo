@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 
+import '../../core/backup/backup_service.dart';
 import '../../core/export/csv_export_engine.dart';
 import '../../core/state/day_recorder.dart';
+import '../../core/state/record_commands.dart';
 import '../../core/state/today_order.dart';
 import '../../core/sync/google_drive_sync_service.dart';
+import '../../core/sync/intent_queue.dart';
+import '../../core/sync/peer_pairing.dart';
+import '../../core/sync/sync_client.dart';
+import '../../core/sync/sync_listener.dart';
 import '../../data/database/tempo_database.dart';
 import 'dashboard_view.dart';
 import 'history_view.dart';
@@ -13,16 +19,44 @@ import 'theme/tempo_theme.dart';
 
 /// Root Application Widget for Tempo across Android mobile and desktop surfaces.
 class TempoApp extends StatefulWidget {
-  final DayRecorder dayRecorder;
+  /// The phone's always-running Lap. Null on the Mac, which reads the Lap from
+  /// the replica instead and never opens one of its own.
+  final DayRecorder? dayRecorder;
+
   final TempoDatabase database;
+
+  /// The one seam every write path uses: [PhoneRecordCommands] on the phone,
+  /// [RemoteRecordCommands] on the Mac's replica.
+  final RecordCommands commands;
+
+  /// The Mac's queue of proposed mutations, so the Day can show pending and
+  /// rejected proposals in place. Derived from [commands] when omitted.
+  final IntentQueue? intentQueue;
+
+  /// The Mac's replication client and pairing, for the Sync section of
+  /// Settings. Null on the phone.
+  final SyncClient? syncClient;
+  final PeerPairing? pairing;
+
+  /// The phone's replication listener, which serves the Mac and creates the
+  /// pairing code. Null on the Mac.
+  final SyncListener? syncListener;
+
   final GoogleDriveSyncService? syncService;
+  final BackupService? backupService;
   final CsvExportEngine? exportEngine;
 
   const TempoApp({
     super.key,
-    required this.dayRecorder,
+    this.dayRecorder,
     required this.database,
+    required this.commands,
+    this.intentQueue,
+    this.syncClient,
+    this.pairing,
+    this.syncListener,
     this.syncService,
+    this.backupService,
     this.exportEngine,
   });
 
@@ -67,7 +101,7 @@ class _TempoAppState extends State<TempoApp> with WidgetsBindingObserver {
     // Timers do not run while the app is suspended, so catch up on every
     // midnight that passed in the background.
     if (state == AppLifecycleState.resumed) {
-      widget.dayRecorder.applyMidnightSplits();
+      widget.dayRecorder?.applyMidnightSplits();
     }
   }
 
@@ -82,22 +116,36 @@ class _TempoAppState extends State<TempoApp> with WidgetsBindingObserver {
   }
 
   Widget _buildHomeShell() {
+    final commands = widget.commands;
+    final intentQueue =
+        widget.intentQueue ??
+        (commands is RemoteRecordCommands ? commands.queue : null);
     final screens = [
       DashboardView(
         dayRecorder: widget.dayRecorder,
         database: widget.database,
+        commands: widget.commands,
         todayOrder: _todayOrder,
         catalogRevision: _catalogRevision,
         onNavigateToStats: () => setState(() => _currentTabIndex = 2),
         onOpenHistory: () => setState(() => _currentTabIndex = 1),
       ),
-      HistoryView(database: widget.database, dayRecorder: widget.dayRecorder),
+      HistoryView(
+        database: widget.database,
+        dayRecorder: widget.dayRecorder,
+        commands: widget.commands,
+        intentQueue: intentQueue,
+      ),
       StatsView(database: widget.database),
       SettingsView(
         database: widget.database,
         dayRecorder: widget.dayRecorder,
         syncService: widget.syncService,
+        backupService: widget.backupService,
         exportEngine: widget.exportEngine,
+        syncClient: widget.syncClient,
+        syncListener: widget.syncListener,
+        pairing: widget.pairing,
         todayOrder: _todayOrder,
         catalogRevision: _catalogRevision,
       ),

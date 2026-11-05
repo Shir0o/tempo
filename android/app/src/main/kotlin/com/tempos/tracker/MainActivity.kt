@@ -9,6 +9,7 @@ import android.util.Log
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
+import com.google.android.gms.wearable.DataMap
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.MessageClient
 import com.google.android.gms.wearable.MessageEvent
@@ -102,6 +103,9 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
                 else -> result.notImplemented()
             }
         }
+
+        flutterEngine.plugins.add(BackupDestinationChannel())
+        flutterEngine.plugins.add(PairingSecretChannel())
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -171,6 +175,9 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
         val timezoneId = args["lapStartedTimezoneId"] as? String ?: ""
         val revision = (args["revision"] as? Number)?.toLong() ?: 0L
         val updatedAt = (args["updatedAtEpochMs"] as? Number)?.toLong() ?: System.currentTimeMillis()
+        // The highest watch action the phone applied, and the ones it refused.
+        val appliedActionSeq = (args["appliedActionSeq"] as? Number)?.toLong() ?: 0L
+        val rejectedActionIds = (args["rejectedActionIds"] as? List<*>)?.filterIsInstance<String>() ?: emptyList()
 
         // Update Quick Settings Tile
         try {
@@ -186,6 +193,8 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
                     dataMap.putString("lapStartedTimezoneId", timezoneId)
                     dataMap.putLong("revision", revision)
                     dataMap.putLong("updatedAtEpochMs", updatedAt)
+                    dataMap.putLong("appliedActionSeq", appliedActionSeq)
+                    dataMap.putStringArrayList("rejectedActionIds", ArrayList(rejectedActionIds))
                 }.asPutDataRequest().setUrgent()
 
                 Wearable.getDataClient(this@MainActivity).putDataItem(putRequest).await()
@@ -249,12 +258,19 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
                 if (path.startsWith(PATH_ACTIONS_PREFIX)) {
                     val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
                     val action = dataMap.getString("action") ?: continue
-                    val activityId: String? = if (dataMap.containsKey("activityId")) dataMap.getString("activityId") else null
-                    val timestamp = dataMap.getLong("timestampEpochMs", System.currentTimeMillis())
-                    val actionId: String? = if (dataMap.containsKey("actionId")) dataMap.getString("actionId") else null
-                    val comment: String? = if (dataMap.containsKey("comment")) dataMap.getString("comment") else null
-
-                    forwardActionToFlutter(action, activityId, timestamp, actionId, comment)
+                    forwardActionToFlutter(
+                        mapOf(
+                            "action" to action,
+                            "activityId" to optionalString(dataMap, "activityId"),
+                            "timestampEpochMs" to dataMap.getLong("timestampEpochMs", System.currentTimeMillis()),
+                            "zoneId" to optionalString(dataMap, "zoneId"),
+                            "actionId" to optionalString(dataMap, "actionId"),
+                            "actionSeq" to dataMap.getLong("actionSeq", 0L),
+                            "deviceId" to optionalString(dataMap, "deviceId"),
+                            "undoesActionId" to optionalString(dataMap, "undoesActionId"),
+                            "comment" to optionalString(dataMap, "comment")
+                        )
+                    )
                 }
             }
         }
@@ -264,35 +280,31 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
         if (messageEvent.path == PATH_ACTION_RPC) {
             try {
                 val json = JSONObject(String(messageEvent.data, Charsets.UTF_8))
-                val action = json.getString("action")
-                val activityId = json.optString("activityId").ifEmpty { null }
-                val timestamp = json.optLong("timestampEpochMs", System.currentTimeMillis())
-                val actionId = json.optString("actionId").ifEmpty { null }
-                val comment = json.optString("comment").ifEmpty { null }
-
-                forwardActionToFlutter(action, activityId, timestamp, actionId, comment)
+                forwardActionToFlutter(
+                    mapOf(
+                        "action" to json.getString("action"),
+                        "activityId" to json.optString("activityId").ifEmpty { null },
+                        "timestampEpochMs" to json.optLong("timestampEpochMs", System.currentTimeMillis()),
+                        "zoneId" to json.optString("zoneId").ifEmpty { null },
+                        "actionId" to json.optString("actionId").ifEmpty { null },
+                        "actionSeq" to json.optLong("actionSeq", 0L),
+                        "deviceId" to json.optString("deviceId").ifEmpty { null },
+                        "undoesActionId" to json.optString("undoesActionId").ifEmpty { null },
+                        "comment" to json.optString("comment").ifEmpty { null }
+                    )
+                )
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to parse RPC message action", e)
             }
         }
     }
 
-    private fun forwardActionToFlutter(
-        action: String,
-        activityId: String?,
-        timestamp: Long,
-        actionId: String?,
-        comment: String?
-    ) {
+    private fun optionalString(dataMap: DataMap, key: String): String? =
+        if (dataMap.containsKey(key)) dataMap.getString(key) else null
+
+    private fun forwardActionToFlutter(payload: Map<String, Any?>) {
         runOnUiThread {
-            val payload = mapOf(
-                "action" to action,
-                "activityId" to activityId,
-                "timestampEpochMs" to timestamp,
-                "actionId" to actionId,
-                "comment" to comment
-            )
-            Log.d(TAG, "Forwarding watch action to Flutter: $action")
+            Log.d(TAG, "Forwarding watch action to Flutter: ${payload["action"]}")
             methodChannel?.invokeMethod("onWatchActionReceived", payload)
         }
     }

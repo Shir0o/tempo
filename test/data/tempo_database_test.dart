@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:tempo/data/database/tempo_database.dart';
 import 'package:tempo/data/models/models.dart';
+import 'package:tempo/data/models/sync_change.dart';
 
 void main() {
   setUpAll(() {
@@ -186,6 +187,155 @@ void main() {
         expect(fromDb!.colorHex, equals('#00BCD4'));
       },
     );
+  });
+
+  group('Catalog change feed', () {
+    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+
+    Activity activity(String id, {String? categoryId}) => Activity(
+      id: id,
+      name: 'Activity $id',
+      categoryId: categoryId,
+      createdAtEpochMs: now,
+      updatedAtEpochMs: now,
+    );
+
+    Record record(String id, String activityId) => Record(
+      id: id,
+      activityId: activityId,
+      startedAtEpochMs: now - 3600000,
+      endedAtEpochMs: now,
+      timezoneId: 'UTC',
+      createdAtEpochMs: now,
+      updatedAtEpochMs: now,
+    );
+
+    test('inserting and updating an activity emits activity_upsert', () async {
+      await db.insertActivity(activity('act-feed'));
+      final inserted = await db.changesAfter(0);
+      final upsert = inserted.singleWhere(
+        (change) => change.kind == SyncChangeKind.activityUpsert,
+      );
+      expect(upsert.entityId, 'act-feed');
+      expect(upsert.atEpochMs, now);
+      expect(upsert.activity!.name, 'Activity act-feed');
+
+      final before = await db.highestChangeSeq();
+      final renamed = activity('act-feed')
+          .copyWith(name: 'Renamed', updatedAtEpochMs: now + 1);
+      await db.updateActivity(renamed);
+
+      final updated = await db.changesAfter(before);
+      expect(updated, hasLength(1));
+      expect(updated.single.kind, SyncChangeKind.activityUpsert);
+      expect(updated.single.activity!.name, 'Renamed');
+    });
+
+    test('deleting an activity emits activity_remove and a record_remove per '
+        'cascaded Record', () async {
+      await db.insertActivity(activity('act-del'));
+      await db.insertRecord(record('rec-a', 'act-del'));
+      await db.insertRecord(record('rec-b', 'act-del'));
+      final before = await db.highestChangeSeq();
+      final deletedAt = now + 500;
+
+      await db.deleteActivity('act-del', deletedAtEpochMs: deletedAt);
+
+      final changes = await db.changesAfter(before);
+      final activityRemoval = changes.singleWhere(
+        (change) => change.kind == SyncChangeKind.activityRemove,
+      );
+      expect(activityRemoval.entityId, 'act-del');
+      expect(activityRemoval.atEpochMs, deletedAt);
+      expect(activityRemoval.payload['id'], 'act-del');
+
+      expect(
+        changes
+            .where((change) => change.kind == SyncChangeKind.recordRemove)
+            .map((change) => change.entityId)
+            .toSet(),
+        {'rec-a', 'rec-b'},
+      );
+      expect(await db.getRecordById('rec-a'), isNull);
+      expect(await db.getRecordById('rec-b'), isNull);
+    });
+
+    test('deleting a category emits category_remove', () async {
+      await db.upsertCategory(
+        Category(
+          id: 'cat-del',
+          name: 'Doomed',
+          createdAtEpochMs: now,
+          updatedAtEpochMs: now,
+        ),
+      );
+      final before = await db.highestChangeSeq();
+
+      await db.deleteCategory('cat-del', deletedAtEpochMs: now + 900);
+
+      final changes = await db.changesAfter(before);
+      expect(changes, hasLength(1));
+      expect(changes.single.kind, SyncChangeKind.categoryRemove);
+      expect(changes.single.entityId, 'cat-del');
+      expect(changes.single.atEpochMs, now + 900);
+      expect(await db.getCategoryById('cat-del'), isNull);
+    });
+
+    test('deleting a tag emits tag_remove', () async {
+      await db.insertTag(
+        Tag(
+          id: 'tag-del',
+          name: 'Doomed tag',
+          createdAtEpochMs: now,
+          updatedAtEpochMs: now,
+        ),
+      );
+      final before = await db.highestChangeSeq();
+
+      await db.deleteTag('tag-del', deletedAtEpochMs: now + 700);
+
+      final changes = await db.changesAfter(before);
+      expect(changes, hasLength(1));
+      expect(changes.single.kind, SyncChangeKind.tagRemove);
+      expect(changes.single.entityId, 'tag-del');
+      expect(changes.single.atEpochMs, now + 700);
+      expect(await db.getTagById('tag-del'), isNull);
+    });
+
+    test('a category colour change emits an activity_upsert for each of its '
+        'activities', () async {
+      final category = Category(
+        id: 'cat-color',
+        name: 'Colour',
+        colorHex: '#111111',
+        createdAtEpochMs: now,
+        updatedAtEpochMs: now,
+      );
+      await db.upsertCategory(category);
+      await db.insertActivity(activity('act-one', categoryId: category.id));
+      await db.insertActivity(activity('act-two', categoryId: category.id));
+      final before = await db.highestChangeSeq();
+
+      await db.upsertCategory(
+        category.copyWith(colorHex: '#222222', updatedAtEpochMs: now + 1),
+      );
+
+      final changes = await db.changesAfter(before);
+      expect(changes.first.kind, SyncChangeKind.categoryUpsert);
+      expect(changes.first.category!.colorHex, '#222222');
+      final propagated = changes
+          .where((change) => change.kind == SyncChangeKind.activityUpsert)
+          .toList();
+      expect(propagated.map((change) => change.entityId).toSet(), {
+        'act-one',
+        'act-two',
+      });
+      for (final change in propagated) {
+        expect(change.activity!.colorHex, '#222222');
+        expect(change.atEpochMs, now + 1);
+      }
+      expect((await db.getActivityById('act-one'))!.colorHex, '#222222');
+    });
   });
 
   group('Tags CRUD & Tombstones', () {
