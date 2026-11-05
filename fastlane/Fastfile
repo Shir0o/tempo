@@ -24,6 +24,10 @@ lane :play_upload do |options|
     UI.user_error!("AAB not found at #{aab_path}. Confirm the build step ran successfully.")
   end
 
+  if wear_aab_path && !File.exist?(wear_aab_path)
+    UI.user_error!("Wear OS AAB not found at #{wear_aab_path}. Confirm the Wear build step ran successfully.")
+  end
+
   # Monkey-patch: fastlane supply (via Supply::Client#commit_current_edit!) passes
   # `changes_not_sent_for_review: ...` to commit_edit, but google-api-client 0.53.0's
   # generated AndroidPublisherService#commit_edit does not recognize this keyword argument,
@@ -81,10 +85,6 @@ lane :play_upload do |options|
   UI.success("Uploaded #{aab_path} to Play Console internal track for #{APP_PACKAGE_NAME}.")
 
   if wear_aab_path
-    unless File.exist?(wear_aab_path)
-      UI.user_error!("Wear OS AAB not found at #{wear_aab_path}. Confirm the Wear build step ran successfully.")
-    end
-
     UI.message("Uploading Wear OS AAB to Play Console wear:internal track: #{wear_aab_path}")
     begin
       upload_to_play_store(
@@ -99,9 +99,17 @@ lane :play_upload do |options|
         skip_upload_screenshots: true,
         validate_only: false,
       )
-      UI.success("Uploaded #{wear_aab_path} to Play Console wear:internal track for #{APP_PACKAGE_NAME}.")
     rescue => e
-      UI.important("Wear OS internal track upload warning (e.g. form factor not yet opted in): #{e.message}")
+      # A swallowed warning here is invisible: the phone bundle ships, CI stays
+      # green, and the watch silently receives no build. Fail the lane instead so
+      # a rejected Wear OS bundle is caught on the release run.
+      UI.user_error!(
+        "Wear OS upload to Play Console wear:internal failed, so the watch bundle was NOT distributed: " \
+        "#{e.message}. Verify the Wear OS form factor is added and opted in under " \
+        "Play Console → Test and release → Advanced settings → Form factors, and that " \
+        "the listing mentions Wear OS and has at least one Wear OS screenshot."
+      )
     end
+    UI.success("Uploaded #{wear_aab_path} to Play Console wear:internal track for #{APP_PACKAGE_NAME}.")
   end
 end

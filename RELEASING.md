@@ -18,7 +18,7 @@ step in the Play Console UI.
 3. You review the release PR (check the changelog draft in `RELEASE.md` and the
    version bump in `pubspec.yaml`), then squash and merge it.
 4. The merge pushes a tag (e.g. `v1.0.0`). The `.github/workflows/release.yml` workflow fires:
-   - **Android**: Assembles `android/key.properties` from GitHub secrets, derives the `versionCode` from the tag, builds signed AAB + APK with `--build-number=$vc`, attaches both to the GitHub Release, extracts release notes from `RELEASE.md`, and uploads the AAB to the Play Console internal testing track via `fastlane play_upload` as a draft.
+   - **Android**: Assembles `android/key.properties` from GitHub secrets, derives the `versionCode` from the tag, builds signed AAB + APK with `--build-number=$vc`, builds the signed Wear OS AAB + APK with the `+1,000,000` version-code offset, attaches all four to the GitHub Release, extracts release notes from `RELEASE.md`, and uploads the phone AAB to the Play Console internal testing track and the wear AAB to the `wear:internal` track via `fastlane play_upload`. A rejected wear upload fails the run.
    - **macOS**: Derives `versionCode` from the tag, builds universal macOS app with `--build-number=$vc`, packages `tempo-macos.dmg` (with an `/Applications` shortcut) and `tempo-macos.zip`, and attaches both to the GitHub Release.
 5. **You** open the Play Console, verify the AAB on the internal testing track, and click **Promote release → Production** when ready.
 
@@ -85,6 +85,30 @@ gh secret set RELEASE_PLEASE_TOKEN --repo Shir0o/tempo --body "<your-release-ple
 1. In **Google Play Console**, ensure the app `com.tempos.tracker` exists.
 2. In **Play Console → Settings → API access**, link the service account named in `release-please-supply-key.json` and ensure it has **Release Manager** permissions (account-wide or specifically for `com.tempos.tracker`).
 3. Ensure **Play App Signing** is active so Google accepts the upload key signature and re-signs for end users.
+
+### Wear OS distribution (Pixel Watch)
+
+Uploading the wear AAB to `wear:internal` is necessary but **not sufficient**: Google Play
+will not serve the watch build until the Wear OS form factor is enabled and opted in.
+
+One-time setup in Play Console:
+
+1. **Test and release → Advanced settings → Form factors → Add form factor → Wear OS**.
+2. Add at least one **Wear OS screenshot** to the store listing, and mention "Wear OS" in the
+   listing text. Both are required for Wear OS review.
+3. Opt in to Wear OS and agree to the review policy, then **Start rollout** for that form factor.
+
+Version codes: phone is `major*10000 + minor*100 + patch`; wear adds `1,000,000`
+(e.g. `v1.8.1` → phone `10801`, wear `1010801`). The watch code must stay unique across
+form factors and higher than the phone code. Both are derived in the release workflow, so
+do not hand-bump them.
+
+Tester note: the watch must be signed in with a Google account on the internal-testers
+list and must have opened the opt-in link. A Wi-Fi watch does not always share the phone's
+account.
+
+The `play_upload` lane now **fails the release** when the wear upload is rejected, instead
+of logging a warning. A red run on that step means the watch bundle was not distributed.
 
 ## Security hardening
 
