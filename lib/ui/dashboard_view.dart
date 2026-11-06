@@ -919,11 +919,11 @@ class _DashboardViewState extends State<DashboardView>
           SliverPadding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             sliver: SliverGrid(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
+              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 180,
+                mainAxisExtent: 56,
                 mainAxisSpacing: 8,
                 crossAxisSpacing: 8,
-                childAspectRatio: 1,
               ),
               delegate: SliverChildBuilderDelegate((context, index) {
                 final activity = section.activities[index];
@@ -991,48 +991,38 @@ class _DashboardViewState extends State<DashboardView>
             onTap: () => _labelActivity(activity),
             onLongPress: _openActivityManager,
             child: Padding(
-              padding: const EdgeInsets.all(11),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Row(
                 children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          activity.name,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontFamily: _fontFamily,
-                            color: textColor,
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.w600,
-                            height: 1.1,
-                            letterSpacing: -0.2,
-                          ),
-                        ),
+                  Expanded(
+                    child: Text(
+                      activity.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: _fontFamily,
+                        color: textColor,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
                       ),
-                      if (activity.iconName.isNotEmpty) ...[
-                        const SizedBox(width: 4),
-                        UiHelpers.buildIconOrEmoji(
-                          iconName: activity.iconName,
-                          color: textColor.withValues(alpha: 0.8),
-                          size: 16,
-                        ),
-                      ],
-                    ],
+                    ),
                   ),
+                  if (activity.iconName.isNotEmpty) ...[
+                    const SizedBox(width: 4),
+                    UiHelpers.buildIconOrEmoji(
+                      iconName: activity.iconName,
+                      color: textColor.withValues(alpha: 0.8),
+                      size: 16,
+                    ),
+                  ],
+                  const SizedBox(width: 8),
                   Text(
                     total,
                     style: TextStyle(
                       fontFamily: _fontFamily,
-                      color: dark
-                          ? Colors.white70
-                          : _ink.withValues(alpha: 0.66),
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w500,
+                      color: textColor.withValues(alpha: 0.7),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
                       fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
