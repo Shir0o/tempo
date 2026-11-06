@@ -136,7 +136,7 @@ class _TempoAppState extends State<TempoApp> with WidgetsBindingObserver {
         commands: widget.commands,
         intentQueue: intentQueue,
       ),
-      StatsView(database: widget.database),
+      StatsView(database: widget.database, isActive: _currentTabIndex == 2),
       SettingsView(
         database: widget.database,
         dayRecorder: widget.dayRecorder,

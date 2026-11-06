@@ -10,7 +10,11 @@ import 'theme/tempo_theme.dart';
 class StatsView extends StatefulWidget {
   final TempoDatabase database;
 
-  const StatsView({super.key, required this.database});
+  /// Whether this tab is the one on screen. Stats reload whenever it becomes
+  /// active, because the app shell keeps the tab alive across switches.
+  final bool isActive;
+
+  const StatsView({super.key, required this.database, this.isActive = true});
 
   @override
   State<StatsView> createState() => _StatsViewState();
@@ -48,7 +52,13 @@ class _StatsViewState extends State<StatsView> {
   @override
   void initState() {
     super.initState();
-    _loadData();
+    if (widget.isActive) _loadData();
+  }
+
+  @override
+  void didUpdateWidget(covariant StatsView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive && !oldWidget.isActive) _loadData();
   }
 
   Future<void> _loadData() async {
