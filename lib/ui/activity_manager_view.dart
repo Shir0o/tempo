@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
+import 'helpers/activity_emoji.dart';
 import 'helpers/ui_helpers.dart';
 import 'theme/tempo_theme.dart';
 
@@ -333,11 +334,355 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
     _loadActivities();
   }
 
+  List<Activity> _activitiesNeedingIcon() => _activities
+      .where((a) => !a.isArchived && ActivityEmoji.needsIcon(a.iconName))
+      .toList();
+
+  List<Activity> _unresolvedActivities() => _activitiesNeedingIcon()
+      .where((a) => ActivityEmoji.emojiForName(a.name) == null)
+      .toList();
+
+  /// Resolves a name to an emoji for every Activity that does not already wear
+  /// one, then hands anything left over to the sweep.
+  Future<void> _autoAssignEmoji() async {
+    final all = await widget.database.getAllActivities(includeArchived: true);
+    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+    var updated = 0;
+    for (final activity in all) {
+      if (!ActivityEmoji.needsIcon(activity.iconName)) continue;
+      final emoji = ActivityEmoji.emojiForName(activity.name);
+      if (emoji == null) continue;
+      await widget.database.updateActivity(
+        activity.copyWith(iconName: emoji, updatedAtEpochMs: now),
+      );
+      updated++;
+    }
+    await _loadActivities();
+    if (!mounted) return;
+
+    final unresolved = _unresolvedActivities();
+    if (unresolved.isNotEmpty) {
+      await _openIconSweep(unresolved);
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          updated == 0
+              ? 'Every activity already has an icon.'
+              : updated == 1
+              ? '1 activity updated'
+              : '$updated activities updated',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _setIcon(Activity activity, String iconName) async {
+    await widget.database.updateActivity(
+      activity.copyWith(
+        iconName: iconName,
+        updatedAtEpochMs: DateTime.now().toUtc().millisecondsSinceEpoch,
+      ),
+    );
+    await _loadActivities();
+  }
+
+  Future<void> _openIconSweep(List<Activity> pending) async {
+    var remaining = pending;
+    Activity? selected;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: TempoColors.panel,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final activity = selected;
+            return SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
+                child: activity == null
+                    ? _buildSweepList(
+                        remaining,
+                        onPick: (picked) =>
+                            setSheetState(() => selected = picked),
+                      )
+                    : _buildEmojiPicker(
+                        activity,
+                        onBack: () => setSheetState(() => selected = null),
+                        onPicked: (iconName) async {
+                          await _setIcon(activity, iconName);
+                          if (!mounted || !sheetContext.mounted) return;
+                          setSheetState(() {
+                            remaining = remaining
+                                .where((a) => a.id != activity.id)
+                                .toList();
+                            selected = null;
+                          });
+                          if (remaining.isEmpty) {
+                            Navigator.of(sheetContext).pop();
+                          }
+                        },
+                      ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildSweepList(
+    List<Activity> pending, {
+    required ValueChanged<Activity> onPick,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Choose an icon',
+          style: TempoText.screenTitle.copyWith(
+            color: TempoColors.ink,
+            fontSize: 24,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          pending.length == 1
+              ? '1 activity has no match yet.'
+              : '${pending.length} activities have no match yet.',
+          style: TempoText.body.copyWith(color: TempoColors.inkMuted),
+        ),
+        const SizedBox(height: 14),
+        ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.5,
+          ),
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: pending.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 8),
+            itemBuilder: (context, index) {
+              final activity = pending[index];
+              return Material(
+                color: TempoColors.paper,
+                borderRadius: BorderRadius.circular(TempoRadii.row),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(TempoRadii.row),
+                  onTap: () => onPick(activity),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 34,
+                          height: 34,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: UiHelpers.parseHexColor(activity.colorHex),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Text(
+                            ActivityEmoji.monogram(activity.name),
+                            style: TempoText.label.copyWith(
+                              color: TempoColors.ink,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            activity.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TempoText.body.copyWith(
+                              color: TempoColors.ink,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        const Icon(
+                          Icons.chevron_right_rounded,
+                          color: TempoColors.inkMuted,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEmojiPicker(
+    Activity activity, {
+    required VoidCallback onBack,
+    required ValueChanged<String> onPicked,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            IconButton(
+              onPressed: onBack,
+              icon: const Icon(
+                Icons.arrow_back_rounded,
+                color: TempoColors.ink,
+              ),
+            ),
+            Expanded(
+              child: Text(
+                activity.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TempoText.title.copyWith(color: TempoColors.ink),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.45,
+          ),
+          child: SingleChildScrollView(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final emoji in ActivityEmoji.vocabulary)
+                  Semantics(
+                    button: true,
+                    label: 'Icon $emoji',
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => onPicked(emoji),
+                      child: Container(
+                        width: 44,
+                        height: 44,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: TempoColors.paper,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          emoji,
+                          style: const TextStyle(fontSize: 22),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Row(
+          children: [
+            Expanded(
+              child: _SheetPill(
+                label: 'Clear',
+                filled: false,
+                onTap: () => onPicked(''),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _SheetPill(
+                label: 'Auto',
+                filled: false,
+                onTap: () {
+                  final derived = ActivityEmoji.emojiForName(activity.name);
+                  if (derived != null) {
+                    onPicked(derived);
+                    return;
+                  }
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('No automatic match for this name.'),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget? _buildEmojiRow(List<Activity> active) {
+    final pending = active
+        .where((a) => ActivityEmoji.needsIcon(a.iconName))
+        .toList();
+    if (pending.isEmpty) return null;
+    final unresolved = pending
+        .where((a) => ActivityEmoji.emojiForName(a.name) == null)
+        .length;
+    return Material(
+      color: TempoColors.surface,
+      borderRadius: BorderRadius.circular(TempoRadii.row),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(TempoRadii.row),
+        onTap: _autoAssignEmoji,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.emoji_emotions_outlined,
+                color: TempoColors.textMuted,
+                size: 18,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Auto-assign emoji',
+                  style: TempoText.body.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              if (unresolved > 0) ...[
+                Text(
+                  '$unresolved need an icon',
+                  style: TempoText.label.copyWith(
+                    color: TempoColors.textMuted,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: TempoColors.textMuted,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final active = _activities.where((a) => !a.isArchived).toList();
     final archived = _activities.where((a) => a.isArchived).toList();
     final pinnedIds = active.where((a) => a.isPinned).map((a) => a.id).toList();
+    final emojiRow = _buildEmojiRow(active);
 
     return Scaffold(
       backgroundColor: TempoColors.background,
@@ -357,6 +702,10 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                       color: TempoColors.textMuted,
                     ),
                   ),
+                  if (emojiRow != null) ...[
+                    const SizedBox(height: 14),
+                    emojiRow,
+                  ],
                   const SizedBox(height: 18),
                   GridView.count(
                     crossAxisCount: 3,

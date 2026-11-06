@@ -1336,6 +1336,19 @@ class _DashboardViewState extends State<DashboardView>
               padding: const EdgeInsets.symmetric(horizontal: 14),
               child: Row(
                 children: [
+                  SizedBox(
+                    width: 20,
+                    child: Center(
+                      child: activity.iconName.isEmpty
+                          ? const SizedBox.shrink()
+                          : UiHelpers.buildIconOrEmoji(
+                              iconName: activity.iconName,
+                              color: textColor.withValues(alpha: 0.8),
+                              size: 16,
+                            ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
                   Expanded(
                     child: Text(
                       activity.name,
@@ -1349,14 +1362,6 @@ class _DashboardViewState extends State<DashboardView>
                       ),
                     ),
                   ),
-                  if (activity.iconName.isNotEmpty) ...[
-                    const SizedBox(width: 4),
-                    UiHelpers.buildIconOrEmoji(
-                      iconName: activity.iconName,
-                      color: textColor.withValues(alpha: 0.8),
-                      size: 16,
-                    ),
-                  ],
                   const SizedBox(width: 8),
                   Text(
                     total,
