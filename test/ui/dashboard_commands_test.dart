@@ -149,6 +149,37 @@ void main() {
     await db.close();
   });
 
+  testWidgets('Last logged adds a note to the latest Record from Today', (
+    tester,
+  ) async {
+    final (db, dayRecorder) = await openStore();
+    await dayRecorder.label('act-code');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DashboardView(dayRecorder: dayRecorder, database: db),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('LAST LOGGED'), findsOneWidget);
+    await tester.tap(find.text('Add note'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), 'pharmacy run');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    final records = await db.getRecords(trackedOnly: true);
+    expect(records.single.comment, 'pharmacy run');
+    expect(find.text('Edit note'), findsOneWidget);
+    expect(find.textContaining('pharmacy run'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    dayRecorder.dispose();
+    await db.close();
+  });
+
   testWidgets('a rejected intent renders its reason and can be placed at now', (
     tester,
   ) async {
