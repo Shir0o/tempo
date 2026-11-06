@@ -34,6 +34,7 @@ object LapNotification {
     private const val REQUEST_OPEN_APP = 100
     private const val REQUEST_SPLIT = 101
     private const val REQUEST_UNDO = 102
+    private const val REQUEST_REPEAT = 103
     private const val FALLBACK_COLOR = "#4CAF50"
 
     /** The state Dart last posted, kept so it can be re-posted once notifications are allowed. */
@@ -42,7 +43,8 @@ object LapNotification {
 
     /**
      * Posts the open Lap from [state]: `lapStartedAtEpochMs`, `since` (the Lap's
-     * start, "HH:mm"), `activities` (ranked `{id, name, colorHex}`), and an
+     * start, "HH:mm"), `activities` (ranked `{id, name, colorHex}`), an optional
+     * `lastActivity` (`id`, `name`) that becomes the first action, and an
      * optional `lastLabel` (`activityName`, `colorHex`, `startedAt`, `endedAt`,
      * `duration`, `undoUntilEpochMs`) shown with Undo until it expires.
      */
@@ -56,6 +58,7 @@ object LapNotification {
         }
         val lapStartedAt = (state["lapStartedAtEpochMs"] as? Number)?.toLong() ?: return
         val activities = (state["activities"] as? List<*>)?.filterIsInstance<Map<*, *>>().orEmpty()
+        val lastActivity = state["lastActivity"] as? Map<*, *>
         val lastLabel = (state["lastLabel"] as? Map<*, *>)?.takeIf {
             System.currentTimeMillis() < ((it["undoUntilEpochMs"] as? Number)?.toLong() ?: 0L)
         }
@@ -93,7 +96,9 @@ object LapNotification {
                 .setSubText("since ${state["since"]}")
                 .setStyle(NotificationCompat.DecoratedCustomViewStyle())
                 .setCustomContentView(collapsedView(context, activities))
-                .setCustomBigContentView(expandedView(context, lapStartedAt, activities))
+                .setCustomBigContentView(
+                    expandedView(context, lapStartedAt, activities, lastActivity)
+                )
         }
 
         try {
@@ -114,7 +119,12 @@ object LapNotification {
             setOnClickPendingIntent(R.id.lap_more, openAppIntent(context))
         }
 
-    private fun expandedView(context: Context, lapStartedAt: Long, activities: List<Map<*, *>>) =
+    private fun expandedView(
+        context: Context,
+        lapStartedAt: Long,
+        activities: List<Map<*, *>>,
+        lastActivity: Map<*, *>?,
+    ) =
         RemoteViews(context.packageName, R.layout.notification_lap_expanded).apply {
             // Chronometer counts on the elapsed-realtime clock; the elapsed time
             // itself is UTC epoch arithmetic.
@@ -125,6 +135,22 @@ object LapNotification {
                 addChipRow(context, this, R.id.lap_chips_bottom, activities, CHIPS_PER_ROW)
             } else {
                 setViewVisibility(R.id.lap_chips_bottom, View.GONE)
+            }
+            val repeatId = lastActivity?.get("id") as? String
+            val repeatName = lastActivity?.get("name") as? String
+            if (repeatId == null || repeatName == null) {
+                setViewVisibility(R.id.lap_repeat, View.GONE)
+            } else {
+                setTextViewText(R.id.lap_repeat, "Repeat $repeatName")
+                setOnClickPendingIntent(
+                    R.id.lap_repeat,
+                    actionIntent(
+                        context,
+                        LapNotificationReceiver.ACTION_LABEL,
+                        REQUEST_REPEAT,
+                        repeatId
+                    )
+                )
             }
             setOnClickPendingIntent(
                 R.id.lap_split,
