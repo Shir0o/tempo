@@ -221,7 +221,10 @@ Hatched Ledger Paper with 28px lower corners: date and logged total, lap title, 
 Full-width, Activity colour, 16px radius, name left and duration right, optional note below in 12px. Untracked blocks are hatched paper with an ink "What was it?" pill. The open Lap is a Night block with a 2px lime outline and a live timer.
 
 ### Edit sheet
-Ledger Paper bottom sheet. Header: Activity swatch (44px, 14px radius) plus name in 30px. Start and end steppers on Insert Paper, each with ± circle buttons, the zone, and which neighbour moves. Activity chips (selected = ink fill), note field, tag chips, three outline actions (Split…, Merge next, Untrack), then a full-width ink Save.
+Ledger Paper bottom sheet, ordered by how often each part changes. Header: Activity swatch (44px, 14px radius) plus name in 30px, and an outline "Change" pill. Start and end steppers on Insert Paper, each with ± circle buttons, the zone, and which neighbour moves. Note field with People chips, tag chips. One row of Activity chips (selected = ink fill): the current one, up to three usually started around this time of day, and "All N". Three outline actions (Split…, Merge next, Untrack), then a full-width ink Save.
+
+### Activity picker
+Opened from "Change" or "All N" over the edit sheet. Back chevron, "Change Activity" and the times; a search field that opens the keyboard; "Around HH:mm" as three Activity blocks; then every Activity as 48px rows under its Category (Categories in their order, A–Z inside), a check on the current one. Picking stages it on the edit sheet; Save applies.
 
 ### Undo bar
 Night Card, 16px radius: "Logged **Errands** 08:42–10:06" and a lime text button "Undo · 3" counting down.

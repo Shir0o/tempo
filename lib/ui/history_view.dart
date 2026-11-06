@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/state/activity_suggestions.dart';
 import '../../core/state/auto_advance.dart';
 import '../../core/state/day_recorder.dart';
 import '../../core/state/note_suggestions.dart';
@@ -14,6 +15,7 @@ import '../../data/models/models.dart';
 import '../../data/models/sync_change.dart';
 import '../core/time/timezone_id.dart';
 import 'helpers/ui_helpers.dart';
+import 'history/activity_picker_sheet.dart';
 import 'history/history_widgets.dart';
 import 'note_sheet.dart';
 import 'theme/tempo_theme.dart';
@@ -59,6 +61,7 @@ class _HistoryViewState extends State<HistoryView> {
   List<Record> _records = [];
   Map<String, Activity> _activitiesMap = {};
   Map<String, Tag> _tagsMap = {};
+  List<Category> _categories = const [];
   List<QueuedIntent> _intents = const [];
 
   /// The Lap read from the replica on a Mac, where no DayRecorder exists.
@@ -108,6 +111,7 @@ class _HistoryViewState extends State<HistoryView> {
         includeArchived: true,
       );
       final tags = await widget.database.getAllTags();
+      final categories = await widget.database.getCategories();
       final replicaLap = widget.dayRecorder == null
           ? await widget.database.getLap()
           : null;
@@ -130,6 +134,7 @@ class _HistoryViewState extends State<HistoryView> {
           _records = records;
           _activitiesMap = {for (final a in activities) a.id: a};
           _tagsMap = {for (final t in tags) t.id: t};
+          _categories = categories;
           _intents = intents;
           _replicaLap = replicaLap;
           _isLoading = false;
@@ -325,6 +330,17 @@ class _HistoryViewState extends State<HistoryView> {
     final activities = _chooserActivities();
     final current = _activitiesMap[record.activityId];
     if (current != null && current.isArchived) activities.insert(0, current);
+    // A few Activities usually started around this Record's time of day, so
+    // the common relabel is one tap; the rest wait behind the picker.
+    final aroundIds = activitiesAroundTime(
+      _records.where((r) => r.id != record.id),
+      atEpochMs: record.startedAtEpochMs,
+      timezoneId: record.timezoneId,
+      nowEpochMs: DateTime.now().toUtc().millisecondsSinceEpoch,
+      allowed: {for (final a in activities) a.id},
+    );
+    final around = [for (final id in aroundIds) _activitiesMap[id]!];
+    final aroundLabel = 'Around ${DateFormat('HH:mm').format(startClock)}';
 
     /// Asks for a wall-clock time in [zone] on the date of [currentMs] and
     /// returns its instant, or null when dismissed. A time that falls on the
@@ -501,6 +517,30 @@ class _HistoryViewState extends State<HistoryView> {
                 : null;
             final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
 
+            // The staged Activity, the Record's own when it differs, then the
+            // suggestions: at most four chips before "All".
+            final rowActivities = <Activity>[
+              ?pendingActivity,
+              if (current != null && current.id != pendingActivityId) current,
+              ...around.where(
+                (a) => a.id != pendingActivityId && a.id != current?.id,
+              ),
+            ].take(4).toList();
+
+            Future<void> pickActivity() async {
+              final picked = await showActivityPicker(
+                context,
+                activities: activities,
+                categories: _categories,
+                suggestions: around,
+                currentId: pendingActivityId,
+                subtitle: '$startTime–$endTime · now $name',
+                aroundLabel: aroundLabel,
+              );
+              if (picked == null) return;
+              setModalState(() => pendingActivityId = picked.id);
+            }
+
             return Padding(
               padding: EdgeInsets.only(
                 bottom: MediaQuery.of(context).viewInsets.bottom,
@@ -513,92 +553,155 @@ class _HistoryViewState extends State<HistoryView> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // Header
-                      Semantics(
-                        container: true,
-                        label: '$name, $dateLabel, $durationStr',
-                        excludeSemantics: true,
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 44,
-                              height: 44,
-                              clipBehavior: Clip.antiAlias,
-                              decoration: BoxDecoration(
-                                color: isUntracked
-                                    ? TempoColors.track
-                                    : UiHelpers.parseHexColor(
-                                        pendingActivity?.colorHex,
-                                      ),
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(
-                                  color: TempoColors.ink,
-                                  width: 2,
-                                ),
-                              ),
-                              child: isUntracked
-                                  ? const CustomPaint(
-                                      painter: HatchPainter(
-                                        color: historyHatch,
-                                        spacing: 6,
-                                      ),
-                                    )
-                                  : null,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                      // Header, with Change opening the Activity picker.
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Semantics(
+                              container: true,
+                              label: '$name, $dateLabel, $durationStr',
+                              excludeSemantics: true,
+                              child: Row(
                                 children: [
-                                  Text(
-                                    name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontFamily: tempoFontFamily,
-                                      fontSize: 30,
-                                      fontWeight: FontWeight.w700,
-                                      letterSpacing: -1.2,
-                                      height: 1.05,
-                                      color: TempoColors.ink,
+                                  Container(
+                                    width: 44,
+                                    height: 44,
+                                    clipBehavior: Clip.antiAlias,
+                                    decoration: BoxDecoration(
+                                      color: isUntracked
+                                          ? TempoColors.track
+                                          : UiHelpers.parseHexColor(
+                                              pendingActivity?.colorHex,
+                                            ),
+                                      borderRadius: BorderRadius.circular(14),
+                                      border: Border.all(
+                                        color: TempoColors.ink,
+                                        width: 2,
+                                      ),
                                     ),
+                                    child: isUntracked
+                                        ? const CustomPaint(
+                                            painter: HatchPainter(
+                                              color: historyHatch,
+                                              spacing: 6,
+                                            ),
+                                          )
+                                        : null,
                                   ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    '$dateLabel · $durationStr',
-                                    style: TempoText.label.copyWith(
-                                      color: TempoColors.inkMuted,
-                                      fontFeatures: const [
-                                        FontFeature.tabularFigures(),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontFamily: tempoFontFamily,
+                                            fontSize: 30,
+                                            fontWeight: FontWeight.w700,
+                                            letterSpacing: -1.2,
+                                            height: 1.05,
+                                            color: TempoColors.ink,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          '$dateLabel · $durationStr',
+                                          style: TempoText.label.copyWith(
+                                            color: TempoColors.inkMuted,
+                                            fontFeatures: const [
+                                              FontFeature.tabularFigures(),
+                                            ],
+                                          ),
+                                        ),
                                       ],
                                     ),
                                   ),
                                 ],
                               ),
                             ),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(width: 8),
+                          SheetOutlineButton(
+                            label: 'Change',
+                            onPressed: pickActivity,
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 16),
 
-                      // Activity
-                      const SheetOverline('Activity'),
-                      const SizedBox(height: 2),
-                      Wrap(
-                        spacing: 6,
-                        children: [
-                          for (final activity in activities)
-                            SheetChip(
-                              label: activity.name,
-                              swatch: UiHelpers.parseHexColor(
-                                activity.colorHex,
-                              ),
-                              selected: activity.id == pendingActivityId,
-                              onTap: () => setModalState(
-                                () => pendingActivityId = activity.id,
+                      // Edge steppers: each moves one edge of this Record.
+                      // Time it gives up becomes Untracked; it only grows into
+                      // time that is already Untracked.
+                      IntrinsicHeight(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Expanded(
+                              child: EdgeStepper(
+                                overline:
+                                    'Start · $startZoneLabel'
+                                    '${startDayLabel == null ? '' : ' · $startDayLabel'}',
+                                edgeName: 'Start',
+                                time: startTime,
+                                caption: 'only this Record changes',
+                                onEarlier: () => setModalState(
+                                  () => pendingStartMs -= stepMs,
+                                ),
+                                onLater: pendingStartMs + stepMs < pendingEndMs
+                                    ? () => setModalState(
+                                        () => pendingStartMs += stepMs,
+                                      )
+                                    : null,
+                                onPickTime: () async {
+                                  final ms = await pickInstant(
+                                    context,
+                                    record.timezoneId,
+                                    pendingStartMs,
+                                    isEndEdge: false,
+                                  );
+                                  if (ms == null) return;
+                                  setModalState(() => pendingStartMs = ms);
+                                },
                               ),
                             ),
-                        ],
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: EdgeStepper(
+                                overline:
+                                    'End · $endZoneLabel'
+                                    '${endDayLabel == null ? '' : ' · $endDayLabel'}',
+                                edgeName: 'End',
+                                time: endTime,
+                                caption: 'only this Record changes',
+                                onEarlier:
+                                    pendingEndMs - stepMs > pendingStartMs
+                                    ? () => setModalState(
+                                        () => pendingEndMs -= stepMs,
+                                      )
+                                    : null,
+                                onLater: pendingEndMs + stepMs <= nowMs
+                                    ? () => setModalState(
+                                        () => pendingEndMs += stepMs,
+                                      )
+                                    : null,
+                                onPickTime: () async {
+                                  final ms = await pickInstant(
+                                    context,
+                                    record.endTimezoneId,
+                                    pendingEndMs,
+                                    isEndEdge: true,
+                                  );
+                                  if (ms == null) return;
+                                  setModalState(() => pendingEndMs = ms);
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                       const SizedBox(height: 14),
 
@@ -669,72 +772,31 @@ class _HistoryViewState extends State<HistoryView> {
                         ),
                       ],
                       const SizedBox(height: 14),
-                      // Edge steppers: each moves one edge of this Record.
-                      // Time it gives up becomes Untracked; it only grows into
-                      // time that is already Untracked.
-                      IntrinsicHeight(
+                      // Activity: the current one, a few usually started
+                      // around this time, and the full picker behind "All".
+                      const SheetOverline('Activity'),
+                      const SizedBox(height: 2),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
                         child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Expanded(
-                              child: EdgeStepper(
-                                overline:
-                                    'Start · $startZoneLabel'
-                                    '${startDayLabel == null ? '' : ' · $startDayLabel'}',
-                                edgeName: 'Start',
-                                time: startTime,
-                                caption: 'only this Record changes',
-                                onEarlier: () => setModalState(
-                                  () => pendingStartMs -= stepMs,
+                            for (final activity in rowActivities) ...[
+                              SheetChip(
+                                label: activity.name,
+                                swatch: UiHelpers.parseHexColor(
+                                  activity.colorHex,
                                 ),
-                                onLater: pendingStartMs + stepMs < pendingEndMs
-                                    ? () => setModalState(
-                                        () => pendingStartMs += stepMs,
-                                      )
-                                    : null,
-                                onPickTime: () async {
-                                  final ms = await pickInstant(
-                                    context,
-                                    record.timezoneId,
-                                    pendingStartMs,
-                                    isEndEdge: false,
-                                  );
-                                  if (ms == null) return;
-                                  setModalState(() => pendingStartMs = ms);
-                                },
+                                selected: activity.id == pendingActivityId,
+                                onTap: () => setModalState(
+                                  () => pendingActivityId = activity.id,
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: EdgeStepper(
-                                overline:
-                                    'End · $endZoneLabel'
-                                    '${endDayLabel == null ? '' : ' · $endDayLabel'}',
-                                edgeName: 'End',
-                                time: endTime,
-                                caption: 'only this Record changes',
-                                onEarlier:
-                                    pendingEndMs - stepMs > pendingStartMs
-                                    ? () => setModalState(
-                                        () => pendingEndMs -= stepMs,
-                                      )
-                                    : null,
-                                onLater: pendingEndMs + stepMs <= nowMs
-                                    ? () => setModalState(
-                                        () => pendingEndMs += stepMs,
-                                      )
-                                    : null,
-                                onPickTime: () async {
-                                  final ms = await pickInstant(
-                                    context,
-                                    record.endTimezoneId,
-                                    pendingEndMs,
-                                    isEndEdge: true,
-                                  );
-                                  if (ms == null) return;
-                                  setModalState(() => pendingEndMs = ms);
-                                },
-                              ),
+                              const SizedBox(width: 6),
+                            ],
+                            SheetChip(
+                              label: 'All ${activities.length}',
+                              selected: false,
+                              onTap: pickActivity,
                             ),
                           ],
                         ),
