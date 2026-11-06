@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.11.0](https://github.com/Shir0o/tempo/compare/v1.10.1...v1.11.0) (2026-11-06)
+
+
+### Features
+
+* **history:** time and note first, Activity behind a searchable picker ([#90](https://github.com/Shir0o/tempo/issues/90)) ([8e9d955](https://github.com/Shir0o/tempo/commit/8e9d9559e24c3b7228ef0348f0f08302685b1c65))
+* **notification:** repeat the last Activity as the first action ([#95](https://github.com/Shir0o/tempo/issues/95)) ([f5b2a70](https://github.com/Shir0o/tempo/commit/f5b2a70a0afe3a37bb62e8244fd9096ae4730d1c))
+* **tags:** designate the Contact tag by flag and auto-tag People ([#93](https://github.com/Shir0o/tempo/issues/93)) ([87afca9](https://github.com/Shir0o/tempo/commit/87afca9e44bd489e48742717637c6d0d6bc647fc))
+* **today:** Last logged row to add a note without opening History ([#94](https://github.com/Shir0o/tempo/issues/94)) ([6119cb8](https://github.com/Shir0o/tempo/commit/6119cb89f582ad08f46deaba11875332084b4589))
+* **today:** separate note suggestions from Activity suggestions ([#87](https://github.com/Shir0o/tempo/issues/87)) ([5524390](https://github.com/Shir0o/tempo/commit/5524390f232334cfd9832360d43dd06d4431e2da))
+* **ui:** auto-assign emoji icons to Activities (closes [#91](https://github.com/Shir0o/tempo/issues/91)) ([#92](https://github.com/Shir0o/tempo/issues/92)) ([7e75381](https://github.com/Shir0o/tempo/commit/7e75381aa50c81bf5d3395080e0b81a6b519d3e4))
+
+
+### Bug Fixes
+
+* **ui:** refresh Totals when the tab becomes active ([#88](https://github.com/Shir0o/tempo/issues/88)) ([17a50ca](https://github.com/Shir0o/tempo/commit/17a50ca0d5794353e5d995c8716023988a95ea76))
+
 ## [1.10.1](https://github.com/Shir0o/tempo/compare/v1.10.0...v1.10.1) (2026-11-06)
 
 
