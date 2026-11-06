@@ -140,7 +140,10 @@ void main() {
     });
 
     test('masks every name in a comma-separated list after w/ or with', () {
-      expect(sanitizer.sanitize('John 4 w/ Sam'), equals('John 4 w/ [Contact-1]'));
+      expect(
+        sanitizer.sanitize('John 4 w/ Sam'),
+        equals('John 4 w/ [Contact-1]'),
+      );
       expect(
         sanitizer.sanitize('John 4 w/ Sam, Lee'),
         equals('John 4 w/ [Contact-1], [Contact-2]'),

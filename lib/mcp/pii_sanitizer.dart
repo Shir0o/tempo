@@ -69,10 +69,12 @@ class PIISanitizer {
     result = result.replaceAllMapped(_contactMarkerRegex, (match) {
       final prefix = match.group(1)!;
       final first = _pseudonymFor(match.group(2)!);
-      final rest = match.group(3)!.replaceAllMapped(
-        _listNameRegex,
-        (m) => '${m.group(1)}${_pseudonymFor(m.group(2)!)}',
-      );
+      final rest = match
+          .group(3)!
+          .replaceAllMapped(
+            _listNameRegex,
+            (m) => '${m.group(1)}${_pseudonymFor(m.group(2)!)}',
+          );
       return '$prefix$first$rest';
     });
 

@@ -581,7 +581,6 @@ class _HistoryViewState extends State<HistoryView> {
                       ),
                       const SizedBox(height: 16),
 
-
                       // Activity
                       const SheetOverline('Activity'),
                       const SizedBox(height: 2),
