@@ -12,7 +12,7 @@ import '../data/models/models.dart';
 import '../ui/helpers/ui_helpers.dart';
 
 /// Keeps Android's ongoing Lap notification in step with the open Lap and
-/// carries out the label, Split and Undo taps made on it.
+/// carries out the label, Repeat, Split and Undo taps made on it.
 ///
 /// After a label or Split from the notification it shows the Record just
 /// written with an Undo action for the [DayRecorder.undoGraceWindow], then
@@ -63,6 +63,7 @@ class LapNotificationService {
     if (_isDisposed || lap == null) return;
     try {
       final activities = await database.getAllActivities();
+      final repeat = await _repeatActivity();
       await _channel.invokeMethod<void>('updateLapNotification', {
         'lapStartedAtEpochMs': lap.startedAtEpochMs,
         'since': _clock(dayRecorder.lapStartTimezoneId, lap.startedAtEpochMs),
@@ -74,6 +75,8 @@ class LapNotificationService {
               'colorHex': activity.colorHex,
             },
         ],
+        if (repeat != null)
+          'lastActivity': {'id': repeat.id, 'name': repeat.name},
         if (closed != null) 'lastLabel': await _lastLabel(closed),
       });
     } catch (e) {
@@ -160,6 +163,19 @@ class LapNotificationService {
     final byId = {for (final activity in activities) activity.id: activity};
     final ids = <String>{for (final s in suggested) s.id, ...byId.keys};
     return [for (final id in ids.take(chipCount)) byId[id]!];
+  }
+
+  /// The Activity the Repeat action labels the Lap with: the one on the most
+  /// recent labelled Record, or null when there is nothing to repeat.
+  Future<Activity?> _repeatActivity() async {
+    final previous = await database.getRecords(
+      trackedOnly: true,
+      limit: 1,
+      orderBy: 'ended_at_epoch_ms DESC, rowid DESC',
+    );
+    if (previous.isEmpty) return null;
+    final activityId = previous.first.activityId;
+    return activityId == null ? null : database.getActivityById(activityId);
   }
 
   /// The Record shown after a tap. Its start and end read in the zones they

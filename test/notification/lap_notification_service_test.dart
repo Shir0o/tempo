@@ -112,6 +112,17 @@ void main() {
       expect(state.containsKey('lastLabel'), isFalse);
       final ids = [for (final a in state['activities'] as List) a['id']];
       expect(ids, ['b', 'c', 'a', 'd', 'e', 'f']);
+      expect(state['lastActivity'], {'id': 'b', 'name': 'Activity b'});
+    });
+
+    test('omits Repeat when no labelled Record exists', () async {
+      for (final record in await db.getRecords()) {
+        await db.deleteRecord(record.id);
+      }
+
+      await service.publish();
+
+      expect(posted.single.containsKey('lastActivity'), isFalse);
     });
 
     test(
