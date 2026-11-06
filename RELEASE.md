@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.10.0](https://github.com/Shir0o/tempo/compare/v1.9.1...v1.10.0) (2026-11-06)
+
+
+### Features
+
+* **log:** notes, People chips, AutoAdvance and wider Today tiles ([#82](https://github.com/Shir0o/tempo/issues/82)) ([f3deb6d](https://github.com/Shir0o/tempo/commit/f3deb6d5c2f6b613e7446100d75d4d892ab773c3))
+* **sync:** single-writer phone replication and verified backups ([#69](https://github.com/Shir0o/tempo/issues/69)) ([f6c61a3](https://github.com/Shir0o/tempo/commit/f6c61a31551b0544920da26745d74468e2d72a6a))
+* use decayed Markov-2 activity suggestions ([#81](https://github.com/Shir0o/tempo/issues/81)) ([c0720dd](https://github.com/Shir0o/tempo/commit/c0720ddd983c7fe3a611b26e4c782ab1e3de1ecc))
+
+
+### Bug Fixes
+
+* **release:** give the Wear OS bundle its own changelog ([#74](https://github.com/Shir0o/tempo/issues/74)) ([4271159](https://github.com/Shir0o/tempo/commit/427115969fefcac0028c46d8ecdaccdac1443c1a))
+
 ## [1.9.1](https://github.com/Shir0o/tempo/compare/v1.9.0...v1.9.1) (2026-11-05)
 
 
