@@ -1010,6 +1010,8 @@ class _DashboardViewState extends State<DashboardView>
     );
   }
 
+  /// Suggestions in two rows: Activity-with-note combos under WITH NOTE,
+  /// plain Activities under ACTIVITY. A row with nothing to offer is hidden.
   Widget _buildSuggestedActivitiesRow() {
     final combos = [
       for (final combo in _combos)
@@ -1020,115 +1022,174 @@ class _DashboardViewState extends State<DashboardView>
       return const SizedBox.shrink();
     }
 
-    return SizedBox(
-      height: 48,
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-        scrollDirection: Axis.horizontal,
-        itemCount: combos.length + _suggestedActivities.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          if (index < combos.length) {
-            final (activity, combo) = combos[index];
-            return _buildComboChip(index, activity, combo);
-          }
-          final activity = _suggestedActivities[index - combos.length];
-          final color = UiHelpers.parseHexColor(activity.colorHex);
-          return Semantics(
-            button: true,
-            label: 'Suggested: ${activity.name}. Tap to label untracked time.',
-            child: Material(
-              color: _surface,
-              borderRadius: BorderRadius.circular(18),
-              child: InkWell(
-                key: ValueKey('suggested-chip-${activity.id}'),
-                borderRadius: BorderRadius.circular(18),
-                onTap: () => _labelActivity(activity),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: BoxDecoration(
-                          color: color,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      if (activity.iconName.isNotEmpty) ...[
-                        const SizedBox(width: 6),
-                        UiHelpers.buildIconOrEmoji(
-                          iconName: activity.iconName,
-                          color: Colors.white,
-                          size: 14,
-                        ),
-                      ],
-                      const SizedBox(width: 6),
-                      Text(
-                        activity.name,
-                        style: const TextStyle(
-                          fontFamily: _fontFamily,
-                          color: Colors.white,
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (combos.isNotEmpty) ...[
+          _buildSuggestionOverline('WITH NOTE'),
+          _buildSuggestionRow(
+            height: 64,
+            children: [
+              for (final (index, (activity, combo)) in combos.indexed)
+                _buildComboChip(index, activity, combo),
+            ],
+          ),
+        ],
+        if (_suggestedActivities.isNotEmpty) ...[
+          _buildSuggestionOverline('ACTIVITY'),
+          _buildSuggestionRow(
+            height: 48,
+            children: [
+              for (final activity in _suggestedActivities)
+                _buildSuggestedChip(activity),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildSuggestionOverline(String text) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontFamily: _fontFamily,
+          color: TempoColors.textMuted,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.88,
+        ),
       ),
     );
   }
 
-  /// `<Activity> w/ <names> · <reading>`: one tap labels the Lap with all
-  /// of it.
+  Widget _buildSuggestionRow({
+    required double height,
+    required List<Widget> children,
+  }) {
+    return SizedBox(
+      height: height,
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+        scrollDirection: Axis.horizontal,
+        itemCount: children.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
+        itemBuilder: (_, index) => children[index],
+      ),
+    );
+  }
+
+  Widget _buildSuggestedChip(Activity activity) {
+    final color = UiHelpers.parseHexColor(activity.colorHex);
+    return Semantics(
+      button: true,
+      label: 'Suggested: ${activity.name}. Tap to label untracked time.',
+      child: Material(
+        color: _surface,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          key: ValueKey('suggested-chip-${activity.id}'),
+          borderRadius: BorderRadius.circular(18),
+          onTap: () => _labelActivity(activity),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: color,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                if (activity.iconName.isNotEmpty) ...[
+                  const SizedBox(width: 6),
+                  UiHelpers.buildIconOrEmoji(
+                    iconName: activity.iconName,
+                    color: Colors.white,
+                    size: 14,
+                  ),
+                ],
+                const SizedBox(width: 6),
+                Text(
+                  activity.name,
+                  style: const TextStyle(
+                    fontFamily: _fontFamily,
+                    color: Colors.white,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Activity name over `<reading> · w/ <names>`: one tap labels the Lap
+  /// with all of it.
   Widget _buildComboChip(int index, Activity activity, RecurringNote combo) {
     final reading = splitComment(combo.comment).reading;
-    final label = [
-      combo.people.isEmpty
-          ? activity.name
-          : '${activity.name} w/ ${combo.people.join(', ')}',
+    final detail = [
       if (reading.isNotEmpty) reading,
+      if (combo.people.isNotEmpty) 'w/ ${combo.people.join(', ')}',
     ].join(' · ');
+    final label = [activity.name, if (detail.isNotEmpty) detail].join(' · ');
     return Semantics(
       button: true,
       label: 'Suggested: $label. Tap to label untracked time.',
       child: ExcludeSemantics(
         child: Material(
           color: _surface,
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(16),
           child: InkWell(
             key: ValueKey('combo-chip-$index'),
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(16),
             onTap: () => _labelCombo(activity, combo),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
+              padding: const EdgeInsets.fromLTRB(12, 10, 14, 10),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Container(
-                    width: 8,
-                    height: 8,
+                    width: 4,
                     decoration: BoxDecoration(
                       color: UiHelpers.parseHexColor(activity.colorHex),
-                      shape: BoxShape.circle,
+                      borderRadius: BorderRadius.circular(2),
                     ),
                   ),
-                  const SizedBox(width: 6),
-                  Text(
-                    label,
-                    style: const TextStyle(
-                      fontFamily: _fontFamily,
-                      color: Colors.white,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  const SizedBox(width: 10),
+                  Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        activity.name,
+                        style: const TextStyle(
+                          fontFamily: _fontFamily,
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      if (detail.isNotEmpty)
+                        Text(
+                          detail,
+                          style: const TextStyle(
+                            fontFamily: _fontFamily,
+                            color: TempoColors.textMuted,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                    ],
                   ),
                 ],
               ),
