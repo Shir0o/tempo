@@ -214,6 +214,9 @@ Big, friendly radii. Activity blocks 20px, cards 24px, the Lap panel's lower cor
 ### Lap panel
 Hatched Ledger Paper with 28px lower corners: date and logged total, lap title, lap timer, the 00–24 strip, then Split (outline) and "Same as last: <Activity>" (ink primary with an Activity-colour dot).
 
+### Last logged row
+Under the Lap panel on Today, while the latest tracked Record ended today: a Night Card row (16px radius) with an Activity-colour bar, overline "LAST LOGGED", and the name with its range and duration, or with its note once it has one. A pill on the right opens the note sheet for that Record: "Add note" (paper fill, ink text) or "Edit note" (Hairline outline). This keeps a one-off note one tap away after the undo bar is gone.
+
 ### Day strip
 16px tall (10px in the popover), 4–8px radius. Records in Activity colours, Untracked hatched on Strip Track, the open Lap in ink, zone changes marked with a 2px tick. Always has a screen-reader label describing each span.
 

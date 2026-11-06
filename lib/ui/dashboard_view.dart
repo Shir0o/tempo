@@ -118,6 +118,10 @@ class _DashboardViewState extends State<DashboardView>
   int _comboLoad = 0;
   int _loggedTodayMs = 0;
   Activity? _lastActivity;
+
+  /// The latest tracked Record, when it ended today: shown under the Lap panel
+  /// so a note can be added after the undo bar is gone.
+  Record? _lastRecord;
   _UndoState? _undo;
   bool _isLoading = true;
 
@@ -271,6 +275,10 @@ class _DashboardViewState extends State<DashboardView>
           _suggestedActivities = suggested;
           _loggedTodayMs = loggedMs;
           _lastActivity = activitiesById[lastActivityId];
+          _lastRecord =
+              last.isNotEmpty && last.first.endedAtEpochMs > dayStartMs
+              ? last.first
+              : null;
           _replicaLap = replicaLap;
           _dayStartMs = dayStartMs;
           _dayEndMs = dayEndMs;
@@ -611,6 +619,8 @@ class _DashboardViewState extends State<DashboardView>
               physics: const AlwaysScrollableScrollPhysics(),
               slivers: [
                 SliverToBoxAdapter(child: _buildLapPanel()),
+                if (_lastRecord case final record?)
+                  SliverToBoxAdapter(child: _buildLastLoggedRow(record)),
                 SliverToBoxAdapter(child: _buildGridHeading()),
                 SliverToBoxAdapter(child: _buildSuggestedActivitiesRow()),
                 _buildActivityGrid(),
@@ -1383,6 +1393,101 @@ class _DashboardViewState extends State<DashboardView>
   }
 
   // ------------------------------------------------------------------ Undo bar
+
+  /// "Last logged": the latest Record with a note button, so a one-off note
+  /// needs no trip through History.
+  Widget _buildLastLoggedRow(Record record) {
+    final activity = _activitiesById[record.activityId];
+    final hasNote = record.comment.isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+        decoration: BoxDecoration(
+          color: _surface,
+          borderRadius: BorderRadius.circular(TempoRadii.row),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 12,
+              height: 36,
+              decoration: BoxDecoration(
+                color: UiHelpers.parseHexColor(activity?.colorHex),
+                borderRadius: BorderRadius.circular(6),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'LAST LOGGED',
+                    style: TextStyle(
+                      fontFamily: _fontFamily,
+                      color: TempoColors.textMuted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.9,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text.rich(
+                    TextSpan(
+                      text: activity?.name ?? 'Record',
+                      children: [
+                        TextSpan(
+                          text: hasNote
+                              ? ' · ${record.comment}'
+                              : ' ${_rangeLabel(record)} · '
+                                    '${UiHelpers.formatDurationHuman(record.durationMs)}',
+                          style: const TextStyle(
+                            color: TempoColors.textMuted,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontFamily: _fontFamily,
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: () => _addNote(record),
+              style: TextButton.styleFrom(
+                minimumSize: const Size(0, 44),
+                backgroundColor: hasNote ? Colors.transparent : _panel,
+                foregroundColor: hasNote ? Colors.white : _ink,
+                shape: StadiumBorder(
+                  side: hasNote
+                      ? const BorderSide(color: TempoColors.line)
+                      : BorderSide.none,
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                textStyle: const TextStyle(
+                  fontFamily: _fontFamily,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              child: Text(hasNote ? 'Edit note' : 'Add note'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _buildUndoBar(_UndoState undo) {
     return Material(
