@@ -8,6 +8,7 @@ void main() {
   const contact = Tag(
     id: 'c',
     name: 'Contact',
+    isContact: true,
     createdAtEpochMs: 0,
     updatedAtEpochMs: 0,
   );
@@ -72,7 +73,7 @@ void main() {
     expect(note.tagIds, ['c']);
   });
 
-  testWidgets('removing the last Person detaches Contact', (tester) async {
+  testWidgets('removing the last Person keeps Contact', (tester) async {
     final result = await openSheet(tester, initialComment: 'Tea w/ Sam');
 
     await tester.tap(find.text('Lee'));
@@ -86,7 +87,7 @@ void main() {
     await tester.pumpAndSettle();
     final note = result();
     expect(note!.comment, 'Tea');
-    expect(note.tagIds, isEmpty);
+    expect(note.tagIds, ['c']);
   });
 
   testWidgets('a new first Person refreshes an untouched reading', (

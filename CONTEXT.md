@@ -43,7 +43,7 @@ The division of any Record or Lap that crosses midnight into two, at 00:00 in th
 _Avoid_: Rollover, day wrap
 
 **Tag**:
-A secondary label attached to an Activity or Record for orthogonal filtering and cross-app routing (e.g., "Contact", "Travel").
+A secondary label attached to an Activity or Record for orthogonal filtering and cross-app routing (e.g., "Contact", "Travel"). At most one Tag carries the Contact flag, set in Settings → Tags; that tag is attached automatically to a Record whose comment names a Person, and the flag survives renaming the tag.
 _Avoid_: Label, badge, category, marker
 
 **QuickLog**:
@@ -77,7 +77,7 @@ A designated prefix within a Record's comment (default `w/` or `with `) identify
 _Avoid_: Mention, contact tag, name prefix
 
 **Person**:
-Someone named after a NameMarker in a Record's comment. People are not stored separately: they are drawn from past comments and offered back ranked by how recent and frequent they are. Choosing a Person writes their name after the NameMarker and attaches the "Contact" Tag to the Record.
+Someone named after a NameMarker in a Record's comment. People are not stored separately: they are drawn from past comments and offered back ranked by how recent and frequent they are. Choosing a Person writes their name after the NameMarker and attaches the Contact Tag to the Record.
 _Avoid_: Contact (as an entity), friend, attendee
 
 **AutoAdvance**:

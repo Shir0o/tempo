@@ -187,14 +187,26 @@ void main() {
   });
 
   group('Contact Tag', () {
-    Tag tag(String id, String name) =>
-        Tag(id: id, name: name, createdAtEpochMs: 0, updatedAtEpochMs: 0);
+    Tag tag(String id, String name, {bool isContact = false}) => Tag(
+      id: id,
+      name: name,
+      isContact: isContact,
+      createdAtEpochMs: 0,
+      updatedAtEpochMs: 0,
+    );
 
-    test('finds the Contact Tag by name, ignoring case', () {
-      expect(contactTagId([tag('a', 'Travel'), tag('b', 'contact')]), 'b');
+    test('finds the Tag marked as Contact', () {
+      expect(
+        contactTagId([
+          tag('a', 'Travel'),
+          tag('b', 'People', isContact: true),
+        ]),
+        'b',
+      );
     });
 
-    test('is null when no Contact Tag exists', () {
+    test('is null when no Tag is marked as Contact', () {
+      expect(contactTagId([tag('a', 'Contact')]), isNull);
       expect(contactTagId([tag('a', 'Travel')]), isNull);
     });
 
@@ -203,8 +215,8 @@ void main() {
       expect(tagIdsWithContact(['c'], 'c', hasPeople: true), ['c']);
     });
 
-    test('detaches it when no one is left', () {
-      expect(tagIdsWithContact(['t', 'c'], 'c', hasPeople: false), ['t']);
+    test('keeps it when no one is left', () {
+      expect(tagIdsWithContact(['t', 'c'], 'c', hasPeople: false), ['t', 'c']);
     });
 
     test('changes nothing without a Contact Tag', () {

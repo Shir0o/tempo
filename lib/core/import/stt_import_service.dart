@@ -7,6 +7,7 @@ import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
 import '../../data/models/sync_change.dart';
 import '../export/csv_export_engine.dart';
+import '../state/people_index.dart';
 import '../time/timezone_id.dart';
 import 'stt_format_parser.dart';
 
@@ -104,6 +105,12 @@ class SttImportService {
         txn,
       );
       final tagMapping = await _upsertTags(uniqueTagNames.toList(), now, txn);
+      var contactTagId = tagMapping.contactTagId;
+      if (scope == SttImportScope.fullHistory &&
+          contactTagId == null &&
+          envelope.rawIntervals.any((i) => peopleIn(i.comment).isNotEmpty)) {
+        contactTagId = await _ensureContactTag(txn, now);
+      }
 
       if (scope == SttImportScope.fullHistory &&
           envelope.rawIntervals.isNotEmpty) {
@@ -111,7 +118,8 @@ class SttImportService {
         final reconciliation = await _reconcileAndInsertHistory(
           intervals: envelope.rawIntervals,
           activityMapping: activityMapping,
-          tagMapping: tagMapping,
+          tagMapping: tagMapping.byName,
+          contactTagId: contactTagId,
           activeTz: activeTz,
           now: now,
           txn: txn,
@@ -254,27 +262,56 @@ class SttImportService {
   }
 
   /// Upserts tags non-destructively: exact name match against existing.
-  /// Returns a map of tagName -> effective tagId in database.
-  Future<Map<String, String>> _upsertTags(
+  /// Returns the effective tag id for each name, plus the Contact Tag's id.
+  ///
+  /// A tag named "Contact" adopts the Contact flag when nothing else has it,
+  /// so importing a Simple Time Tracker file keeps relational Records marked
+  /// without the user visiting Settings first.
+  Future<({Map<String, String> byName, String? contactTagId})> _upsertTags(
     List<String> tagNames,
     int nowEpochMs,
     Transaction txn,
   ) async {
-    final existingByName = <String, String>{
-      for (final row in await txn.query('tags', columns: ['id', 'name']))
-        row['name'] as String: row['id'] as String,
+    final rows = await txn.query('tags');
+    final existingByName = <String, Tag>{
+      for (final row in rows) (row['name'] as String): Tag.fromMap(row),
     };
+    var contactTagId = existingByName.values
+        .where((tag) => tag.isContact)
+        .map((tag) => tag.id)
+        .firstOrNull;
     final tagMapping = <String, String>{};
     for (final tag in tagNames) {
-      final existingId = existingByName[tag];
-      if (existingId != null) {
-        tagMapping[tag] = existingId;
+      final existing = existingByName[tag];
+      if (existing != null) {
+        if (contactTagId == null && looksLikeContactTagName(tag)) {
+          final adopted = existing.copyWith(
+            isContact: true,
+            updatedAtEpochMs: nowEpochMs,
+          );
+          await txn.update(
+            'tags',
+            adopted.toMap(),
+            where: 'id = ?',
+            whereArgs: [adopted.id],
+          );
+          await database.appendChange(
+            SyncChange.tagUpsert(adopted, atEpochMs: nowEpochMs),
+            executor: txn,
+          );
+          existingByName[tag] = adopted;
+          contactTagId = adopted.id;
+        }
+        tagMapping[tag] = existing.id;
       } else {
+        final adoptContact =
+            contactTagId == null && looksLikeContactTagName(tag);
         final newId = generateId();
         final newTag = Tag(
           id: newId,
           name: tag,
           colorHex: '#9E9E9E',
+          isContact: adoptContact,
           createdAtEpochMs: nowEpochMs,
           updatedAtEpochMs: nowEpochMs,
         );
@@ -283,11 +320,48 @@ class SttImportService {
           SyncChange.tagUpsert(newTag, atEpochMs: nowEpochMs),
           executor: txn,
         );
-        existingByName[tag] = newId;
+        existingByName[tag] = newTag;
         tagMapping[tag] = newId;
+        if (adoptContact) contactTagId = newId;
       }
     }
-    return tagMapping;
+    return (byName: tagMapping, contactTagId: contactTagId);
+  }
+
+  /// Returns the Contact Tag's id, creating or adopting "Contact" when the
+  /// import names People but the file carries no Contact tag.
+  Future<String> _ensureContactTag(Transaction txn, int nowEpochMs) async {
+    final existing = (await txn.query('tags')).map(Tag.fromMap).toList();
+    final marked = existing.where((tag) => tag.isContact).firstOrNull;
+    if (marked != null) return marked.id;
+
+    final named = existing
+        .where((tag) => looksLikeContactTagName(tag.name))
+        .firstOrNull;
+    final contact = named != null
+        ? named.copyWith(isContact: true, updatedAtEpochMs: nowEpochMs)
+        : Tag(
+            id: generateId(),
+            name: 'Contact',
+            isContact: true,
+            createdAtEpochMs: nowEpochMs,
+            updatedAtEpochMs: nowEpochMs,
+          );
+    if (named != null) {
+      await txn.update(
+        'tags',
+        contact.toMap(),
+        where: 'id = ?',
+        whereArgs: [contact.id],
+      );
+    } else {
+      await txn.insert('tags', contact.toMap());
+    }
+    await database.appendChange(
+      SyncChange.tagUpsert(contact, atEpochMs: nowEpochMs),
+      executor: txn,
+    );
+    return contact.id;
   }
 
   /// Continuous coverage reconciliation and batch insertion.
@@ -295,6 +369,7 @@ class SttImportService {
     required List<SttRawInterval> intervals,
     required Map<String, String> activityMapping,
     required Map<String, String> tagMapping,
+    required String? contactTagId,
     required String activeTz,
     required int now,
     required Transaction txn,
@@ -344,6 +419,11 @@ class SttImportService {
           .map((t) => tagMapping[t.trim()])
           .whereType<String>()
           .toList();
+      if (contactTagId != null &&
+          !recordTagIds.contains(contactTagId) &&
+          peopleIn(raw.comment).isNotEmpty) {
+        recordTagIds.add(contactTagId);
+      }
 
       // Split multi-day spans across local midnight
       var cursor = startMs;

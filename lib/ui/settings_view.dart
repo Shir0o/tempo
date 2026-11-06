@@ -25,6 +25,7 @@ import 'activity_manager_view.dart';
 import 'category_manager_view.dart';
 import 'helpers/ui_helpers.dart';
 import 'stt_import_dialog.dart';
+import 'tag_manager_view.dart';
 import 'theme/tempo_theme.dart';
 
 /// Settings screen for the CSV export to Google Drive, automatic backup and
@@ -804,6 +805,15 @@ class _SettingsViewState extends State<SettingsView> {
     _bumpCatalog();
   }
 
+  Future<void> _openTagManager() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => TagManagerView(database: widget.database),
+      ),
+    );
+    _bumpCatalog();
+  }
+
   Future<void> _chooseTodayOrder() async {
     final notifier = widget.todayOrder;
     final current = notifier?.value ?? TodayOrder.categories;
@@ -1004,6 +1014,11 @@ class _SettingsViewState extends State<SettingsView> {
                   ],
                 ),
                 onTap: _openCategoryManager,
+              ),
+              _SettingsRow(
+                title: 'Tags',
+                subtitle: 'Labels, and which one is the Contact tag',
+                onTap: _openTagManager,
               ),
               _SettingsRow(
                 title: 'Import from Simple Time Tracker',
