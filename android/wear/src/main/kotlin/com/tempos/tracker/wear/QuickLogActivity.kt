@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.HapticFeedbackConstants
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -29,6 +30,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -37,6 +39,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
@@ -51,13 +55,16 @@ import androidx.compose.ui.unit.sp
 import androidx.wear.ambient.AmbientLifecycleObserver
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
+import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.Text
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.isActive
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * QuickLogActivity:
@@ -69,7 +76,7 @@ import java.util.Locale
  *   on launch and exits without drawing.
  * - Otherwise: shows the open Lap ("UNTRACKED · start") and its elapsed time,
  *   then the three most-used Activities as pills, then the rest.
- * - Inactivity timeout: 10s auto-exit.
+ * - Inactivity timeout: 10s without a touch or scroll auto-exits.
  */
 class QuickLogActivity : ComponentActivity() {
 
@@ -104,9 +111,18 @@ class QuickLogActivity : ComponentActivity() {
         // A tile slot names its Activity: label the Lap, confirm, and exit.
         val labelId = intent?.getStringExtra(EXTRA_LABEL_ACTIVITY_ID)
         if (!labelId.isNullOrEmpty()) {
+            // The launch intent is re-delivered when the Activity is recreated
+            // (a configuration change, or the watch waking from ambient). One
+            // tap labels once: a second label would close a zero-length Record
+            // on the phone.
+            if (savedInstanceState != null) {
+                finish()
+                return
+            }
             val activity = repository.activities.value.find { it.id == labelId }
                 ?: WearActivity(id = labelId, name = labelId)
             val range = labeledRange(repository.lap.value)
+            intent?.removeExtra(EXTRA_LABEL_ACTIVITY_ID)
             repository.label(activity.id)
             window.decorView.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
             setContent {
@@ -229,6 +245,12 @@ fun LabelConfirmationScreen(activity: WearActivity, range: String, onDone: () ->
 /** How long the label confirmation stays on screen before Action-and-Exit. */
 private const val CONFIRMATION_FLASH_MS = 300L
 
+/** How long the list waits with no touch or scroll before Action-and-Exit. */
+private const val IDLE_TIMEOUT_MS = 10_000L
+
+/** How often the idle check runs. */
+private const val IDLE_POLL_MS = 500L
+
 @Composable
 fun QuickLogScreen(
     isAmbient: Boolean,
@@ -240,6 +262,25 @@ fun QuickLogScreen(
 ) {
     var elapsedMs by remember { mutableLongStateOf(lapElapsedMs(lap)) }
     var confirmed by remember { mutableStateOf<Pair<WearActivity, String>?>(null) }
+
+    // Action-and-Exit still applies, but only after real inactivity: a touch, a
+    // scroll or the rotating crown counts as use and restarts the countdown, so
+    // the list never closes while it is being read. Ambient is not use — the
+    // wrist is down — so the timeout keeps running there and the Activity never
+    // lingers in the foreground.
+    val lastInteractionMs = remember { AtomicLong(SystemClock.elapsedRealtime()) }
+    LaunchedEffect(isAmbient) {
+        if (!isAmbient) lastInteractionMs.set(SystemClock.elapsedRealtime())
+    }
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            delay(IDLE_POLL_MS)
+            if (SystemClock.elapsedRealtime() - lastInteractionMs.get() >= IDLE_TIMEOUT_MS) {
+                onFinish()
+                break
+            }
+        }
+    }
 
     // Interactive 1-second ticker loop (local CPU only, no BLE wakeups)
     LaunchedEffect(isAmbient, lap.startedAtEpochMs) {
@@ -253,10 +294,10 @@ fun QuickLogScreen(
         }
     }
 
-    // Inactivity timeout: 10 seconds auto-exit if left untouched
-    LaunchedEffect(Unit) {
-        delay(10_000L)
-        onFinish()
+    val listState = rememberScalingLazyListState()
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.centerItemIndex to listState.centerItemScrollOffset }
+            .collect { lastInteractionMs.set(SystemClock.elapsedRealtime()) }
     }
 
     val select: (WearActivity) -> Unit = { activity ->
@@ -268,7 +309,15 @@ fun QuickLogScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Night),
+            .background(Night)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent(PointerEventPass.Initial)
+                        lastInteractionMs.set(SystemClock.elapsedRealtime())
+                    }
+                }
+            },
         contentAlignment = Alignment.Center
     ) {
         if (isAmbient) {
@@ -280,6 +329,7 @@ fun QuickLogScreen(
 
             ScalingLazyColumn(
                 modifier = Modifier.fillMaxSize(),
+                state = listState,
                 contentPadding = PaddingValues(top = 26.dp, start = 14.dp, end = 14.dp, bottom = 26.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
