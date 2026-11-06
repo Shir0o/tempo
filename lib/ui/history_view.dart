@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../core/state/activity_suggestions.dart';
 import '../../core/state/auto_advance.dart';
@@ -306,6 +307,31 @@ class _HistoryViewState extends State<HistoryView> {
   String _recordName(Record record) =>
       _activitiesMap[record.activityId]?.name ?? 'Untracked';
 
+  /// Asks for a tag name and returns that tag, creating it unless one in
+  /// [existing] already has the name (any case).
+  Future<Tag?> _createTag(BuildContext context, List<Tag> existing) async {
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => const _NewTagDialog(),
+    );
+    if (name == null) return null;
+    for (final tag in existing) {
+      if (tag.name.toLowerCase() == name.toLowerCase()) return tag;
+    }
+    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+    final tag = Tag(
+      id: const Uuid().v4(),
+      name: name,
+      createdAtEpochMs: now,
+      updatedAtEpochMs: now,
+    );
+    await widget.database.insertTag(tag);
+    // insertTag may adopt the Contact flag for a tag named "Contact".
+    final saved = await widget.database.getTagById(tag.id) ?? tag;
+    if (mounted) setState(() => _tagsMap[saved.id] = saved);
+    return saved;
+  }
+
   /// The edit sheet. Start, end, Activity, note and tags are staged and
   /// applied on Save; Split, Merge next and Untrack apply at once.
   Future<void> _openEditRecordDialog(Record record) async {
@@ -319,7 +345,8 @@ class _HistoryViewState extends State<HistoryView> {
     var pendingActivityId = record.activityId;
     List<String> selectedTagIds = List.from(record.tagIds);
 
-    final allTags = _tagsMap.values.toList();
+    final allTags = _tagsMap.values.toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     final contactId = contactTagId(allTags);
     final savedReading = splitComment(record.comment).reading;
     final people = rankPeople(
@@ -706,7 +733,7 @@ class _HistoryViewState extends State<HistoryView> {
                       const SizedBox(height: 14),
 
                       // Note and tags
-                      SheetOverline(allTags.isEmpty ? 'Note' : 'Note & tags'),
+                      const SheetOverline('Note'),
                       const SizedBox(height: 2),
                       PeopleChips(
                         comment: commentController,
@@ -750,7 +777,9 @@ class _HistoryViewState extends State<HistoryView> {
                           ),
                         ),
                       ),
-                      if (allTags.isNotEmpty) ...[
+                      if (allTags.isNotEmpty || widget.dayRecorder != null) ...[
+                        const SizedBox(height: 14),
+                        const SheetOverline('Tags'),
                         const SizedBox(height: 2),
                         Wrap(
                           spacing: 6,
@@ -767,6 +796,29 @@ class _HistoryViewState extends State<HistoryView> {
                                     selectedTagIds.add(tag.id);
                                   }
                                 }),
+                              ),
+                            // Tags live in the phone's store; the Mac only
+                            // proposes Record changes, so it picks from these.
+                            if (widget.dayRecorder != null)
+                              SheetChip(
+                                label: '+ New tag',
+                                height: 32,
+                                selected: false,
+                                onTap: () async {
+                                  final tag = await _createTag(
+                                    context,
+                                    allTags,
+                                  );
+                                  if (tag == null) return;
+                                  setModalState(() {
+                                    if (!allTags.any((t) => t.id == tag.id)) {
+                                      allTags.add(tag);
+                                    }
+                                    if (!selectedTagIds.contains(tag.id)) {
+                                      selectedTagIds.add(tag.id);
+                                    }
+                                  });
+                                },
                               ),
                           ],
                         ),
@@ -1317,6 +1369,61 @@ class _HistoryViewState extends State<HistoryView> {
       note: record.comment,
       semanticsLabel: '$name, $timeRange, $durationStr$noteLabel. Edit',
       onTap: () => _openEditRecordDialog(record),
+    );
+  }
+}
+
+/// Asks for a new tag's name.
+class _NewTagDialog extends StatefulWidget {
+  const _NewTagDialog();
+
+  @override
+  State<_NewTagDialog> createState() => _NewTagDialogState();
+}
+
+class _NewTagDialogState extends State<_NewTagDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _controller.text.trim();
+    if (name.isEmpty) return;
+    Navigator.of(context).pop(name);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('New tag'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        textCapitalization: TextCapitalization.words,
+        onSubmitted: (_) => _submit(),
+        cursorColor: TempoColors.ink,
+        style: TempoText.body.copyWith(color: TempoColors.ink),
+        decoration: InputDecoration(
+          hintText: 'e.g. Travel',
+          hintStyle: TempoText.body.copyWith(color: TempoColors.inkFaint),
+        ),
+      ),
+      actions: [
+        TextButton(
+          style: TextButton.styleFrom(foregroundColor: TempoColors.ink),
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          style: TextButton.styleFrom(foregroundColor: TempoColors.ink),
+          onPressed: _submit,
+          child: const Text('Add'),
+        ),
+      ],
     );
   }
 }
