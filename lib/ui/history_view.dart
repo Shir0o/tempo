@@ -570,6 +570,71 @@ class _HistoryViewState extends State<HistoryView> {
                       ),
                       const SizedBox(height: 16),
 
+
+                      // Activity
+                      const SheetOverline('Activity'),
+                      const SizedBox(height: 2),
+                      Wrap(
+                        spacing: 6,
+                        children: [
+                          for (final activity in activities)
+                            SheetChip(
+                              label: activity.name,
+                              swatch: UiHelpers.parseHexColor(
+                                activity.colorHex,
+                              ),
+                              selected: activity.id == pendingActivityId,
+                              onTap: () => setModalState(
+                                () => pendingActivityId = activity.id,
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+
+                      // Note and tags
+                      SheetOverline(allTags.isEmpty ? 'Note' : 'Note & tags'),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: commentController,
+                        cursorColor: TempoColors.ink,
+                        style: TempoText.body.copyWith(color: TempoColors.ink),
+                        decoration: InputDecoration(
+                          hintText: 'Add a note',
+                          hintStyle: TempoText.body.copyWith(
+                            color: TempoColors.inkFaint,
+                          ),
+                          filled: true,
+                          fillColor: TempoColors.paper,
+                          contentPadding: const EdgeInsets.all(14),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(TempoRadii.row),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                      ),
+                      if (allTags.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Wrap(
+                          spacing: 6,
+                          children: [
+                            for (final tag in allTags)
+                              SheetChip(
+                                label: tag.name,
+                                height: 32,
+                                selected: selectedTagIds.contains(tag.id),
+                                onTap: () => setModalState(() {
+                                  if (selectedTagIds.contains(tag.id)) {
+                                    selectedTagIds.remove(tag.id);
+                                  } else {
+                                    selectedTagIds.add(tag.id);
+                                  }
+                                }),
+                              ),
+                          ],
+                        ),
+                      ],
+                      const SizedBox(height: 14),
                       // Edge steppers: each moves one edge of this Record.
                       // Time it gives up becomes Untracked; it only grows into
                       // time that is already Untracked.
@@ -641,71 +706,6 @@ class _HistoryViewState extends State<HistoryView> {
                         ),
                       ),
                       const SizedBox(height: 16),
-
-                      // Activity
-                      const SheetOverline('Activity'),
-                      const SizedBox(height: 2),
-                      Wrap(
-                        spacing: 6,
-                        children: [
-                          for (final activity in activities)
-                            SheetChip(
-                              label: activity.name,
-                              swatch: UiHelpers.parseHexColor(
-                                activity.colorHex,
-                              ),
-                              selected: activity.id == pendingActivityId,
-                              onTap: () => setModalState(
-                                () => pendingActivityId = activity.id,
-                              ),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 14),
-
-                      // Note and tags
-                      SheetOverline(allTags.isEmpty ? 'Note' : 'Note & tags'),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: commentController,
-                        cursorColor: TempoColors.ink,
-                        style: TempoText.body.copyWith(color: TempoColors.ink),
-                        decoration: InputDecoration(
-                          hintText: 'Add a note',
-                          hintStyle: TempoText.body.copyWith(
-                            color: TempoColors.inkFaint,
-                          ),
-                          filled: true,
-                          fillColor: TempoColors.paper,
-                          contentPadding: const EdgeInsets.all(14),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(TempoRadii.row),
-                            borderSide: BorderSide.none,
-                          ),
-                        ),
-                      ),
-                      if (allTags.isNotEmpty) ...[
-                        const SizedBox(height: 2),
-                        Wrap(
-                          spacing: 6,
-                          children: [
-                            for (final tag in allTags)
-                              SheetChip(
-                                label: tag.name,
-                                height: 32,
-                                selected: selectedTagIds.contains(tag.id),
-                                onTap: () => setModalState(() {
-                                  if (selectedTagIds.contains(tag.id)) {
-                                    selectedTagIds.remove(tag.id);
-                                  } else {
-                                    selectedTagIds.add(tag.id);
-                                  }
-                                }),
-                              ),
-                          ],
-                        ),
-                      ],
-                      const SizedBox(height: 14),
 
                       // Split, merge and untrack apply at once.
                       Row(
