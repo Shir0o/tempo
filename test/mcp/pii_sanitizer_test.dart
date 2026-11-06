@@ -139,6 +139,29 @@ void main() {
       expect(disabledSanitizer.sanitize(input), equals(input));
     });
 
+    test('masks every name in a comma-separated list after w/ or with', () {
+      expect(sanitizer.sanitize('John 4 w/ Sam'), equals('John 4 w/ [Contact-1]'));
+      expect(
+        sanitizer.sanitize('John 4 w/ Sam, Lee'),
+        equals('John 4 w/ [Contact-1], [Contact-2]'),
+      );
+      expect(
+        sanitizer.sanitize('Dinner w/ Sam, Lee Park, Ana'),
+        equals('Dinner w/ [Contact-1], [Contact-3], [Contact-4]'),
+      );
+      expect(
+        sanitizer.sanitize('Lunch with Ana, Sam'),
+        equals('Lunch with [Contact-4], [Contact-1]'),
+      );
+    });
+
+    test('list masking stops at a non-comma separator', () {
+      expect(
+        sanitizer.sanitize('w/ Sam, Lee. Then the park'),
+        equals('w/ [Contact-1], [Contact-2]. Then the park'),
+      );
+    });
+
     test('reset clears contact counter and mapping', () {
       sanitizer.sanitize('w/ Alice Smith');
       expect(sanitizer.contactMap['alice smith'], equals('[Contact-1]'));
