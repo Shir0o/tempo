@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/state/day_recorder.dart';
+import '../../core/state/people_index.dart';
 import '../../core/state/record_commands.dart';
 import '../../core/sync/intent_queue.dart';
 import '../../data/database/tempo_database.dart';
@@ -12,6 +13,7 @@ import '../../data/models/sync_change.dart';
 import '../core/time/timezone_id.dart';
 import 'helpers/ui_helpers.dart';
 import 'history/history_widgets.dart';
+import 'note_sheet.dart';
 import 'theme/tempo_theme.dart';
 
 /// History: each Day as a header card with its 00–24 strip, then a timeline
@@ -311,6 +313,12 @@ class _HistoryViewState extends State<HistoryView> {
     List<String> selectedTagIds = List.from(record.tagIds);
 
     final allTags = _tagsMap.values.toList();
+    final contactId = contactTagId(allTags);
+    final people = rankPeople(
+      _records,
+      nowEpochMs: DateTime.now().toUtc().millisecondsSinceEpoch,
+      activityId: record.activityId,
+    );
     final activities = _chooserActivities();
     final current = _activitiesMap[record.activityId];
     if (current != null && current.isArchived) activities.insert(0, current);
@@ -594,7 +602,19 @@ class _HistoryViewState extends State<HistoryView> {
 
                       // Note and tags
                       SheetOverline(allTags.isEmpty ? 'Note' : 'Note & tags'),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 2),
+                      PeopleChips(
+                        comment: commentController,
+                        suggestions: people,
+                        onPeopleChanged: (names) => setModalState(
+                          () => selectedTagIds = tagIdsWithContact(
+                            selectedTagIds,
+                            contactId,
+                            hasPeople: names.isNotEmpty,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
                       TextField(
                         controller: commentController,
                         cursorColor: TempoColors.ink,

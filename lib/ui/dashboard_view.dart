@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/state/day_recorder.dart';
+import '../../core/state/people_index.dart';
 import '../../core/state/record_commands.dart';
 import '../../core/state/suggestion_engine.dart';
 import '../../core/state/today_order.dart';
@@ -15,6 +16,7 @@ import '../../data/models/models.dart';
 import 'activity_manager_view.dart';
 import 'helpers/activity_order.dart';
 import 'helpers/ui_helpers.dart';
+import 'note_sheet.dart';
 import 'theme/tempo_theme.dart';
 
 /// Phone home screen, laid out as design D (Color Blocks): a hatched Lap panel
@@ -75,7 +77,14 @@ class _UndoState {
   final String message;
   final DateTime deadline;
 
-  const _UndoState({required this.message, required this.deadline});
+  /// The Record the label or split just closed.
+  final Record record;
+
+  const _UndoState({
+    required this.message,
+    required this.deadline,
+    required this.record,
+  });
 
   int get secondsLeft {
     final ms = deadline.difference(DateTime.now()).inMilliseconds;
@@ -277,9 +286,17 @@ class _DashboardViewState extends State<DashboardView>
     }
   }
 
-  Future<void> _labelActivity(Activity activity) async {
+  Future<void> _labelActivity(
+    Activity activity, {
+    String comment = '',
+    List<String> tagIds = const [],
+  }) async {
     try {
-      final record = await _commands.label(activity.id);
+      final record = await _commands.label(
+        activity.id,
+        comment: comment,
+        tags: tagIds,
+      );
       await _loadData();
       if (record == null) {
         _showQueued('${activity.name} is waiting for the phone.');
@@ -358,8 +375,94 @@ class _DashboardViewState extends State<DashboardView>
       _undo = _UndoState(
         message: message,
         deadline: DateTime.now().add(_undoWindow),
+        record: record,
       );
     });
+  }
+
+  /// The Tags and the People to offer in the note sheet, People seen with
+  /// [activityId] first.
+  Future<({List<Tag> tags, List<String> people})> _noteChoices(
+    String? activityId,
+  ) async {
+    final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+    final tags = await widget.database.getAllTags();
+    final records = await widget.database.getRecords(
+      trackedOnly: true,
+      startedAfter: nowMs - const Duration(days: 365).inMilliseconds,
+      orderBy: 'ended_at_epoch_ms DESC',
+      limit: 2000,
+    );
+    return (
+      tags: tags,
+      people: rankPeople(records, nowEpochMs: nowMs, activityId: activityId),
+    );
+  }
+
+  /// "Add note" on the undo bar: People, comment and Tags for the Record the
+  /// label just closed, saved through the annotate command.
+  Future<void> _addNote(Record record) async {
+    setState(() => _undo = null);
+    final activity = _activitiesById[record.activityId];
+    try {
+      final choices = await _noteChoices(record.activityId);
+      if (!mounted) return;
+      final note = await showNoteSheet(
+        context,
+        activityName: activity?.name ?? 'Record',
+        activityColor: UiHelpers.parseHexColor(activity?.colorHex),
+        subtitle:
+            '${_rangeLabel(record)} · '
+            '${UiHelpers.formatDurationHuman(record.durationMs)}',
+        tags: choices.tags,
+        people: choices.people,
+        initialComment: record.comment,
+        initialTagIds: record.tagIds,
+      );
+      if (note == null) return;
+      final saved = await _commands.annotate(
+        record.id,
+        comment: note.comment,
+        tagIds: note.tagIds,
+      );
+      await _loadData();
+      if (saved == null) _showQueued('The note is waiting for the phone.');
+    } catch (e) {
+      _showError('Failed to save the note: $e');
+    }
+  }
+
+  /// Long-press on an Activity block: the note sheet before logging. Logging
+  /// labels the Lap with the note and Tags in one command, so a replica
+  /// queues a single proposal.
+  Future<void> _noteThenLabel(Activity activity) async {
+    final lap = _lap;
+    final since = lap == null
+        ? '--:--'
+        : DateFormat('HH:mm')
+              .format(wallClockAt(_lapStartZoneId, lap.startedAtEpochMs));
+    try {
+      final choices = await _noteChoices(activity.id);
+      if (!mounted) return;
+      final note = await showNoteSheet(
+        context,
+        activityName: activity.name,
+        activityColor: UiHelpers.parseHexColor(activity.colorHex),
+        subtitle: '$since–now · ${UiHelpers.formatDurationHuman(_elapsedMs)}',
+        tags: choices.tags,
+        people: choices.people,
+        confirmLabel: 'Log ${activity.name}',
+        dismissLabel: 'Cancel',
+      );
+      if (note == null) return;
+      await _labelActivity(
+        activity,
+        comment: note.comment,
+        tagIds: note.tagIds,
+      );
+    } catch (e) {
+      _showError('Failed to open the note: $e');
+    }
   }
 
   void _showError(String message) {
@@ -980,7 +1083,7 @@ class _DashboardViewState extends State<DashboardView>
       button: true,
       label:
           '${activity.name}, $total today. Tap to label the untracked time as '
-          '${activity.name}.',
+          '${activity.name}. Long-press to add a note first.',
       child: ExcludeSemantics(
         child: Material(
           color: color,
@@ -989,7 +1092,7 @@ class _DashboardViewState extends State<DashboardView>
           child: InkWell(
             key: ValueKey('activity-block-${activity.id}'),
             onTap: () => _labelActivity(activity),
-            onLongPress: _openActivityManager,
+            onLongPress: () => _noteThenLabel(activity),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 14),
               child: Row(
@@ -1060,6 +1163,21 @@ class _DashboardViewState extends State<DashboardView>
                 ),
               ),
             ),
+            if (undo.record.activityId != null)
+              TextButton(
+                onPressed: () => _addNote(undo.record),
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(0, 48),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  textStyle: const TextStyle(
+                    fontFamily: _fontFamily,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                child: const Text('Add note'),
+              ),
             TextButton(
               onPressed: _undoLast,
               style: TextButton.styleFrom(
