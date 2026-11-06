@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/speech/speech_input.dart';
+import '../../core/state/activity_filter_controller.dart';
 import '../../core/state/auto_advance.dart';
 import '../../core/state/day_recorder.dart';
 import '../../core/state/note_suggestions.dart';
@@ -15,6 +17,7 @@ import '../../core/state/today_order.dart';
 import '../../core/time/timezone_id.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
+import 'activity_filter_sheet.dart';
 import 'activity_manager_view.dart';
 import 'helpers/activity_order.dart';
 import 'helpers/ui_helpers.dart';
@@ -46,6 +49,12 @@ class DashboardView extends StatefulWidget {
   /// this page can reload its catalog.
   final ValueListenable<int>? catalogRevision;
 
+  /// Android-only filter capability. False on the Mac and in most tests.
+  final bool showActivityFilter;
+
+  /// The platform speech seam; null when speech is unavailable.
+  final SpeechInput? speechInput;
+
   const DashboardView({
     super.key,
     this.dayRecorder,
@@ -55,6 +64,8 @@ class DashboardView extends StatefulWidget {
     this.onOpenHistory,
     this.todayOrder,
     this.catalogRevision,
+    this.showActivityFilter = false,
+    this.speechInput,
   });
 
   @override
@@ -125,6 +136,11 @@ class _DashboardViewState extends State<DashboardView>
   _UndoState? _undo;
   bool _isLoading = true;
 
+  ActivityFilterController? _filterController;
+  bool _filterOpen = false;
+  bool _pickingFromFilter = false;
+  final FocusNode _filterFocusNode = FocusNode();
+
   int _dayStartMs = 0;
   int _dayEndMs = 0;
 
@@ -163,6 +179,7 @@ class _DashboardViewState extends State<DashboardView>
     widget.dayRecorder?.lapListenable.removeListener(_onLapChanged);
     widget.todayOrder?.removeListener(_onOrderChanged);
     widget.catalogRevision?.removeListener(_onCatalogChanged);
+    _filterFocusNode.dispose();
     super.dispose();
   }
 
@@ -178,7 +195,11 @@ class _DashboardViewState extends State<DashboardView>
   }
 
   void _onLapChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    if (_filterOpen && !_pickingFromFilter) {
+      Navigator.of(context).maybePop();
+    }
+    setState(() {});
   }
 
   /// The Today page's order changed in Settings; re-lay out the same catalog.
@@ -285,6 +306,7 @@ class _DashboardViewState extends State<DashboardView>
           _isLoading = false;
         });
         unawaited(_loadCombos(activities, suggested));
+        _filterController?.setCatalog(archived);
       }
     } catch (_) {
       if (mounted) setState(() => _isLoading = false);
@@ -976,48 +998,102 @@ class _DashboardViewState extends State<DashboardView>
               .format(wallClockAt(_lapStartZoneId, lap.startedAtEpochMs));
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 26, 20, 14),
-      child: Column(
+      padding: const EdgeInsets.fromLTRB(20, 26, 12, 14),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'What was it?',
-            style: TextStyle(
-              fontFamily: _fontFamily,
-              color: Colors.white,
-              fontSize: 24,
-              fontWeight: FontWeight.w600,
-              letterSpacing: -0.5,
-            ),
-          ),
-          const SizedBox(height: 3),
-          Row(
-            children: [
-              Text.rich(
-                TextSpan(
-                  text: 'Tap to log ',
-                  style: const TextStyle(color: Colors.white60),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'What was it?',
+                  style: TextStyle(
+                    fontFamily: _fontFamily,
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.5,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Row(
                   children: [
-                    TextSpan(
-                      text: '$since → now',
+                    Text.rich(
+                      TextSpan(
+                        text: 'Tap to log ',
+                        style: const TextStyle(color: Colors.white60),
+                        children: [
+                          TextSpan(
+                            text: '$since → now',
+                            style: const TextStyle(
+                              color: _accent,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
                       style: const TextStyle(
-                        color: _accent,
-                        fontWeight: FontWeight.w600,
+                        fontFamily: _fontFamily,
+                        fontSize: 12.5,
+                        fontFeatures: [FontFeature.tabularFigures()],
                       ),
                     ),
                   ],
                 ),
-                style: const TextStyle(
-                  fontFamily: _fontFamily,
-                  fontSize: 12.5,
-                  fontFeatures: [FontFeature.tabularFigures()],
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
+          if (widget.showActivityFilter)
+            IconButton(
+              key: const ValueKey('activity-filter-button'),
+              focusNode: _filterFocusNode,
+              tooltip: 'Filter Activities',
+              onPressed: _openFilter,
+              icon: const Icon(Icons.search, color: Colors.white70),
+            ),
         ],
       ),
     );
+  }
+
+  Future<void> _openFilter() async {
+    final controller = ActivityFilterController();
+    _filterController = controller;
+    _filterOpen = true;
+    final lap = _lap;
+    final since = lap == null
+        ? '--:--'
+        : DateFormat('HH:mm')
+              .format(wallClockAt(_lapStartZoneId, lap.startedAtEpochMs));
+    final data = FilterSheetData(
+      lapLabel:
+          'Label $since → now · ${UiHelpers.formatDurationHuman(_elapsedMs)}',
+      durations: _todayActivityDurations,
+      categoryNames: {for (final c in _categories) c.id: c.name},
+    );
+
+    await showActivityFilterSheet(
+      context: context,
+      controller: controller,
+      catalog: _activitiesById.values.toList(),
+      speechInput: widget.speechInput,
+      data: data,
+      onPick: (activity) async {
+        _pickingFromFilter = true;
+        try {
+          await _labelActivity(activity);
+        } finally {
+          _pickingFromFilter = false;
+        }
+      },
+      onManageActivities: _openActivityManager,
+    );
+
+    controller.dispose();
+    _filterController = null;
+    _filterOpen = false;
+    if (mounted) _filterFocusNode.requestFocus();
   }
 
   /// Suggestions in two rows: Activity-with-note combos under WITH NOTE,

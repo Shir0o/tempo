@@ -14,6 +14,7 @@ import 'package:uuid/uuid.dart';
 import 'core/backup/backup_destination.dart';
 import 'core/backup/backup_service.dart';
 import 'core/export/csv_export_engine.dart';
+import 'core/speech/speech_input.dart';
 import 'core/state/day_recorder.dart';
 import 'core/state/record_commands.dart';
 import 'core/sync/discovery.dart';
@@ -125,6 +126,11 @@ Future<void> main() async {
     }
   }
 
+  final isAndroid = !kIsWeb && Platform.isAndroid;
+  final SpeechInput? speechInput = isAndroid
+      ? const MethodChannelSpeechInput()
+      : null;
+
   runApp(
     TempoApp(
       commands: commands,
@@ -135,6 +141,8 @@ Future<void> main() async {
       syncService: driveSyncService,
       backupService: backupService,
       exportEngine: exportEngine,
+      showActivityFilter: isAndroid,
+      speechInput: speechInput,
     ),
   );
 }

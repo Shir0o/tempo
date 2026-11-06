@@ -1,0 +1,202 @@
+[
+  {
+    "phrase": "Cleaning",
+    "expectedActivityId": "act-01",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Clean house",
+    "expectedActivityId": "act-02",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Laundry",
+    "expectedActivityId": "act-03",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Reading",
+    "expectedActivityId": "act-04",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Walk the dog",
+    "expectedActivityId": "act-05",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Cooking",
+    "expectedActivityId": "act-06",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Meals",
+    "expectedActivityId": "act-07",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Commute",
+    "expectedActivityId": "act-08",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Deep Work",
+    "expectedActivityId": "act-09",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Email",
+    "expectedActivityId": "act-10",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Errands",
+    "expectedActivityId": "act-11",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Exercise",
+    "expectedActivityId": "act-12",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Meditation",
+    "expectedActivityId": "act-13",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Sleep",
+    "expectedActivityId": "act-14",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Nap",
+    "expectedActivityId": "act-15",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Shower",
+    "expectedActivityId": "act-16",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Getting ready",
+    "expectedActivityId": "act-17",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Grocery run",
+    "expectedActivityId": "act-18",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Dishes",
+    "expectedActivityId": "act-19",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Tidying",
+    "expectedActivityId": "act-20",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Water plants",
+    "expectedActivityId": "act-21",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Phone call",
+    "expectedActivityId": "act-22",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Meeting",
+    "expectedActivityId": "act-23",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Writing",
+    "expectedActivityId": "act-24",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Planning",
+    "expectedActivityId": "act-25",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Budgeting",
+    "expectedActivityId": "act-26",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Repairs",
+    "expectedActivityId": "act-27",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Garden",
+    "expectedActivityId": "act-28",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Playing music",
+    "expectedActivityId": "act-29",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Watching TV",
+    "expectedActivityId": "act-30",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Gaming",
+    "expectedActivityId": "act-31",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Coffee",
+    "expectedActivityId": "act-32",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Tea",
+    "expectedActivityId": "act-33",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "Café",
+    "expectedActivityId": "act-34",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "um cleaning the kitchen",
+    "expectedActivityId": "act-01",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "I was doing laundry",
+    "expectedActivityId": "act-03",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "reading before bed",
+    "expectedActivityId": "act-04",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "walk the dog outside",
+    "expectedActivityId": "act-05",
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "qqqq",
+    "expectedActivityId": null,
+    "mustNotBeFirst": null
+  },
+  {
+    "phrase": "zxcvbn",
+    "expectedActivityId": null,
+    "mustNotBeFirst": null
+  }
+]

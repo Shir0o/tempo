@@ -229,6 +229,9 @@ Ledger Paper bottom sheet, ordered by how often each part changes. Header: Activ
 ### Activity picker
 Opened from "Change" or "All N" over the edit sheet. Back chevron, "Change Activity" and the times; a search field that opens the keyboard; "Around HH:mm" as three Activity blocks; then every Activity as 48px rows under its Category (Categories in their order, A–Z inside), a check on the current one. Picking stages it on the edit sheet; Save applies.
 
+### Activity filter sheet
+Ledger Paper bottom sheet at 70% height, opened from the magnifier in "What was it?". Header "Find an Activity" with the context line "Label 10:06 → now · 25m". Search field on Insert Paper with a clear × and an optional mic. Result rows are 48px tall with a 16px radius: 16px colour swatch (5px radius), name at 600, optional uppercase category, and today's total right-aligned in tabular figures. The empty state names the query and offers Clear and Manage Activities.
+
 ### Undo bar
 Night Card, 16px radius: "Logged **Errands** 08:42–10:06" and a lime text button "Undo · 3" counting down.
 

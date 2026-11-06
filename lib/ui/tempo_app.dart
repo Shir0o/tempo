@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/backup/backup_service.dart';
 import '../../core/export/csv_export_engine.dart';
+import '../../core/speech/speech_input.dart';
 import '../../core/state/day_recorder.dart';
 import '../../core/state/record_commands.dart';
 import '../../core/state/today_order.dart';
@@ -46,6 +47,12 @@ class TempoApp extends StatefulWidget {
   final BackupService? backupService;
   final CsvExportEngine? exportEngine;
 
+  /// Android-only Activity filter capability.
+  final bool showActivityFilter;
+
+  /// Platform speech seam; null on the Mac and in tests.
+  final SpeechInput? speechInput;
+
   const TempoApp({
     super.key,
     this.dayRecorder,
@@ -58,6 +65,8 @@ class TempoApp extends StatefulWidget {
     this.syncService,
     this.backupService,
     this.exportEngine,
+    this.showActivityFilter = false,
+    this.speechInput,
   });
 
   @override
@@ -127,6 +136,8 @@ class _TempoAppState extends State<TempoApp> with WidgetsBindingObserver {
         commands: widget.commands,
         todayOrder: _todayOrder,
         catalogRevision: _catalogRevision,
+        showActivityFilter: widget.showActivityFilter,
+        speechInput: widget.speechInput,
         onNavigateToStats: () => setState(() => _currentTabIndex = 2),
         onOpenHistory: () => setState(() => _currentTabIndex = 1),
       ),
