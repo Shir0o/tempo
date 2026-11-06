@@ -833,6 +833,36 @@ CREATE TABLE IF NOT EXISTS settings (
     return Record.fromMap(results.first, tagIds: tagIds);
   }
 
+  /// The lean history the suggestion engine needs: activity id, start instant,
+  /// and start zone only. No tags, no full Record hydration.
+  ///
+  /// Rows are read newest-first so [limit] keeps the most recent evidence, then
+  /// reversed to the ascending order the engine requires.
+  Future<List<SuggestionObservation>> getSuggestionHistory({
+    required int startedAfter,
+    required int startedBefore,
+    int? limit,
+  }) async {
+    final rows = await _db.query(
+      'records',
+      columns: ['activity_id', 'started_at_epoch_ms', 'timezone_id'],
+      where: 'started_at_epoch_ms >= ? AND started_at_epoch_ms <= ?',
+      whereArgs: [startedAfter, startedBefore],
+      orderBy: 'started_at_epoch_ms DESC, rowid DESC',
+      limit: limit,
+    );
+    final observations = rows
+        .map(
+          (row) => SuggestionObservation(
+            activityId: row['activity_id'] as String?,
+            startedAtEpochMs: row['started_at_epoch_ms'] as int,
+            timezoneId: row['timezone_id'] as String,
+          ),
+        )
+        .toList();
+    return observations.reversed.toList(growable: false);
+  }
+
   Future<List<Record>> getRecords({
     int? startedAfter,
     int? startedBefore,

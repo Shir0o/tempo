@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 
 import '../core/state/day_recorder.dart';
-import '../core/state/suggestion_engine.dart';
+import '../core/state/suggestion_loader.dart';
 import '../core/time/timezone_id.dart';
 import '../data/database/tempo_database.dart';
 import '../data/models/activity.dart';
@@ -109,9 +109,6 @@ class WatchActionResult {
 class WearableSyncService {
   static const String channelName = 'com.tempos.tracker/wearable';
 
-  /// The window the watch tile ranks Activities over.
-  static const Duration tileActivityWindow = Duration(days: 14);
-
   /// How many Activities the watch tile offers.
   static const int tileActivityCount = 3;
 
@@ -202,35 +199,18 @@ class WearableSyncService {
     }
   }
 
-  /// The ids of the top suggested Activities over [tileActivityWindow] using
-  /// [ContextualSuggestionEngine], filling remaining slots with remaining activities.
+  /// The ids of the top suggested Activities over the engine's history window
+  /// using [loadSuggestions], filling remaining slots with remaining activities.
   Future<List<String>> _tileActivityIds(List<Activity> activities) async {
     final db = database;
     if (db == null) return const [];
 
     final now = _nowUtcMs();
     final timezone = localTimezoneId();
-    final since = now - tileActivityWindow.inMilliseconds;
-
-    final history = await db.getRecords(
-      startedAfter: since,
-      orderBy: 'started_at_epoch_ms ASC',
-    );
-
-    final lastClosed = await db.getRecords(
-      trackedOnly: true,
-      limit: 1,
-      orderBy: 'ended_at_epoch_ms DESC, rowid DESC',
-    );
-    final precedingActivityId = lastClosed.isNotEmpty
-        ? lastClosed.first.activityId
-        : null;
-
-    final suggested = const ContextualSuggestionEngine().rank(
+    final suggested = await loadSuggestions(
+      database: db,
       candidates: activities,
-      history: history,
-      precedingActivityId: precedingActivityId,
-      targetEpochMs: now,
+      nowEpochMs: now,
       timezoneId: timezone,
       limit: tileActivityCount,
     );

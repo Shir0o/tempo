@@ -166,7 +166,7 @@ void main() {
     );
 
     test(
-      'tile slots are the three most-used Activities of the last 14 days',
+      'tile slots are the three most useful Activities in the history window',
       () async {
         await db.insertActivity(
           const Activity(
@@ -204,7 +204,7 @@ void main() {
       },
     );
 
-    test('tile slots ignore labels older than 14 days', () async {
+    test('tile slots decay older labels instead of dropping them', () async {
       syncService.initialize();
       methodCalls.clear();
 
