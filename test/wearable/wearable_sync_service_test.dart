@@ -396,6 +396,50 @@ void main() {
       expect(await db.getRecords(), hasLength(1));
     });
 
+    test(
+      'a repeated LABEL at the Lap start is refused, not written as 0s',
+      () async {
+        syncService.initialize();
+        await pumpEventQueue();
+        mockTime += const Duration(minutes: 1).inMilliseconds;
+        final tappedAt = mockTime;
+
+        await receiveWatchAction({
+          'action': 'LABEL',
+          'activityId': 'act-coding',
+          'timestampEpochMs': tappedAt,
+          'zoneId': 'America/Los_Angeles',
+          'actionId': 'evt-zero-first',
+          'actionSeq': 1,
+          'deviceId': 'watch-1',
+        });
+        expect(await db.getRecords(), hasLength(1));
+
+        // A watch still on an older build re-sends the same tap with no
+        // sequence, so the watermark cannot catch it. Its instant is now the
+        // open Lap's start, so it would close a zero-second Record.
+        await receiveWatchAction({
+          'action': 'LABEL',
+          'activityId': 'act-coding',
+          'timestampEpochMs': tappedAt,
+          'zoneId': 'America/Los_Angeles',
+          'actionId': 'evt-zero-second',
+          'deviceId': 'watch-1',
+        });
+
+        final records = await db.getRecords();
+        expect(records, hasLength(1));
+        expect(
+          records.single.endedAtEpochMs - records.single.startedAtEpochMs,
+          greaterThan(0),
+        );
+        final ack =
+            methodCalls.lastWhere((call) => call.method == 'syncLap').arguments
+                as Map;
+        expect(ack['rejectedActionIds'], contains('evt-zero-second'));
+      },
+    );
+
     test('the watermark survives a service restart', () async {
       syncService.initialize();
       await pumpEventQueue();

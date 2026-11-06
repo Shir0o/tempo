@@ -300,12 +300,17 @@ class WearableSyncService {
       return await _reject(action, IntentResult.reasonClockSkew);
     }
 
-    // A tap older than the open Lap belongs to time the phone has already
-    // closed. Refuse it rather than re-place it somewhere it did not happen.
+    // A tap that is not strictly after the open Lap's start contributes no
+    // time: applying it would write a zero-second Record. A duplicate delivery
+    // of the label that opened the Lap looks exactly like this (its tap instant
+    // equals the Lap start), so it is refused rather than written. Older taps
+    // belong to time the phone has already closed and are refused for the same
+    // reason.
+    await dayRecorder.initialize();
     final lap = dayRecorder.lap;
     if (type != 'UNDO' &&
         lap != null &&
-        lap.startedAtEpochMs > action.timestampEpochMs) {
+        lap.startedAtEpochMs >= action.timestampEpochMs) {
       return await _reject(action, IntentResult.reasonLapMoved);
     }
 
