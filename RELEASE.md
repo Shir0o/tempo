@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.10.1](https://github.com/Shir0o/tempo/compare/v1.10.0...v1.10.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* **release:** keep restricted entitlements out of macOS builds ([#84](https://github.com/Shir0o/tempo/issues/84)) ([e73e885](https://github.com/Shir0o/tempo/commit/e73e8856e60258df536a6abadde87b12b74a2151))
+* **wear:** one label per tap and a real idle timer (closes [#83](https://github.com/Shir0o/tempo/issues/83)) ([#86](https://github.com/Shir0o/tempo/issues/86)) ([cddf715](https://github.com/Shir0o/tempo/commit/cddf71552ed16633841c1eb995d34afdaae400f9))
+
 ## [1.10.0](https://github.com/Shir0o/tempo/compare/v1.9.1...v1.10.0) (2026-11-06)
 
 
