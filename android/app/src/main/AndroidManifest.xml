@@ -92,5 +92,10 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- Lets the Activity filter resolve the system speech recognizer on
+             Android 11+ without declaring RECORD_AUDIO. -->
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH"/>
+        </intent>
     </queries>
 </manifest>

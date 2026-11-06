@@ -20,6 +20,7 @@ A locked product and technical architecture specification (`PRODUCT.md`, `CONTEX
 - [07: Author Product and Architecture Specification](issues/07-author-product-and-architecture-spec.md): Destination reached; finalized canonical `PRODUCT.md`, locked domain in `CONTEXT.md`, and generated a sequenced 15-ticket implementation backlog across 5 phases.
 
 - [08: Retrospective Day Record & Color Blocks Dashboard](specs/08-retrospective-day-record-and-color-blocks-dashboard.md): Tempo becomes a plain, continuous midnight-to-midnight record — an always-running Lap labeled after the fact, no pause/stop/GuardedStop, Untracked Records, Boundary edits, MidnightSplit, start/end IANA zones; phone dashboard is design D (Color Blocks). Status: ready-for-agent.
+- [09: Voice-Assisted Activity Filtering](../../docs/designs/voice_assisted_activity_filtering.md): A modal-sheet typed Activity filter with a platform speech hand-off (`ACTION_RECOGNIZE_SPEECH`, no `RECORD_AUDIO`), Android-only, gated on a 49-Activity catalog. Status: proposed.
 
 ## Not yet specified
 

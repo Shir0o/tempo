@@ -106,6 +106,7 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
 
         flutterEngine.plugins.add(BackupDestinationChannel())
         flutterEngine.plugins.add(PairingSecretChannel())
+        flutterEngine.plugins.add(SpeechRecognitionBridge())
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

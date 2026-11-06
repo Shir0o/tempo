@@ -82,7 +82,11 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         debugShowCheckedModeBanner: false,
-        home: DashboardView(dayRecorder: dayRecorder, database: db),
+        home: DashboardView(
+          dayRecorder: dayRecorder,
+          database: db,
+          showActivityFilter: true,
+        ),
       ),
     );
     await tester.pump();

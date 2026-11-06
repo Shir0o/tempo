@@ -1,0 +1,242 @@
+[
+  {
+    "id": "act-01",
+    "name": "Cleaning",
+    "categoryId": "home",
+    "isArchived": false
+  },
+  {
+    "id": "act-02",
+    "name": "Clean house",
+    "categoryId": "home",
+    "isArchived": false
+  },
+  {
+    "id": "act-03",
+    "name": "Laundry",
+    "categoryId": "home",
+    "isArchived": false
+  },
+  {
+    "id": "act-04",
+    "name": "Reading",
+    "categoryId": "home",
+    "isArchived": false
+  },
+  {
+    "id": "act-05",
+    "name": "Walk the dog",
+    "categoryId": "home",
+    "isArchived": false
+  },
+  {
+    "id": "act-06",
+    "name": "Cooking",
+    "categoryId": "home",
+    "isArchived": false
+  },
+  {
+    "id": "act-07",
+    "name": "Meals",
+    "categoryId": "home",
+    "isArchived": false
+  },
+  {
+    "id": "act-08",
+    "name": "Commute",
+    "categoryId": "home",
+    "isArchived": false
+  },
+  {
+    "id": "act-09",
+    "name": "Deep Work",
+    "categoryId": "home",
+    "isArchived": false
+  },
+  {
+    "id": "act-10",
+    "name": "Email",
+    "categoryId": "home",
+    "isArchived": false
+  },
+  {
+    "id": "act-11",
+    "name": "Errands",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-12",
+    "name": "Exercise",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-13",
+    "name": "Meditation",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-14",
+    "name": "Sleep",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-15",
+    "name": "Nap",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-16",
+    "name": "Shower",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-17",
+    "name": "Getting ready",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-18",
+    "name": "Grocery run",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-19",
+    "name": "Dishes",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-20",
+    "name": "Tidying",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-21",
+    "name": "Water plants",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-22",
+    "name": "Phone call",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-23",
+    "name": "Meeting",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-24",
+    "name": "Writing",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-25",
+    "name": "Planning",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-26",
+    "name": "Budgeting",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-27",
+    "name": "Repairs",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-28",
+    "name": "Garden",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-29",
+    "name": "Playing music",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-30",
+    "name": "Watching TV",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-31",
+    "name": "Gaming",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-32",
+    "name": "Coffee",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-33",
+    "name": "Tea",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-34",
+    "name": "Café",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-35",
+    "name": "Journalling",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-36",
+    "name": "Stretching",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-37",
+    "name": "Yoga",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-38",
+    "name": "Cycling",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-39",
+    "name": "Swimming",
+    "categoryId": "life",
+    "isArchived": false
+  },
+  {
+    "id": "act-40",
+    "name": "Old project",
+    "categoryId": "life",
+    "isArchived": true
+  }
+]
