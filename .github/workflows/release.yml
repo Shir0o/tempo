@@ -318,6 +318,19 @@ jobs:
       - name: Build release macOS app
         run: flutter build macos --release --no-tree-shake-icons --build-number="$VERSION_CODE"
 
+      - name: Verify release entitlements
+        run: |
+          set -euo pipefail
+          app=build/macos/Build/Products/Release/tempo.app
+          entitlements=$(codesign -d --entitlements :- "$app" 2>/dev/null || true)
+          for key in keychain-access-groups com.apple.security.get-task-allow; do
+            if grep -q "$key" <<<"$entitlements"; then
+              echo "::error::Release app carries restricted entitlement: $key"
+              exit 1
+            fi
+          done
+          echo "Release entitlements verified."
+
       - name: Package macOS artifacts (DMG and ZIP)
         run: |
           set -euo pipefail
