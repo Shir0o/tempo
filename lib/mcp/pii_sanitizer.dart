@@ -29,8 +29,13 @@ class PIISanitizer {
   );
 
   static final RegExp _contactMarkerRegex = RegExp(
-    r'(\b(?:w\/|with)\s+)([A-Za-z]+(?:\s+[A-Za-z]+)?)',
+    r'(\b(?:w\/|with)\s+)([A-Za-z]+(?:\s+[A-Za-z]+)?)((?:,\s+[A-Za-z]+(?:\s+[A-Za-z]+)?)*)',
     caseSensitive: false,
+  );
+
+  /// One `, Name` continuation inside a matched name list.
+  static final RegExp _listNameRegex = RegExp(
+    r'(,\s+)([A-Za-z]+(?:\s+[A-Za-z]+)?)',
   );
 
   PIISanitizer({this.enabled = true});
@@ -63,18 +68,24 @@ class PIISanitizer {
     // Step 4: Deterministically pseudonymize contact names following w/ or with.
     result = result.replaceAllMapped(_contactMarkerRegex, (match) {
       final prefix = match.group(1)!;
-      final rawName = match.group(2)!;
-      final key = rawName.trim().toLowerCase();
-
-      final pseudonym = _contactMap.putIfAbsent(key, () {
-        _contactCounter++;
-        return '[Contact-$_contactCounter]';
-      });
-
-      return '$prefix$pseudonym';
+      final first = _pseudonymFor(match.group(2)!);
+      final rest = match
+          .group(3)!
+          .replaceAllMapped(
+            _listNameRegex,
+            (m) => '${m.group(1)}${_pseudonymFor(m.group(2)!)}',
+          );
+      return '$prefix$first$rest';
     });
 
     return result;
+  }
+
+  String _pseudonymFor(String rawName) {
+    return _contactMap.putIfAbsent(rawName.trim().toLowerCase(), () {
+      _contactCounter++;
+      return '[Contact-$_contactCounter]';
+    });
   }
 
   /// Sanitizes the comment of a [Record], preserving all tags (including "Contact").

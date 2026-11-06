@@ -5,7 +5,10 @@ import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/state/auto_advance.dart';
 import '../../core/state/day_recorder.dart';
+import '../../core/state/note_suggestions.dart';
+import '../../core/state/people_index.dart';
 import '../../core/state/record_commands.dart';
 import '../../core/state/suggestion_loader.dart';
 import '../../core/state/today_order.dart';
@@ -15,6 +18,7 @@ import '../../data/models/models.dart';
 import 'activity_manager_view.dart';
 import 'helpers/activity_order.dart';
 import 'helpers/ui_helpers.dart';
+import 'note_sheet.dart';
 import 'theme/tempo_theme.dart';
 
 /// Phone home screen, laid out as design D (Color Blocks): a hatched Lap panel
@@ -75,7 +79,14 @@ class _UndoState {
   final String message;
   final DateTime deadline;
 
-  const _UndoState({required this.message, required this.deadline});
+  /// The Record the label or split just closed.
+  final Record record;
+
+  const _UndoState({
+    required this.message,
+    required this.deadline,
+    required this.record,
+  });
 
   int get secondsLeft {
     final ms = deadline.difference(DateTime.now()).inMilliseconds;
@@ -100,6 +111,11 @@ class _DashboardViewState extends State<DashboardView>
   List<Record> _todayRecords = [];
   Map<String, int> _todayActivityDurations = {};
   List<Activity> _suggestedActivities = [];
+
+  /// Combo chips (Activity, People and note) ahead of [_suggestedActivities].
+  List<RecurringNote> _combos = [];
+  String? _contactTagId;
+  int _comboLoad = 0;
   int _loggedTodayMs = 0;
   Activity? _lastActivity;
   _UndoState? _undo;
@@ -260,15 +276,24 @@ class _DashboardViewState extends State<DashboardView>
           _dayEndMs = dayEndMs;
           _isLoading = false;
         });
+        unawaited(_loadCombos(activities, suggested));
       }
     } catch (_) {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  Future<void> _labelActivity(Activity activity) async {
+  Future<void> _labelActivity(
+    Activity activity, {
+    String comment = '',
+    List<String> tagIds = const [],
+  }) async {
     try {
-      final record = await _commands.label(activity.id);
+      final record = await _commands.label(
+        activity.id,
+        comment: comment,
+        tags: tagIds,
+      );
       await _loadData();
       if (record == null) {
         _showQueued('${activity.name} is waiting for the phone.');
@@ -347,8 +372,213 @@ class _DashboardViewState extends State<DashboardView>
       _undo = _UndoState(
         message: message,
         deadline: DateTime.now().add(_undoWindow),
+        record: record,
       );
     });
+  }
+
+  /// A year of tracked Records, latest first: where People, AutoAdvance
+  /// readings and RecurringNotes are read from.
+  Future<List<Record>> _noteHistory() {
+    final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+    return widget.database.getRecords(
+      trackedOnly: true,
+      startedAfter: nowMs - const Duration(days: 365).inMilliseconds,
+      orderBy: 'ended_at_epoch_ms DESC',
+      limit: 2000,
+    );
+  }
+
+  /// The Tags and the People to offer in the note sheet, People seen with
+  /// [activityId] first, and the Records they were read from.
+  Future<({List<Tag> tags, List<String> people, List<Record> records})>
+  _noteChoices(String? activityId) async {
+    final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+    final tags = await widget.database.getAllTags();
+    final records = await _noteHistory();
+    return (
+      tags: tags,
+      people: rankPeople(records, nowEpochMs: nowMs, activityId: activityId),
+      records: records,
+    );
+  }
+
+  /// The comment the note sheet prefills for [activityId] at [targetEpochMs]
+  /// (read in [zoneId]): the RecurringNote when one matches, else the
+  /// AutoAdvance reading of the Activity with no Person.
+  String _notePrefill(
+    List<Record> records,
+    String activityId,
+    int targetEpochMs,
+    String zoneId,
+  ) {
+    return recurringNote(
+          records,
+          activityId: activityId,
+          targetEpochMs: targetEpochMs,
+          targetZoneId: zoneId,
+        )?.comment ??
+        suggestedReading(
+          records,
+          activityId: activityId,
+          beforeEpochMs: targetEpochMs,
+        ) ??
+        '';
+  }
+
+  /// The combo chips, loaded after the page is drawn (like the note sheet's
+  /// People) so the year of history they read never holds up the Lap panel
+  /// or the grid. The moment matched is the open Lap's start, the time the
+  /// Lap's Record will start at.
+  Future<void> _loadCombos(
+    List<Activity> activities,
+    List<Activity> suggested,
+  ) async {
+    final load = ++_comboLoad;
+    try {
+      final tags = await widget.database.getAllTags();
+      final active = {for (final a in activities) a.id};
+      final records = [
+        for (final r in await _noteHistory())
+          if (active.contains(r.activityId)) r,
+      ];
+      final combos = comboSuggestions(
+        records,
+        activityIds: [for (final a in suggested) a.id],
+        targetEpochMs:
+            _lap?.startedAtEpochMs ??
+            DateTime.now().toUtc().millisecondsSinceEpoch,
+        targetZoneId: _lapStartZoneId,
+      );
+      if (!mounted || load != _comboLoad) return;
+      setState(() {
+        _combos = combos;
+        _contactTagId = contactTagId(tags);
+      });
+    } catch (_) {
+      // Combo chips are optional; the plain chips still show.
+    }
+  }
+
+  /// A combo chip: labels the Lap with its Activity, note and People, and the
+  /// Contact Tag when it names someone.
+  Future<void> _labelCombo(Activity activity, RecurringNote combo) {
+    return _labelActivity(
+      activity,
+      comment: combo.comment,
+      tagIds: tagIdsWithContact(
+        const [],
+        _contactTagId,
+        hasPeople: combo.people.isNotEmpty,
+      ),
+    );
+  }
+
+  /// "Add note" on the undo bar: People, comment and Tags for the Record the
+  /// label just closed, saved through the annotate command.
+  Future<void> _addNote(Record record) async {
+    setState(() => _undo = null);
+    final activity = _activitiesById[record.activityId];
+    try {
+      final choices = await _noteChoices(record.activityId);
+      if (!mounted) return;
+      final activityId = record.activityId!;
+      final prefill = record.comment.isEmpty
+          ? _notePrefill(
+              choices.records,
+              activityId,
+              record.startedAtEpochMs,
+              record.timezoneId,
+            )
+          : '';
+      final note = await showNoteSheet(
+        context,
+        activityName: activity?.name ?? 'Record',
+        activityColor: UiHelpers.parseHexColor(activity?.colorHex),
+        subtitle:
+            '${_rangeLabel(record)} · '
+            '${UiHelpers.formatDurationHuman(record.durationMs)}',
+        tags: choices.tags,
+        people: choices.people,
+        initialComment: record.comment,
+        initialTagIds: peopleIn(prefill).isEmpty
+            ? record.tagIds
+            : tagIdsWithContact(
+                record.tagIds,
+                contactTagId(choices.tags),
+                hasPeople: true,
+              ),
+        suggestedReading: prefill,
+        suggestReading: (first) => suggestedReading(
+          choices.records,
+          activityId: activityId,
+          firstPerson: first,
+          beforeEpochMs: record.startedAtEpochMs,
+        ),
+      );
+      if (note == null) return;
+      final saved = await _commands.annotate(
+        record.id,
+        comment: note.comment,
+        tagIds: note.tagIds,
+      );
+      await _loadData();
+      if (saved == null) _showQueued('The note is waiting for the phone.');
+    } catch (e) {
+      _showError('Failed to save the note: $e');
+    }
+  }
+
+  /// Long-press on an Activity block: the note sheet before logging. Logging
+  /// labels the Lap with the note and Tags in one command, so a replica
+  /// queues a single proposal.
+  Future<void> _noteThenLabel(Activity activity) async {
+    final lap = _lap;
+    final since = lap == null
+        ? '--:--'
+        : DateFormat('HH:mm')
+              .format(wallClockAt(_lapStartZoneId, lap.startedAtEpochMs));
+    try {
+      final choices = await _noteChoices(activity.id);
+      if (!mounted) return;
+      final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+      final prefill = _notePrefill(
+        choices.records,
+        activity.id,
+        lap?.startedAtEpochMs ?? nowMs,
+        _lapStartZoneId,
+      );
+      final note = await showNoteSheet(
+        context,
+        activityName: activity.name,
+        activityColor: UiHelpers.parseHexColor(activity.colorHex),
+        subtitle: '$since–now · ${UiHelpers.formatDurationHuman(_elapsedMs)}',
+        tags: choices.tags,
+        people: choices.people,
+        initialTagIds: tagIdsWithContact(
+          const [],
+          contactTagId(choices.tags),
+          hasPeople: peopleIn(prefill).isNotEmpty,
+        ),
+        suggestedReading: prefill,
+        suggestReading: (first) => suggestedReading(
+          choices.records,
+          activityId: activity.id,
+          firstPerson: first,
+          beforeEpochMs: nowMs,
+        ),
+        confirmLabel: 'Log ${activity.name}',
+        dismissLabel: 'Cancel',
+      );
+      if (note == null) return;
+      await _labelActivity(
+        activity,
+        comment: note.comment,
+        tagIds: note.tagIds,
+      );
+    } catch (e) {
+      _showError('Failed to open the note: $e');
+    }
   }
 
   void _showError(String message) {
@@ -781,7 +1011,12 @@ class _DashboardViewState extends State<DashboardView>
   }
 
   Widget _buildSuggestedActivitiesRow() {
-    if (_suggestedActivities.isEmpty) {
+    final combos = [
+      for (final combo in _combos)
+        if (_activitiesById[combo.activityId] case final activity?)
+          (activity, combo),
+    ];
+    if (combos.isEmpty && _suggestedActivities.isEmpty) {
       return const SizedBox.shrink();
     }
 
@@ -790,10 +1025,14 @@ class _DashboardViewState extends State<DashboardView>
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
         scrollDirection: Axis.horizontal,
-        itemCount: _suggestedActivities.length,
+        itemCount: combos.length + _suggestedActivities.length,
         separatorBuilder: (_, _) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
-          final activity = _suggestedActivities[index];
+          if (index < combos.length) {
+            final (activity, combo) = combos[index];
+            return _buildComboChip(index, activity, combo);
+          }
+          final activity = _suggestedActivities[index - combos.length];
           final color = UiHelpers.parseHexColor(activity.colorHex);
           return Semantics(
             button: true,
@@ -843,6 +1082,59 @@ class _DashboardViewState extends State<DashboardView>
             ),
           );
         },
+      ),
+    );
+  }
+
+  /// `<Activity> w/ <names> · <reading>`: one tap labels the Lap with all
+  /// of it.
+  Widget _buildComboChip(int index, Activity activity, RecurringNote combo) {
+    final reading = splitComment(combo.comment).reading;
+    final label = [
+      combo.people.isEmpty
+          ? activity.name
+          : '${activity.name} w/ ${combo.people.join(', ')}',
+      if (reading.isNotEmpty) reading,
+    ].join(' · ');
+    return Semantics(
+      button: true,
+      label: 'Suggested: $label. Tap to label untracked time.',
+      child: ExcludeSemantics(
+        child: Material(
+          color: _surface,
+          borderRadius: BorderRadius.circular(18),
+          child: InkWell(
+            key: ValueKey('combo-chip-$index'),
+            borderRadius: BorderRadius.circular(18),
+            onTap: () => _labelCombo(activity, combo),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: UiHelpers.parseHexColor(activity.colorHex),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      fontFamily: _fontFamily,
+                      color: Colors.white,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -908,11 +1200,11 @@ class _DashboardViewState extends State<DashboardView>
           SliverPadding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             sliver: SliverGrid(
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
+              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 180,
+                mainAxisExtent: 56,
                 mainAxisSpacing: 8,
                 crossAxisSpacing: 8,
-                childAspectRatio: 1,
               ),
               delegate: SliverChildBuilderDelegate((context, index) {
                 final activity = section.activities[index];
@@ -969,7 +1261,7 @@ class _DashboardViewState extends State<DashboardView>
       button: true,
       label:
           '${activity.name}, $total today. Tap to label the untracked time as '
-          '${activity.name}.',
+          '${activity.name}. Long-press to add a note first.',
       child: ExcludeSemantics(
         child: Material(
           color: color,
@@ -978,50 +1270,40 @@ class _DashboardViewState extends State<DashboardView>
           child: InkWell(
             key: ValueKey('activity-block-${activity.id}'),
             onTap: () => _labelActivity(activity),
-            onLongPress: _openActivityManager,
+            onLongPress: () => _noteThenLabel(activity),
             child: Padding(
-              padding: const EdgeInsets.all(11),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Row(
                 children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          activity.name,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontFamily: _fontFamily,
-                            color: textColor,
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.w600,
-                            height: 1.1,
-                            letterSpacing: -0.2,
-                          ),
-                        ),
+                  Expanded(
+                    child: Text(
+                      activity.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: _fontFamily,
+                        color: textColor,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
                       ),
-                      if (activity.iconName.isNotEmpty) ...[
-                        const SizedBox(width: 4),
-                        UiHelpers.buildIconOrEmoji(
-                          iconName: activity.iconName,
-                          color: textColor.withValues(alpha: 0.8),
-                          size: 16,
-                        ),
-                      ],
-                    ],
+                    ),
                   ),
+                  if (activity.iconName.isNotEmpty) ...[
+                    const SizedBox(width: 4),
+                    UiHelpers.buildIconOrEmoji(
+                      iconName: activity.iconName,
+                      color: textColor.withValues(alpha: 0.8),
+                      size: 16,
+                    ),
+                  ],
+                  const SizedBox(width: 8),
                   Text(
                     total,
                     style: TextStyle(
                       fontFamily: _fontFamily,
-                      color: dark
-                          ? Colors.white70
-                          : _ink.withValues(alpha: 0.66),
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w500,
+                      color: textColor.withValues(alpha: 0.7),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
                       fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
@@ -1059,6 +1341,21 @@ class _DashboardViewState extends State<DashboardView>
                 ),
               ),
             ),
+            if (undo.record.activityId != null)
+              TextButton(
+                onPressed: () => _addNote(undo.record),
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(0, 48),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  textStyle: const TextStyle(
+                    fontFamily: _fontFamily,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                child: const Text('Add note'),
+              ),
             TextButton(
               onPressed: _undoLast,
               style: TextButton.styleFrom(

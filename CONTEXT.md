@@ -76,6 +76,18 @@ _Avoid_: Anonymizer, filter, redactor
 A designated prefix within a Record's comment (default `w/` or `with `) identifying associated people for peer CRM apps such as BNPB.
 _Avoid_: Mention, contact tag, name prefix
 
+**Person**:
+Someone named after a NameMarker in a Record's comment. People are not stored separately: they are drawn from past comments and offered back ranked by how recent and frequent they are. Choosing a Person writes their name after the NameMarker and attaches the "Contact" Tag to the Record.
+_Avoid_: Contact (as an entity), friend, attendee
+
+**AutoAdvance**:
+Prefilling a new Record's comment from the last Record with the same Activity and Person, with its trailing number moved forward (e.g., "John 1 w/ Sam" → "John 2 w/ Sam"). It keeps the cadence seen in history: the same number of chapters per meeting. A Bible reference moves by chapter only, following the 66-book Protestant order, and runs past a book's last chapter into the next book ("John 19-20" → "John 21, Acts 1"); Revelation wraps to Genesis. Always an editable suggestion, never applied silently.
+_Avoid_: Auto-increment, template, macro
+
+**RecurringNote**:
+A comment that keeps coming back for the same Activity on the same weekday at about the same hour (at least 2 of the last 4 such weekdays, within an hour). When one matches the moment being labeled, it is offered first: it supplies the People, and AutoAdvance moves any reading forward; a note without a number is offered as written. Always a suggestion, never applied silently.
+_Avoid_: Routine, habit, schedule, template
+
 **EcosystemExport**:
 An automated, live-updating export file (Simple Time Tracker CSV parity, JSON, and ActivityWatch bucket formats) published to local storage and Google Drive for downstream consumption. CSV times are written in each Record's start zone (never the device's current zone), so rows never shift after travel and subtracting them yields the true duration.
 _Avoid_: Dump, backup, sync feed
