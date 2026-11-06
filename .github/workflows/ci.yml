@@ -97,3 +97,13 @@ jobs:
 
       - name: Verify the signature
         run: codesign --verify --deep --strict build/macos/Build/Products/Debug/tempo.app
+
+      - name: Verify no restricted entitlements
+        run: |
+          set -euo pipefail
+          app=build/macos/Build/Products/Debug/tempo.app
+          entitlements=$(codesign -d --entitlements :- "$app" 2>/dev/null || true)
+          if grep -q "keychain-access-groups" <<<"$entitlements"; then
+            echo "::error::macOS app requests keychain-access-groups, which needs a provisioning profile and is killed at launch when signed ad-hoc."
+            exit 1
+          fi
