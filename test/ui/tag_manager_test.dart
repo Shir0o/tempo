@@ -15,9 +15,7 @@ void main() {
   late TempoDatabase db;
 
   setUp(() async {
-    db = await TempoDatabase.openInMemory(
-      factory: databaseFactoryFfiNoIsolate,
-    );
+    db = await TempoDatabase.openInMemory(factory: databaseFactoryFfiNoIsolate);
   });
 
   tearDown(() async {

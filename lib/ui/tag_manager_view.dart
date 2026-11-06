@@ -249,9 +249,8 @@ class _TagManagerViewState extends State<TagManagerView> {
                           ),
                           Switch(
                             value: isContact,
-                            onChanged: (value) => setModalState(
-                              () => isContact = value,
-                            ),
+                            onChanged: (value) =>
+                                setModalState(() => isContact = value),
                           ),
                         ],
                       ),
@@ -339,10 +338,7 @@ class _TagManagerViewState extends State<TagManagerView> {
                     for (final tag in _tags)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8),
-                        child: _TagRow(
-                          tag: tag,
-                          onTap: () => _openEditor(tag),
-                        ),
+                        child: _TagRow(tag: tag, onTap: () => _openEditor(tag)),
                       ),
                 ],
               ),

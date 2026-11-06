@@ -718,10 +718,7 @@ CREATE TABLE IF NOT EXISTS settings (
         conflictAlgorithm: ConflictAlgorithm.abort,
       );
       await appendChange(
-        SyncChange.tagUpsert(
-          effective,
-          atEpochMs: effective.updatedAtEpochMs,
-        ),
+        SyncChange.tagUpsert(effective, atEpochMs: effective.updatedAtEpochMs),
         executor: txn,
       );
     });
@@ -741,10 +738,7 @@ CREATE TABLE IF NOT EXISTS settings (
         whereArgs: [effective.id],
       );
       await appendChange(
-        SyncChange.tagUpsert(
-          effective,
-          atEpochMs: effective.updatedAtEpochMs,
-        ),
+        SyncChange.tagUpsert(effective, atEpochMs: effective.updatedAtEpochMs),
         executor: txn,
       );
     });

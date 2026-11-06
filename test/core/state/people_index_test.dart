@@ -197,10 +197,7 @@ void main() {
 
     test('finds the Tag marked as Contact', () {
       expect(
-        contactTagId([
-          tag('a', 'Travel'),
-          tag('b', 'People', isContact: true),
-        ]),
+        contactTagId([tag('a', 'Travel'), tag('b', 'People', isContact: true)]),
         'b',
       );
     });
