@@ -5,12 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../core/state/day_recorder.dart';
-import '../core/state/suggestion_engine.dart';
+import '../core/state/suggestion_loader.dart';
 import '../core/time/timezone_id.dart';
 import '../data/database/tempo_database.dart';
 import '../data/models/models.dart';
 import '../ui/helpers/ui_helpers.dart';
-import '../wearable/wearable_sync_service.dart';
 
 /// Keeps Android's ongoing Lap notification in step with the open Lap and
 /// carries out the label, Split and Undo taps made on it.
@@ -150,27 +149,10 @@ class LapNotificationService {
   Future<List<Activity>> _chipActivities(List<Activity> activities) async {
     final now = _nowUtcMs();
     final timezone = localTimezoneId();
-    final since = now - WearableSyncService.tileActivityWindow.inMilliseconds;
-
-    final history = await database.getRecords(
-      startedAfter: since,
-      orderBy: 'started_at_epoch_ms ASC',
-    );
-
-    final lastClosed = await database.getRecords(
-      trackedOnly: true,
-      limit: 1,
-      orderBy: 'ended_at_epoch_ms DESC, rowid DESC',
-    );
-    final precedingActivityId = lastClosed.isNotEmpty
-        ? lastClosed.first.activityId
-        : null;
-
-    final suggested = const ContextualSuggestionEngine().rank(
+    final suggested = await loadSuggestions(
+      database: database,
       candidates: activities,
-      history: history,
-      precedingActivityId: precedingActivityId,
-      targetEpochMs: now,
+      nowEpochMs: now,
       timezoneId: timezone,
       limit: chipCount,
     );

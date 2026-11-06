@@ -4,6 +4,11 @@
 *   **Status:** In Review
 *   **Date:** 2026-11-04
 
+> **Revision 2026-11-05:** The engine now uses decayed Markov-2 with backoff to
+> Markov-1 over a 60-day window. The Markov-1 / 30-day details below describe
+> the first implementation and have been updated where they describe current
+> behavior. See `concepts_brief.md` for the review and the locked decisions.
+
 --------------------------------------------------------------------------------
 
 ## Overview
@@ -31,7 +36,7 @@ All core processing remains strictly local, deterministic, and privacy-preservin
 
 ## Goals
 
-*   **Sub-5ms Local Contextual Suggestions**: Implement a lightweight Markov-1 and temporal slotting algorithm in `lib/core/state/suggestion_engine.dart` that ranks activities using preceding activity transitions, time-of-day buckets, and weekday/weekend patterns.
+*   **Sub-2ms Local Contextual Suggestions**: Implement a lightweight decayed Markov-2 engine with backoff to Markov-1, temporal slotting, and frequency fallback in `lib/core/state/suggestion_engine.dart`.
 *   **Time Arithmetic Invariance Compliance**: Adhere strictly to Tempo's core invariant: all calculations anchor to UTC epoch milliseconds and explicit IANA `timezone_id` resolution.
 *   **Zero-Disruption Today UX**: Surface the top 3–4 suggestions in a dedicated, fixed-height horizontal chip row above the Today grid, preserving 100% of the category grid's layout stability.
 *   **Seamless Notification & Wear OS Integration**: Populate Android notification chips (top 3 / top 6) and Wear OS tiles (top 3) with dynamic suggestions, upholding Wear OS immediate `Activity.finish()` compliance.
@@ -70,21 +75,35 @@ All core processing remains strictly local, deterministic, and privacy-preservin
 
 ## Technical Plan (Architecture)
 
-### 1. Contextual Prediction Model: Two-Tier Hierarchical Scoring
+### 1. Contextual Prediction Model: Decayed Hierarchical Scoring
 
-To eliminate uncalibrated floating-point hyperparameters, the engine evaluates candidate activities $A \in \text{Activities}$ using a deterministic hierarchical scoring pipeline:
+The engine evaluates candidate activities $A \in \text{Activities}$ with a
+deterministic hierarchy. Every observation carries a half-life weight so recent
+patterns dominate without a cliff at the window edge.
 
 1. **Candidate Filtering**:
    - Filter out all archived, tombstoned, or deleted activities ($isArchived == true$).
-   - If previous interval was a synthetic `MidnightSplit`, its parent `activityId` is preserved as $A_{t-1}$.
-2. **Primary Ranking (Markov-1 Transition)**:
-   - If preceding activity $A_{t-1}$ is known, calculate empirical probability $P(A_t = A \mid A_{t-1})$ over the historical window (past 30 days).
+   - Collapse consecutive Records with the same Activity into one run, so a
+     MidnightSplit or a repeated label is one observation and cannot fabricate a
+     self-transition.
+2. **Primary Ranking (Markov-2)**:
+   - When the query pair $(A_{t-2}, A_{t-1})$ has at least two completed
+     observations and at least one fresh observation's worth of decayed mass,
+     rank by the decayed $(A_{t-2}, A_{t-1}) \to A_t$ weight.
+   - If the pair is not established, skip this tier for every candidate.
+3. **Backoff (Markov-1)**:
+   - Rank by the decayed $A_{t-1} \to A_t$ weight.
    - If $A_{t-1}$ is `null` (Untracked interval), Markov scoring is skipped.
-3. **Secondary Tie-Breaker & Smoothing (Temporal Slotting)**:
+4. **Secondary Tie-Breaker (Temporal Slotting)**:
    - Discretize target time into local calendar hour ($0..23$) derived from `targetEpochMs` and the IANA `timezoneId`.
-   - Evaluate match against weekday vs. weekend patterns ($H \pm 1\text{ hr}$).
-4. **Fallback & Baseline**:
-   - Fall back to recent recency and overall historical frequency (`rankActivitiesByUse`) for cold-start or zero-transition states.
+   - Evaluate a match against weekday vs. weekend patterns ($H \pm 1\text{ hr}$).
+5. **Fallback & Baseline**:
+   - Fall back to the decayed overall frequency for cold-start or
+     zero-transition states, then to the candidate list's original order.
+
+Weights use a 14-day half-life over a 60-day window:
+$w = 0.5^{\text{ageDays}/14}$, held as integer micro-units so equal scores
+compare exactly.
 
 ### 2. Architecture & Data Flow
 
@@ -97,10 +116,10 @@ flowchart TD
     end
 
     subgraph Core [lib/core/state]
-        DR[DayRecorder] -->|onRecordCommitted| SC[SuggestionCache]
-        RecordsTable -.->|query past 30d records| SC
-        ActivitiesTable -.->|active activities| SC
-        SC --> CSE[ContextualSuggestionEngine]
+        DR[DayRecorder] -->|onRecordCommitted| HQ[History query]
+        RecordsTable -.->|query past 60d records| HQ
+        ActivitiesTable -.->|active activities| HQ
+        HQ --> CSE[ContextualSuggestionEngine]
     end
 
     subgraph Consumers [Surface Presenters]
@@ -125,15 +144,22 @@ flowchart TD
       required List<Activity> candidates,
       required Iterable<Record> history,
       required String? precedingActivityId,
+      String? secondPrecedingActivityId,
       required int targetEpochMs,
       required String timezoneId,
       int limit = 6,
     });
   }
   ```
-- **Caching & Debounce**:
-  - `DayRecorder` updates an in-memory cache of the recent 30-day records on startup and whenever a Record is committed.
-  - Updates to `LapNotificationService` and `WearableSyncService` consume this cached window, debounced at 1,000ms to avoid channel thrashing during rapid re-labeling or the 3-second `UndoGraceWindow`.
+- **History and caching**:
+  - Callers query the engine's 60-day window directly. The `SuggestionCache`
+    described in the first draft was never built; there is no cache to
+    invalidate.
+  - Callers derive both preceding ids from the same history snapshot with
+    `ContextualSuggestionEngine.contextFromHistory`, so the context cannot
+    disagree with the chain.
+  - Every history query orders by `started_at_epoch_ms ASC, rowid ASC`, because
+    Markov-2 depends on adjacency.
 
 #### Surface 1: `LapNotificationService` (`lib/notification/lap_notification_service.dart`)
 - Passes top 3 suggestions to collapsed actions, top 6 to expanded actions.
@@ -206,7 +232,7 @@ static bool isEmoji(String? text) {
 ## Non-Functional Requirements
 
 *   **Security & Privacy**: 100% offline, local-only processing. Zero network telemetry.
-*   **Performance & Latency**: Suggestion evaluation takes $< 5\text{ ms}$ synchronously in memory over the cached records window.
+*   **Performance & Latency**: Suggestion evaluation targets $< 2\text{ ms}$ synchronously in memory over the 60-day records window. CI uses a generous regression bound; the product target is measured on device.
 *   **Battery Impact**: Completely event-driven (recomputed on record commit or notification refresh). No background polling loops or CPU wake-locks.
 *   **Rollback & Compatibility**: Schema v9 migration is non-destructive; falls back gracefully to default frequency sorting if records are empty.
 
@@ -221,17 +247,19 @@ static bool isEmoji(String? text) {
 *   **Proposed Changes**:
     - Implement `ContextualSuggestionEngine`.
     - Pure function taking candidates, historical records, `precedingActivityId`, `targetEpochMs`, and `timezoneId`.
-    - Implements Markov-1 transition ranking, time slot matching, and recency/frequency fallback.
+    - Implements decayed Markov-1 and Markov-2 ranking, time slot matching, and recency/frequency fallback.
     - Zero local DateTime dependency; uses `wallClockAt(timezoneId, targetEpochMs)`.
 
 #### 2. `test/core/suggestion_engine_test.dart` (Create)
 *   **Type / Scope**: Unit Test
 *   **Proposed Changes**:
     - Cold start behavior (empty history $\to$ fallback to original order/frequency).
-    - Sequential transition prediction ($A \to B$).
+    - Sequential transition prediction ($A \to B$) and context disambiguation ($(A,B) \to C$).
     - Temporal slot matching across DST/timezone transitions.
-    - Untracked preceding record handling.
+    - Untracked preceding record and untracked gap handling.
+    - MidnightSplit run collapsing.
     - Filtering of tombstoned/archived activities.
+    - Decay boundaries, tie-breaking, and 6,000-record performance.
 
 #### 3. `lib/ui/helpers/ui_helpers.dart` (Modify)
 *   **Type / Scope**: UI Helper
@@ -284,13 +312,13 @@ static bool isEmoji(String? text) {
 
 ### Verification Plan
 
-*   **Compilation / Static Analysis**: `dart analyze` (0 errors, 0 warnings).
+*   **Compilation / Static Analysis**: `flutter analyze` (0 errors, 0 warnings).
 *   **Targeted Unit Tests**:
     - `flutter test test/core/suggestion_engine_test.dart`
     - `flutter test test/notification/lap_notification_service_test.dart`
     - `flutter test test/data/tempo_database_test.dart`
 *   **Verification Gates**:
-    - Sub-5ms execution over 1,000+ historical records.
+    - Sub-2ms execution over 6,000 historical records (measured on device).
     - Wear OS immediate `Activity.finish()` compliance.
     - Schema v8 $\to$ v9 migration verification.
 

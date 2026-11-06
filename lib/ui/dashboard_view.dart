@@ -7,7 +7,7 @@ import 'package:intl/intl.dart';
 
 import '../../core/state/day_recorder.dart';
 import '../../core/state/record_commands.dart';
-import '../../core/state/suggestion_engine.dart';
+import '../../core/state/suggestion_loader.dart';
 import '../../core/state/today_order.dart';
 import '../../core/time/timezone_id.dart';
 import '../../data/database/tempo_database.dart';
@@ -237,24 +237,13 @@ class _DashboardViewState extends State<DashboardView>
           ? await widget.database.getLap()
           : null;
 
-      // Query past 30 days of history for contextual suggestions
-      final thirtyDaysAgoMs =
-          now.millisecondsSinceEpoch - const Duration(days: 30).inMilliseconds;
-      final historyRecords = await widget.database.getRecords(
-        startedAfter: thirtyDaysAgoMs,
-        orderBy: 'started_at_epoch_ms ASC',
+      final suggested = await loadSuggestions(
+        database: widget.database,
+        candidates: activities,
+        nowEpochMs: now.millisecondsSinceEpoch,
+        timezoneId: localTimezoneId(),
+        limit: 4,
       );
-
-      final suggested = historyRecords.isEmpty
-          ? <Activity>[]
-          : const ContextualSuggestionEngine().rank(
-              candidates: activities,
-              history: historyRecords,
-              precedingActivityId: lastActivityId,
-              targetEpochMs: now.millisecondsSinceEpoch,
-              timezoneId: localTimezoneId(),
-              limit: 4,
-            );
 
       if (mounted) {
         setState(() {
