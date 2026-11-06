@@ -539,9 +539,13 @@ Future<void> migrateV9ToV10(DatabaseExecutor db) async {
 /// it survives a rename and is chosen in Settings. The oldest tag already named
 /// "Contact" (any case) keeps working by adopting the flag.
 Future<void> migrateV10ToV11(DatabaseExecutor db) async {
-  await db.execute(
-    'ALTER TABLE tags ADD COLUMN is_contact INTEGER NOT NULL DEFAULT 0',
-  );
+  final tagColumns = await db.rawQuery('PRAGMA table_info(tags)');
+  final hasIsContact = tagColumns.any((row) => row['name'] == 'is_contact');
+  if (!hasIsContact) {
+    await db.execute(
+      'ALTER TABLE tags ADD COLUMN is_contact INTEGER NOT NULL DEFAULT 0',
+    );
+  }
   await db.execute('''
 UPDATE tags
 SET is_contact = 1
