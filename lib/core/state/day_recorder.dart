@@ -10,6 +10,7 @@ import '../../data/models/models.dart';
 import '../../data/models/sync_change.dart';
 import '../export/csv_export_engine.dart';
 import '../time/timezone_id.dart';
+import 'people_index.dart';
 
 /// Owns the always-running Lap and serializes every write that closes it into
 /// a Record. The Lap continues from its persisted start.
@@ -210,9 +211,10 @@ class DayRecorder {
     await _ensureInitializedLocked();
     final record = await _recordOrThrow(recordId);
     final now = _nowUtcMs();
+    final effectiveTagIds = await _tagIdsWithPeople(tagIds, comment);
     final updated = record.copyWith(
       comment: comment,
-      tagIds: List.unmodifiable(tagIds),
+      tagIds: List.unmodifiable(effectiveTagIds),
       updatedAtEpochMs: now,
     );
     await _db.db.transaction((txn) async {
@@ -221,6 +223,19 @@ class DayRecorder {
     });
     await _requestExport();
     return updated;
+  }
+
+  /// [tagIds] plus the Contact Tag when [comment] names People after a
+  /// NameMarker. The tag is never removed here: taking the names out leaves the
+  /// Record marked as shared until the user removes it.
+  Future<List<String>> _tagIdsWithPeople(
+    List<String> tagIds,
+    String comment,
+  ) async {
+    if (peopleIn(comment).isEmpty) return tagIds;
+    final contact = await _db.getContactTag();
+    if (contact == null || tagIds.contains(contact.id)) return tagIds;
+    return [...tagIds, contact.id];
   }
 
   /// Moves one or both Edges of [recordId] to [startEpochMs] and [endEpochMs].
@@ -964,6 +979,8 @@ class DayRecorder {
         ? const <Record>[]
         : await _trailingMidnightSplits(current.startedAtEpochMs);
 
+    final effectiveTags = await _tagIdsWithPeople(tags, comment);
+
     final closing = Record(
       id: _generateId(),
       activityId: activityId,
@@ -974,7 +991,7 @@ class DayRecorder {
       endTimezoneId: endTimezoneId,
       createdAtEpochMs: now,
       updatedAtEpochMs: now,
-      tagIds: List.unmodifiable(tags),
+      tagIds: List.unmodifiable(effectiveTags),
     );
     final written = [closing];
 
@@ -984,7 +1001,7 @@ class DayRecorder {
             .withActivity(activityId)
             .copyWith(
               comment: comment,
-              tagIds: List.unmodifiable(tags),
+              tagIds: List.unmodifiable(effectiveTags),
               updatedAtEpochMs: now,
             ),
     ];

@@ -377,15 +377,18 @@ record\t2\t10\t$start2\t$end2\tAfternoon coding\t
 
         expect(result.recordsImported, equals(1));
 
-        // Verify tags created
+        // Verify tags created; Contact is marked so later Records that name
+        // someone are tagged automatically.
         final contactTag = await db.getTagByName('Contact');
         expect(contactTag, isNotNull);
         expect(contactTag!.name, equals('Contact'));
         expect(contactTag.colorHex, equals('#9E9E9E'));
+        expect(contactTag.isContact, isTrue);
 
         final importantTag = await db.getTagByName('Important');
         expect(importantTag, isNotNull);
         expect(importantTag!.name, equals('Important'));
+        expect(importantTag.isContact, isFalse);
 
         // Verify record is associated with both tags
         final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
@@ -407,6 +410,36 @@ record\t2\t10\t$start2\t$end2\tAfternoon coding\t
             .map((r) => r['tag_id'] as String)
             .toList();
         expect(tagIdsInDb, containsAll([contactTag.id, importantTag.id]));
+      },
+    );
+
+    test(
+      'a comment that names someone creates and attaches the Contact tag',
+      () async {
+        final service = SttImportService(
+          database: db,
+          getTimezoneId: () => 'UTC',
+          nowUtcMs: () => 1700000000000,
+        );
+
+        const csvContent = '''"activity name","time started","time ended","comment","categories","record tags","duration","duration minutes"
+"Lunch","2023-11-14 10:00:00","2023-11-14 11:00:00","Lunch w/ Sam","Work","","01:00:00","60"
+''';
+
+        final result = await service.import(
+          content: csvContent,
+          scope: SttImportScope.fullHistory,
+        );
+
+        expect(result.recordsImported, equals(1));
+
+        final contactTag = await db.getTagByName('Contact');
+        expect(contactTag, isNotNull);
+        expect(contactTag!.isContact, isTrue);
+
+        final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+        final lunch = records.firstWhere((r) => r.comment == 'Lunch w/ Sam');
+        expect(lunch.tagIds, contains(contactTag.id));
       },
     );
   });

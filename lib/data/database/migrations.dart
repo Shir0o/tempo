@@ -533,6 +533,41 @@ Future<void> migrateV9ToV10(DatabaseExecutor db) async {
   }
 }
 
+/// Version 11: a Tag can be marked as the Contact Tag.
+///
+/// The designation stops being the tag's name and becomes an explicit flag, so
+/// it survives a rename and is chosen in Settings. The oldest tag already named
+/// "Contact" (any case) keeps working by adopting the flag.
+Future<void> migrateV10ToV11(DatabaseExecutor db) async {
+  final tagColumns = await db.rawQuery('PRAGMA table_info(tags)');
+  final hasIsContact = tagColumns.any((row) => row['name'] == 'is_contact');
+  if (!hasIsContact) {
+    await db.execute(
+      'ALTER TABLE tags ADD COLUMN is_contact INTEGER NOT NULL DEFAULT 0',
+    );
+  }
+  await db.execute('''
+UPDATE tags
+SET is_contact = 1
+WHERE id = (
+  SELECT id FROM tags
+  WHERE lower(trim(name)) = 'contact'
+  ORDER BY created_at_epoch_ms ASC, id ASC
+  LIMIT 1
+);
+''');
+
+  // A replica replaying from its cursor must learn the flag too.
+  final marked = await db.query('tags', where: 'is_contact = 1', limit: 1);
+  if (marked.isNotEmpty) {
+    final tag = Tag.fromMap(marked.first);
+    await _backfillChange(
+      db,
+      SyncChange.tagUpsert(tag, atEpochMs: tag.updatedAtEpochMs),
+    );
+  }
+}
+
 Future<void> _backfillChange(DatabaseExecutor db, SyncChange change) async {
   await db.insert('changes', change.toChangeRow());
 }

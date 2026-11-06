@@ -145,6 +145,69 @@ void main() {
     expect(recorder.lap!.startedAtEpochMs, equals(1180000));
   });
 
+  group('Contact Tag', () {
+    const contact = Tag(
+      id: 'tag-contact',
+      name: 'Contact',
+      isContact: true,
+      createdAtEpochMs: 0,
+      updatedAtEpochMs: 0,
+    );
+
+    test('a label that names someone attaches it', () async {
+      await db.insertTag(contact);
+      await recorder.initialize();
+      nowUtc += 60000;
+
+      final record = await recorder.label(sleep.id, comment: 'Dinner w/ Sam');
+
+      expect(record.tagIds, contains(contact.id));
+      expect((await db.getRecordById(record.id))!.tagIds, contains(contact.id));
+    });
+
+    test('prose "with" attaches nothing', () async {
+      await db.insertTag(contact);
+      await recorder.initialize();
+      nowUtc += 60000;
+
+      final record = await recorder.label(
+        sleep.id,
+        comment: 'Dinner with friends',
+      );
+
+      expect(record.tagIds, isEmpty);
+    });
+
+    test('annotating with People attaches it', () async {
+      await db.insertTag(contact);
+      await recorder.initialize();
+      nowUtc += 60000;
+      final record = await recorder.label(sleep.id, tags: [travelTag.id]);
+
+      final annotated = await recorder.annotate(
+        record.id,
+        comment: 'w/ Sam',
+        tagIds: record.tagIds,
+      );
+
+      expect(annotated.tagIds, containsAll([travelTag.id, contact.id]));
+    });
+
+    test('removing the names keeps it', () async {
+      await db.insertTag(contact);
+      await recorder.initialize();
+      nowUtc += 60000;
+      final record = await recorder.label(sleep.id, comment: 'w/ Sam');
+      final annotated = await recorder.annotate(
+        record.id,
+        comment: 'Alone',
+        tagIds: record.tagIds,
+      );
+
+      expect(annotated.tagIds, contains(contact.id));
+    });
+  });
+
   test(
     'split closes the Lap as an Untracked Record and opens a new Lap',
     () async {

@@ -30,7 +30,7 @@ class TempoDatabase {
 
   Database get db => _db;
 
-  static const int databaseVersion = 10;
+  static const int databaseVersion = 11;
   static const String databaseFileName = 'tempo.db';
 
   // --- DDL Constants (schema v6) ---
@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS tags (
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL UNIQUE,
     color_hex TEXT NOT NULL DEFAULT '#9E9E9E',
+    is_contact INTEGER NOT NULL DEFAULT 0,
     created_at_epoch_ms INTEGER NOT NULL,
     updated_at_epoch_ms INTEGER NOT NULL
 );
@@ -195,6 +196,9 @@ CREATE TABLE IF NOT EXISTS settings (
           }
           if (oldVersion < 10) {
             await migrateV9ToV10(db);
+          }
+          if (oldVersion < 11) {
+            await migrateV10ToV11(db);
           }
         },
       ),
@@ -703,13 +707,18 @@ CREATE TABLE IF NOT EXISTS settings (
 
   Future<void> insertTag(Tag tag) async {
     await _db.transaction((txn) async {
+      final effective = await _withExclusiveContact(
+        txn,
+        tag,
+        adoptContactName: true,
+      );
       await txn.insert(
         'tags',
-        tag.toMap(),
+        effective.toMap(),
         conflictAlgorithm: ConflictAlgorithm.abort,
       );
       await appendChange(
-        SyncChange.tagUpsert(tag, atEpochMs: tag.updatedAtEpochMs),
+        SyncChange.tagUpsert(effective, atEpochMs: effective.updatedAtEpochMs),
         executor: txn,
       );
     });
@@ -717,17 +726,81 @@ CREATE TABLE IF NOT EXISTS settings (
 
   Future<void> updateTag(Tag tag) async {
     await _db.transaction((txn) async {
+      final effective = await _withExclusiveContact(
+        txn,
+        tag,
+        adoptContactName: false,
+      );
       await txn.update(
         'tags',
-        tag.toMap(),
+        effective.toMap(),
         where: 'id = ?',
-        whereArgs: [tag.id],
+        whereArgs: [effective.id],
       );
       await appendChange(
-        SyncChange.tagUpsert(tag, atEpochMs: tag.updatedAtEpochMs),
+        SyncChange.tagUpsert(effective, atEpochMs: effective.updatedAtEpochMs),
         executor: txn,
       );
     });
+  }
+
+  /// Keeps one Contact Tag at most. A new tag named "Contact" adopts the flag
+  /// when no other tag has it, so an import or a deep link keeps working
+  /// without the user visiting Settings first. Setting the flag on [tag]
+  /// clears it on any other tag, appending a change for each so replicas
+  /// converge.
+  Future<Tag> _withExclusiveContact(
+    DatabaseExecutor txn,
+    Tag tag, {
+    required bool adoptContactName,
+  }) async {
+    var effective = tag;
+    if (!effective.isContact &&
+        adoptContactName &&
+        looksLikeContactTagName(effective.name)) {
+      final existing = await txn.query(
+        'tags',
+        columns: ['id'],
+        where: 'is_contact = 1',
+        limit: 1,
+      );
+      if (existing.isEmpty) effective = effective.copyWith(isContact: true);
+    }
+    if (!effective.isContact) return effective;
+
+    final others = await txn.query(
+      'tags',
+      where: 'is_contact = 1 AND id <> ?',
+      whereArgs: [effective.id],
+    );
+    for (final row in others) {
+      final other = Tag.fromMap(row).copyWith(
+        isContact: false,
+        updatedAtEpochMs: effective.updatedAtEpochMs,
+      );
+      await txn.update(
+        'tags',
+        other.toMap(),
+        where: 'id = ?',
+        whereArgs: [other.id],
+      );
+      await appendChange(
+        SyncChange.tagUpsert(other, atEpochMs: other.updatedAtEpochMs),
+        executor: txn,
+      );
+    }
+    return effective;
+  }
+
+  Future<Tag?> getContactTag() async {
+    final results = await _db.query(
+      'tags',
+      where: 'is_contact = 1',
+      orderBy: 'name ASC',
+      limit: 1,
+    );
+    if (results.isEmpty) return null;
+    return Tag.fromMap(results.first);
   }
 
   Future<Tag?> getTagById(String id) async {

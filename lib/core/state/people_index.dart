@@ -153,25 +153,25 @@ String _join(String left, String right) {
   return '$l $r';
 }
 
-/// The id of the Tag named "Contact" (any case), or null when there is none.
+/// The id of the Contact Tag, or null when none is marked in Settings.
 String? contactTagId(Iterable<Tag> tags) {
   for (final tag in tags) {
-    if (tag.name.trim().toLowerCase() == 'contact') return tag.id;
+    if (tag.isContact) return tag.id;
   }
   return null;
 }
 
-/// [tagIds] with the Contact Tag attached when [hasPeople], and removed when
-/// not. Unchanged when there is no Contact Tag.
+/// [tagIds] with the Contact Tag attached when [hasPeople].
+///
+/// Only ever adds: removing the names from a comment keeps the tag, so a
+/// Record that was shared stays marked until the user removes it.
 List<String> tagIdsWithContact(
   List<String> tagIds,
   String? contactId, {
   required bool hasPeople,
 }) {
-  if (contactId == null) return tagIds;
-  final without = [
-    for (final id in tagIds)
-      if (id != contactId) id,
-  ];
-  return hasPeople ? [...without, contactId] : without;
+  if (contactId == null || !hasPeople || tagIds.contains(contactId)) {
+    return tagIds;
+  }
+  return [...tagIds, contactId];
 }

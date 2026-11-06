@@ -384,6 +384,47 @@ void main() {
         isTrue,
       );
     });
+
+    test('a tag named Contact adopts the flag when none is marked', () async {
+      final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+      await db.insertTag(
+        Tag(
+          id: 'tag-contact',
+          name: 'Contact',
+          createdAtEpochMs: now,
+          updatedAtEpochMs: now,
+        ),
+      );
+
+      final contact = await db.getContactTag();
+      expect(contact?.id, 'tag-contact');
+    });
+
+    test('marking a tag Contact clears the previous one', () async {
+      final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+      await db.insertTag(
+        Tag(
+          id: 'tag-first',
+          name: 'People',
+          isContact: true,
+          createdAtEpochMs: now,
+          updatedAtEpochMs: now,
+        ),
+      );
+      await db.insertTag(
+        Tag(
+          id: 'tag-second',
+          name: 'Shared',
+          isContact: true,
+          createdAtEpochMs: now,
+          updatedAtEpochMs: now,
+        ),
+      );
+
+      final contact = await db.getContactTag();
+      expect(contact?.id, 'tag-second');
+      expect((await db.getTagById('tag-first'))!.isContact, isFalse);
+    });
   });
 
   group('Records CRUD & Record Tags Junction', () {
