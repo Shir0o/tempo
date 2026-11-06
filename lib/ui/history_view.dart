@@ -3,7 +3,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/state/auto_advance.dart';
 import '../../core/state/day_recorder.dart';
+import '../../core/state/note_suggestions.dart';
 import '../../core/state/people_index.dart';
 import '../../core/state/record_commands.dart';
 import '../../core/sync/intent_queue.dart';
@@ -314,6 +316,7 @@ class _HistoryViewState extends State<HistoryView> {
 
     final allTags = _tagsMap.values.toList();
     final contactId = contactTagId(allTags);
+    final savedReading = splitComment(record.comment).reading;
     final people = rankPeople(
       _records,
       nowEpochMs: DateTime.now().toUtc().millisecondsSinceEpoch,
@@ -606,6 +609,18 @@ class _HistoryViewState extends State<HistoryView> {
                       PeopleChips(
                         comment: commentController,
                         suggestions: people,
+                        // AutoAdvance from the Records before this one,
+                        // unless the Record already has a reading.
+                        suggestReading: savedReading.isNotEmpty
+                            ? null
+                            : (first) => pendingActivityId == null
+                                  ? null
+                                  : suggestedReading(
+                                      _records,
+                                      activityId: pendingActivityId!,
+                                      firstPerson: first,
+                                      beforeEpochMs: record.startedAtEpochMs,
+                                    ),
                         onPeopleChanged: (names) => setModalState(
                           () => selectedTagIds = tagIdsWithContact(
                             selectedTagIds,

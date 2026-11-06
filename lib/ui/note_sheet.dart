@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../core/state/auto_advance.dart';
+import '../core/state/note_suggestions.dart';
 import '../core/state/people_index.dart';
 import '../data/models/models.dart';
 import 'history/history_widgets.dart';
@@ -17,8 +19,10 @@ class NoteSheetResult {
 ///
 /// Used after a label ("Add note", with Save / Skip) and before one
 /// (long-press, with Cancel / `Log <Activity>`). Returns null when skipped or
-/// dismissed. [suggestedReading] prefills an empty comment; nothing fills it
-/// yet (AutoAdvance will).
+/// dismissed. [suggestedReading] prefills an empty comment (a RecurringNote
+/// or an AutoAdvance reading). [suggestReading] gives the AutoAdvance reading
+/// for a first Person (null for none), used only when [initialComment] has no
+/// reading of its own; see [PeopleChips].
 Future<NoteSheetResult?> showNoteSheet(
   BuildContext context, {
   required String activityName,
@@ -29,6 +33,7 @@ Future<NoteSheetResult?> showNoteSheet(
   String initialComment = '',
   List<String> initialTagIds = const [],
   String suggestedReading = '',
+  String? Function(String? firstPerson)? suggestReading,
   String confirmLabel = 'Save',
   String dismissLabel = 'Skip',
 }) {
@@ -45,6 +50,9 @@ Future<NoteSheetResult?> showNoteSheet(
           ? suggestedReading
           : initialComment,
       initialTagIds: initialTagIds,
+      suggestReading: splitComment(initialComment).reading.isEmpty
+          ? suggestReading
+          : null,
       confirmLabel: confirmLabel,
       dismissLabel: dismissLabel,
     ),
@@ -59,6 +67,7 @@ class _NoteSheet extends StatefulWidget {
   final List<String> people;
   final String initialComment;
   final List<String> initialTagIds;
+  final String? Function(String? firstPerson)? suggestReading;
   final String confirmLabel;
   final String dismissLabel;
 
@@ -70,6 +79,7 @@ class _NoteSheet extends StatefulWidget {
     required this.people,
     required this.initialComment,
     required this.initialTagIds,
+    required this.suggestReading,
     required this.confirmLabel,
     required this.dismissLabel,
   });
@@ -152,6 +162,7 @@ class _NoteSheetState extends State<_NoteSheet> {
               PeopleChips(
                 comment: _comment,
                 suggestions: widget.people,
+                suggestReading: widget.suggestReading,
                 onPeopleChanged: (names) => setState(
                   () => _tagIds = tagIdsWithContact(
                     _tagIds,
@@ -245,20 +256,37 @@ class _NoteSheetState extends State<_NoteSheet> {
 /// of the comment; "+ New name" adds a typed one. [onPeopleChanged] runs after
 /// each tap with the People now named, so the caller can keep the Contact Tag
 /// in step.
+///
+/// With [suggestReading] (the AutoAdvance reading for a first Person), a tap
+/// that changes the first Person also refreshes the reading, but only while
+/// it is empty or still the suggestion for the previous first Person.
 class PeopleChips extends StatelessWidget {
   final TextEditingController comment;
   final List<String> suggestions;
   final ValueChanged<List<String>> onPeopleChanged;
+  final String? Function(String? firstPerson)? suggestReading;
 
   const PeopleChips({
     super.key,
     required this.comment,
     required this.suggestions,
     required this.onPeopleChanged,
+    this.suggestReading,
   });
 
   void _write(List<String> names) {
-    comment.text = withPeople(comment.text, names);
+    var text = withPeople(comment.text, names);
+    final suggest = suggestReading;
+    final was = peopleIn(comment.text).firstOrNull;
+    final now = names.firstOrNull;
+    if (suggest != null && was?.toLowerCase() != now?.toLowerCase()) {
+      text = withSuggestedReading(
+        text,
+        previous: suggest(was),
+        next: suggest(now),
+      );
+    }
+    comment.text = text;
     onPeopleChanged(names);
   }
 

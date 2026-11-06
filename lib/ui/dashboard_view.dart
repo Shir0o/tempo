@@ -5,7 +5,9 @@ import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/state/auto_advance.dart';
 import '../../core/state/day_recorder.dart';
+import '../../core/state/note_suggestions.dart';
 import '../../core/state/people_index.dart';
 import '../../core/state/record_commands.dart';
 import '../../core/state/suggestion_engine.dart';
@@ -109,6 +111,11 @@ class _DashboardViewState extends State<DashboardView>
   List<Record> _todayRecords = [];
   Map<String, int> _todayActivityDurations = {};
   List<Activity> _suggestedActivities = [];
+
+  /// Combo chips (Activity, People and note) ahead of [_suggestedActivities].
+  List<RecurringNote> _combos = [];
+  String? _contactTagId;
+  int _comboLoad = 0;
   int _loggedTodayMs = 0;
   Activity? _lastActivity;
   _UndoState? _undo;
@@ -280,6 +287,7 @@ class _DashboardViewState extends State<DashboardView>
           _dayEndMs = dayEndMs;
           _isLoading = false;
         });
+        unawaited(_loadCombos(activities, suggested));
       }
     } catch (_) {
       if (mounted) setState(() => _isLoading = false);
@@ -380,22 +388,100 @@ class _DashboardViewState extends State<DashboardView>
     });
   }
 
-  /// The Tags and the People to offer in the note sheet, People seen with
-  /// [activityId] first.
-  Future<({List<Tag> tags, List<String> people})> _noteChoices(
-    String? activityId,
-  ) async {
+  /// A year of tracked Records, latest first: where People, AutoAdvance
+  /// readings and RecurringNotes are read from.
+  Future<List<Record>> _noteHistory() {
     final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final tags = await widget.database.getAllTags();
-    final records = await widget.database.getRecords(
+    return widget.database.getRecords(
       trackedOnly: true,
       startedAfter: nowMs - const Duration(days: 365).inMilliseconds,
       orderBy: 'ended_at_epoch_ms DESC',
       limit: 2000,
     );
+  }
+
+  /// The Tags and the People to offer in the note sheet, People seen with
+  /// [activityId] first, and the Records they were read from.
+  Future<({List<Tag> tags, List<String> people, List<Record> records})>
+  _noteChoices(String? activityId) async {
+    final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+    final tags = await widget.database.getAllTags();
+    final records = await _noteHistory();
     return (
       tags: tags,
       people: rankPeople(records, nowEpochMs: nowMs, activityId: activityId),
+      records: records,
+    );
+  }
+
+  /// The comment the note sheet prefills for [activityId] at [targetEpochMs]
+  /// (read in [zoneId]): the RecurringNote when one matches, else the
+  /// AutoAdvance reading of the Activity with no Person.
+  String _notePrefill(
+    List<Record> records,
+    String activityId,
+    int targetEpochMs,
+    String zoneId,
+  ) {
+    return recurringNote(
+          records,
+          activityId: activityId,
+          targetEpochMs: targetEpochMs,
+          targetZoneId: zoneId,
+        )?.comment ??
+        suggestedReading(
+          records,
+          activityId: activityId,
+          beforeEpochMs: targetEpochMs,
+        ) ??
+        '';
+  }
+
+  /// The combo chips, loaded after the page is drawn (like the note sheet's
+  /// People) so the year of history they read never holds up the Lap panel
+  /// or the grid. The moment matched is the open Lap's start, the time the
+  /// Lap's Record will start at.
+  Future<void> _loadCombos(
+    List<Activity> activities,
+    List<Activity> suggested,
+  ) async {
+    final load = ++_comboLoad;
+    try {
+      final tags = await widget.database.getAllTags();
+      final active = {for (final a in activities) a.id};
+      final records = [
+        for (final r in await _noteHistory())
+          if (active.contains(r.activityId)) r,
+      ];
+      final combos = comboSuggestions(
+        records,
+        activityIds: [for (final a in suggested) a.id],
+        targetEpochMs:
+            _lap?.startedAtEpochMs ??
+            DateTime.now().toUtc().millisecondsSinceEpoch,
+        targetZoneId: _lapStartZoneId,
+      );
+      if (!mounted || load != _comboLoad) return;
+      setState(() {
+        _combos = combos;
+        _contactTagId = contactTagId(tags);
+      });
+    } catch (_) {
+      // Combo chips are optional; the plain chips still show.
+    }
+  }
+
+  /// A combo chip: labels the Lap with its Activity, note and People, and the
+  /// Contact Tag when it names someone.
+  Future<void> _labelCombo(Activity activity, RecurringNote combo) {
+    return _labelActivity(
+      activity,
+      comment: combo.comment,
+      tagIds: tagIdsWithContact(
+        const [],
+        _contactTagId,
+        hasPeople: combo.people.isNotEmpty,
+      ),
     );
   }
 
@@ -407,6 +493,15 @@ class _DashboardViewState extends State<DashboardView>
     try {
       final choices = await _noteChoices(record.activityId);
       if (!mounted) return;
+      final activityId = record.activityId!;
+      final prefill = record.comment.isEmpty
+          ? _notePrefill(
+              choices.records,
+              activityId,
+              record.startedAtEpochMs,
+              record.timezoneId,
+            )
+          : '';
       final note = await showNoteSheet(
         context,
         activityName: activity?.name ?? 'Record',
@@ -417,7 +512,20 @@ class _DashboardViewState extends State<DashboardView>
         tags: choices.tags,
         people: choices.people,
         initialComment: record.comment,
-        initialTagIds: record.tagIds,
+        initialTagIds: peopleIn(prefill).isEmpty
+            ? record.tagIds
+            : tagIdsWithContact(
+                record.tagIds,
+                contactTagId(choices.tags),
+                hasPeople: true,
+              ),
+        suggestedReading: prefill,
+        suggestReading: (first) => suggestedReading(
+          choices.records,
+          activityId: activityId,
+          firstPerson: first,
+          beforeEpochMs: record.startedAtEpochMs,
+        ),
       );
       if (note == null) return;
       final saved = await _commands.annotate(
@@ -444,6 +552,13 @@ class _DashboardViewState extends State<DashboardView>
     try {
       final choices = await _noteChoices(activity.id);
       if (!mounted) return;
+      final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+      final prefill = _notePrefill(
+        choices.records,
+        activity.id,
+        lap?.startedAtEpochMs ?? nowMs,
+        _lapStartZoneId,
+      );
       final note = await showNoteSheet(
         context,
         activityName: activity.name,
@@ -451,6 +566,18 @@ class _DashboardViewState extends State<DashboardView>
         subtitle: '$since–now · ${UiHelpers.formatDurationHuman(_elapsedMs)}',
         tags: choices.tags,
         people: choices.people,
+        initialTagIds: tagIdsWithContact(
+          const [],
+          contactTagId(choices.tags),
+          hasPeople: peopleIn(prefill).isNotEmpty,
+        ),
+        suggestedReading: prefill,
+        suggestReading: (first) => suggestedReading(
+          choices.records,
+          activityId: activity.id,
+          firstPerson: first,
+          beforeEpochMs: nowMs,
+        ),
         confirmLabel: 'Log ${activity.name}',
         dismissLabel: 'Cancel',
       );
@@ -895,7 +1022,12 @@ class _DashboardViewState extends State<DashboardView>
   }
 
   Widget _buildSuggestedActivitiesRow() {
-    if (_suggestedActivities.isEmpty) {
+    final combos = [
+      for (final combo in _combos)
+        if (_activitiesById[combo.activityId] case final activity?)
+          (activity, combo),
+    ];
+    if (combos.isEmpty && _suggestedActivities.isEmpty) {
       return const SizedBox.shrink();
     }
 
@@ -904,10 +1036,14 @@ class _DashboardViewState extends State<DashboardView>
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
         scrollDirection: Axis.horizontal,
-        itemCount: _suggestedActivities.length,
+        itemCount: combos.length + _suggestedActivities.length,
         separatorBuilder: (_, _) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
-          final activity = _suggestedActivities[index];
+          if (index < combos.length) {
+            final (activity, combo) = combos[index];
+            return _buildComboChip(index, activity, combo);
+          }
+          final activity = _suggestedActivities[index - combos.length];
           final color = UiHelpers.parseHexColor(activity.colorHex);
           return Semantics(
             button: true,
@@ -957,6 +1093,59 @@ class _DashboardViewState extends State<DashboardView>
             ),
           );
         },
+      ),
+    );
+  }
+
+  /// `<Activity> w/ <names> · <reading>`: one tap labels the Lap with all
+  /// of it.
+  Widget _buildComboChip(int index, Activity activity, RecurringNote combo) {
+    final reading = splitComment(combo.comment).reading;
+    final label = [
+      combo.people.isEmpty
+          ? activity.name
+          : '${activity.name} w/ ${combo.people.join(', ')}',
+      if (reading.isNotEmpty) reading,
+    ].join(' · ');
+    return Semantics(
+      button: true,
+      label: 'Suggested: $label. Tap to label untracked time.',
+      child: ExcludeSemantics(
+        child: Material(
+          color: _surface,
+          borderRadius: BorderRadius.circular(18),
+          child: InkWell(
+            key: ValueKey('combo-chip-$index'),
+            borderRadius: BorderRadius.circular(18),
+            onTap: () => _labelCombo(activity, combo),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: UiHelpers.parseHexColor(activity.colorHex),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      fontFamily: _fontFamily,
+                      color: Colors.white,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

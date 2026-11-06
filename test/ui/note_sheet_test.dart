@@ -16,6 +16,8 @@ void main() {
   Future<NoteSheetResult? Function()> openSheet(
     WidgetTester tester, {
     String initialComment = '',
+    String suggestedReading = '',
+    String? Function(String? firstPerson)? suggestReading,
   }) async {
     NoteSheetResult? result;
     var closed = false;
@@ -36,6 +38,8 @@ void main() {
                 tags: const [contact],
                 people: const ['Sam', 'Lee'],
                 initialComment: initialComment,
+                suggestedReading: suggestedReading,
+                suggestReading: suggestReading,
               );
               closed = true;
             },
@@ -83,6 +87,56 @@ void main() {
     final note = result();
     expect(note!.comment, 'Tea');
     expect(note.tagIds, isEmpty);
+  });
+
+  testWidgets('a new first Person refreshes an untouched reading', (
+    tester,
+  ) async {
+    const readings = {null: 'Psalm 3', 'Sam': 'John 4', 'Lee': 'Rom 2'};
+    final result = await openSheet(
+      tester,
+      suggestedReading: 'Psalm 3',
+      suggestReading: (first) => readings[first],
+    );
+    expect(find.text('Psalm 3'), findsOneWidget);
+
+    await tester.tap(find.text('Sam'));
+    await tester.pump();
+    expect(find.text('John 4 w/ Sam'), findsOneWidget);
+
+    // Sam stays first, so the reading stays.
+    await tester.tap(find.text('Lee'));
+    await tester.pump();
+    expect(find.text('John 4 w/ Sam, Lee'), findsOneWidget);
+
+    await tester.tap(find.text('Sam').first);
+    await tester.pump();
+    expect(find.text('Rom 2 w/ Lee'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), 'Luke 1 w/ Lee');
+    await tester.tap(find.text('Sam').first);
+    await tester.pump();
+    await tester.tap(find.text('Lee').first);
+    await tester.pump();
+    expect(find.text('Luke 1 w/ Sam'), findsOneWidget);
+
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(result()!.comment, 'Luke 1 w/ Sam');
+  });
+
+  testWidgets('a saved reading is never refreshed', (tester) async {
+    final result = await openSheet(
+      tester,
+      initialComment: 'John 9',
+      suggestReading: (first) => first == null ? 'John 9' : 'Rom 2',
+    );
+
+    await tester.tap(find.text('Sam'));
+    await tester.pump();
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(result()!.comment, 'John 9 w/ Sam');
   });
 
   testWidgets('Skip returns nothing', (tester) async {
