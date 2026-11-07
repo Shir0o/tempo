@@ -83,6 +83,10 @@ const Color _background = TempoColors.background;
 const Color _surface = TempoColors.surface;
 const String _fontFamily = tempoFontFamily;
 
+/// Fixed line height for suggestion chip text, so row heights can be
+/// computed from the font size instead of the font's own metrics.
+const double _chipLineHeight = 1.25;
+
 /// The three-second window an undo bar offers, matching
 /// [DayRecorder.defaultUndoGraceWindow].
 const Duration _undoWindow = DayRecorder.defaultUndoGraceWindow;
@@ -1115,13 +1119,27 @@ class _DashboardViewState extends State<DashboardView>
       return const SizedBox.shrink();
     }
 
+    // Row heights follow the user's text size so two-line combo chips never
+    // spill past their box: list padding + chip padding + the text lines.
+    final scaler = MediaQuery.textScalerOf(context);
+    final comboRowHeight =
+        12 +
+        16 +
+        scaler.scale(13) * _chipLineHeight +
+        scaler.scale(12) * _chipLineHeight +
+        2;
+    final activityRowHeight = math.max(
+      48.0,
+      12 + 16 + scaler.scale(12.5) * _chipLineHeight + 4,
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (combos.isNotEmpty) ...[
           _buildSuggestionOverline('WITH NOTE'),
           _buildSuggestionRow(
-            height: 64,
+            height: comboRowHeight,
             children: [
               for (final (index, (activity, combo)) in combos.indexed)
                 _buildComboChip(index, activity, combo),
@@ -1131,7 +1149,7 @@ class _DashboardViewState extends State<DashboardView>
         if (_suggestedActivities.isNotEmpty) ...[
           _buildSuggestionOverline('ACTIVITY'),
           _buildSuggestionRow(
-            height: 48,
+            height: activityRowHeight,
             children: [
               for (final activity in _suggestedActivities)
                 _buildSuggestedChip(activity),
@@ -1199,6 +1217,7 @@ class _DashboardViewState extends State<DashboardView>
                     color: Colors.white,
                     fontSize: 12.5,
                     fontWeight: FontWeight.w600,
+                    height: _chipLineHeight,
                   ),
                 ),
               ],
@@ -1230,7 +1249,7 @@ class _DashboardViewState extends State<DashboardView>
             borderRadius: BorderRadius.circular(16),
             onTap: () => _labelCombo(activity, combo),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 14, 10),
+              padding: const EdgeInsets.fromLTRB(12, 8, 14, 8),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1243,30 +1262,39 @@ class _DashboardViewState extends State<DashboardView>
                     ),
                   ),
                   const SizedBox(width: 10),
-                  Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        activity.name,
-                        style: const TextStyle(
-                          fontFamily: _fontFamily,
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      if (detail.isNotEmpty)
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 220),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                         Text(
-                          detail,
+                          activity.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             fontFamily: _fontFamily,
-                            color: TempoColors.textMuted,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            height: _chipLineHeight,
                           ),
                         ),
-                    ],
+                        if (detail.isNotEmpty)
+                          Text(
+                            detail,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontFamily: _fontFamily,
+                              color: TempoColors.textMuted,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              height: _chipLineHeight,
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                 ],
               ),

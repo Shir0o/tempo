@@ -154,4 +154,76 @@ void main() {
       await db.close();
     },
   );
+
+  for (final scale in [1.0, 1.3, 1.6]) {
+    testWidgets('WITH NOTE chip text stays inside the chip at ${scale}x text', (
+      WidgetTester tester,
+    ) async {
+      final db = await TempoDatabase.openInMemory(
+        factory: databaseFactoryFfiNoIsolate,
+      );
+      await db.insertActivity(
+        Activity(
+          id: 'act-out',
+          name: 'Outdoors',
+          colorHex: '#8E99C9',
+          createdAtEpochMs: 0,
+          updatedAtEpochMs: 0,
+        ),
+      );
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await db.insertRecord(
+        Record(
+          id: 'rec-out',
+          activityId: 'act-out',
+          startedAtEpochMs: now - 3600000,
+          endedAtEpochMs: now - 60000,
+          comment: 'w/ Britney',
+          timezoneId: 'America/Los_Angeles',
+          createdAtEpochMs: now - 60000,
+          updatedAtEpochMs: now - 60000,
+        ),
+      );
+
+      final dayRecorder = DayRecorder(database: db);
+      await dayRecorder.initialize();
+
+      tester.view.physicalSize = const Size(2400, 6000);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+            child: DashboardView(dayRecorder: dayRecorder, database: db),
+          ),
+        ),
+      );
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 200)),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final chip = find.byKey(const ValueKey('combo-chip-0'));
+      expect(chip, findsOneWidget);
+      final chipRect = tester.getRect(chip);
+      for (final text in ['Outdoors', 'w/ Britney']) {
+        final textRect = tester.getRect(
+          find.descendant(of: chip, matching: find.text(text)),
+        );
+        expect(
+          textRect.bottom,
+          lessThanOrEqualTo(chipRect.bottom),
+          reason: '"$text" spills below the chip',
+        );
+        expect(textRect.top, greaterThanOrEqualTo(chipRect.top));
+      }
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      dayRecorder.dispose();
+      await db.close();
+    });
+  }
 }
