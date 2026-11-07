@@ -15,6 +15,7 @@ import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
 import '../../data/models/sync_change.dart';
 import '../core/time/timezone_id.dart';
+import 'activity_icon.dart';
 import 'helpers/ui_helpers.dart';
 import 'history/activity_picker_sheet.dart';
 import 'history/history_widgets.dart';
@@ -515,9 +516,14 @@ class _HistoryViewState extends State<HistoryView> {
             final name = pendingActivity?.name ?? 'Untracked';
             final dateLabel = DateFormat('EEE d MMM')
                 .format(wallClockAt(record.timezoneId, pendingStartMs));
-            final durationStr = UiHelpers.formatDurationHuman(
-              math.max(0, pendingEndMs - pendingStartMs),
+            final pendingDurationMs = math.max(
+              0,
+              pendingEndMs - pendingStartMs,
             );
+            final durationStr = UiHelpers.formatDurationHuman(
+              pendingDurationMs,
+            );
+            final durationDeltaMs = pendingDurationMs - record.elapsedMs;
             final startTime = DateFormat('HH:mm')
                 .format(wallClockAt(record.timezoneId, pendingStartMs));
             final endTime = DateFormat('HH:mm')
@@ -590,31 +596,32 @@ class _HistoryViewState extends State<HistoryView> {
                               excludeSemantics: true,
                               child: Row(
                                 children: [
-                                  Container(
-                                    width: 44,
-                                    height: 44,
-                                    clipBehavior: Clip.antiAlias,
-                                    decoration: BoxDecoration(
-                                      color: isUntracked
-                                          ? TempoColors.track
-                                          : UiHelpers.parseHexColor(
-                                              pendingActivity?.colorHex,
-                                            ),
-                                      borderRadius: BorderRadius.circular(14),
-                                      border: Border.all(
-                                        color: TempoColors.ink,
-                                        width: 2,
+                                  if (isUntracked)
+                                    Container(
+                                      width: 44,
+                                      height: 44,
+                                      clipBehavior: Clip.antiAlias,
+                                      decoration: BoxDecoration(
+                                        color: TempoColors.track,
+                                        borderRadius: BorderRadius.circular(14),
+                                        border: Border.all(
+                                          color: TempoColors.ink,
+                                          width: 2,
+                                        ),
                                       ),
+                                      child: const CustomPaint(
+                                        painter: HatchPainter(
+                                          color: historyHatch,
+                                          spacing: 6,
+                                        ),
+                                      ),
+                                    )
+                                  else
+                                    ActivityIcon(
+                                      pendingActivity!,
+                                      size: 44,
+                                      bordered: true,
                                     ),
-                                    child: isUntracked
-                                        ? const CustomPaint(
-                                            painter: HatchPainter(
-                                              color: historyHatch,
-                                              spacing: 6,
-                                            ),
-                                          )
-                                        : null,
-                                  ),
                                   const SizedBox(width: 12),
                                   Expanded(
                                     child: Column(
@@ -635,8 +642,9 @@ class _HistoryViewState extends State<HistoryView> {
                                           ),
                                         ),
                                         const SizedBox(height: 2),
+                                        // The length sits under the steppers.
                                         Text(
-                                          '$dateLabel · $durationStr',
+                                          dateLabel,
                                           style: TempoText.label.copyWith(
                                             color: TempoColors.inkMuted,
                                             fontFeatures: const [
@@ -674,7 +682,6 @@ class _HistoryViewState extends State<HistoryView> {
                                     '${startDayLabel == null ? '' : ' · $startDayLabel'}',
                                 edgeName: 'Start',
                                 time: startTime,
-                                caption: 'only this Record changes',
                                 onEarlier: () => setModalState(
                                   () => pendingStartMs -= stepMs,
                                 ),
@@ -703,7 +710,6 @@ class _HistoryViewState extends State<HistoryView> {
                                     '${endDayLabel == null ? '' : ' · $endDayLabel'}',
                                 edgeName: 'End',
                                 time: endTime,
-                                caption: 'only this Record changes',
                                 onEarlier:
                                     pendingEndMs - stepMs > pendingStartMs
                                     ? () => setModalState(
@@ -729,6 +735,13 @@ class _HistoryViewState extends State<HistoryView> {
                             ),
                           ],
                         ),
+                      ),
+                      const SizedBox(height: 6),
+                      // Live length, so moving an edge needs no arithmetic.
+                      DurationReadout(
+                        duration: durationStr,
+                        deltaMs: durationDeltaMs,
+                        caption: 'Only this Record changes',
                       ),
                       const SizedBox(height: 14),
 
@@ -835,9 +848,7 @@ class _HistoryViewState extends State<HistoryView> {
                             for (final activity in rowActivities) ...[
                               SheetChip(
                                 label: activity.name,
-                                swatch: UiHelpers.parseHexColor(
-                                  activity.colorHex,
-                                ),
+                                leading: ActivityIcon(activity, size: 20),
                                 selected: activity.id == pendingActivityId,
                                 onTap: () => setModalState(
                                   () => pendingActivityId = activity.id,
@@ -1371,6 +1382,9 @@ class _HistoryViewState extends State<HistoryView> {
     return HistoryRecordBlock(
       name: name,
       color: UiHelpers.parseHexColor(activity?.colorHex),
+      icon: ActivityIcon.has(activity)
+          ? ActivityIcon.glyph(activity!, size: 16)
+          : null,
       duration: durationStr,
       endLabel: endLabel,
       zonedRange: zonedRange,

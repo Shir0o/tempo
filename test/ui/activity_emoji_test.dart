@@ -68,4 +68,58 @@ void main() {
     expect(vocab, isNotEmpty);
     expect(vocab.toSet().length, vocab.length);
   });
+
+  group('guess', () {
+    test('keeps an exact match', () {
+      expect(ActivityEmoji.guess('ministry reading'), '📖');
+    });
+
+    test('reads plural and -ing forms of a known word', () {
+      expect(ActivityEmoji.guess('Walks'), '🚶');
+      expect(ActivityEmoji.guess('Commuting'), '🚗');
+      expect(ActivityEmoji.guess('Cleaned up'), '🧹');
+    });
+
+    test('tolerates one typo in a longer word', () {
+      expect(ActivityEmoji.guess('excercise'), '🏋️');
+    });
+
+    test('matches a shared stem', () {
+      expect(ActivityEmoji.guess('Meditate'), '🧘');
+    });
+
+    test('falls back to the category name', () {
+      expect(ActivityEmoji.guess('Jiu-jitsu'), isNull);
+      expect(ActivityEmoji.guess('Jiu-jitsu', categoryName: 'Exercise'), '🏋️');
+    });
+
+    test('stays null for names that are not close to anything', () {
+      expect(ActivityEmoji.guess('Anna'), isNull);
+      expect(ActivityEmoji.guess('S2'), isNull);
+      expect(ActivityEmoji.guess(''), isNull);
+    });
+  });
+
+  group('suggest and distinct', () {
+    test('uses an alternate when the first choice is worn', () {
+      expect(ActivityEmoji.suggest('Nap', taken: ['😴']), '💤');
+      expect(ActivityEmoji.suggest('Nap', taken: ['😴', '💤']), '🛌');
+    });
+
+    test('shares the emoji when every alternate is worn too', () {
+      expect(ActivityEmoji.distinct('😴', ['😴', '💤', '🛌']), '😴');
+    });
+
+    test('keeps the first choice when it is free', () {
+      expect(ActivityEmoji.suggest('Nap', taken: ['📖']), '😴');
+    });
+
+    test('alternates are all in the picker vocabulary', () {
+      for (final alts in ActivityEmoji.alternates.values) {
+        for (final alt in alts) {
+          expect(ActivityEmoji.vocabulary, contains(alt));
+        }
+      }
+    });
+  });
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
+import 'activity_icon.dart';
 import 'helpers/ui_helpers.dart';
 import 'stats_calculator.dart';
 import 'theme/tempo_theme.dart';
@@ -431,6 +432,7 @@ class _StatsViewState extends State<StatsView> {
           _buildRow(
             name: stat.name,
             color: UiHelpers.parseHexColor(stat.colorHex),
+            iconName: stat.iconName,
             durationMs: stat.durationMs,
             fraction: stat.durationMs / largest,
             trailing: report.period == StatsPeriod.day
@@ -456,6 +458,7 @@ class _StatsViewState extends State<StatsView> {
   Widget _buildRow({
     required String name,
     required Color color,
+    String iconName = '',
     required int durationMs,
     required double fraction,
     required String trailing,
@@ -479,26 +482,32 @@ class _StatsViewState extends State<StatsView> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: Row(
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: SizedBox(
-                    width: 40,
-                    height: 40,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        ColoredBox(color: color),
-                        if (hatched)
+                if (hatched)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: SizedBox(
+                      width: 40,
+                      height: 40,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          ColoredBox(color: color),
                           const CustomPaint(
                             painter: HatchPainter(
                               color: Color(0x1F000000),
                               spacing: 8,
                             ),
                           ),
-                      ],
+                        ],
+                      ),
                     ),
+                  )
+                else
+                  ActivityIcon.parts(
+                    iconName: iconName,
+                    color: color,
+                    size: 40,
                   ),
-                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(

@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tempo/data/models/models.dart';
 import 'package:tempo/ui/helpers/ui_helpers.dart';
@@ -68,7 +67,7 @@ void main() {
     });
   });
 
-  group('isEmoji and buildIconOrEmoji', () {
+  group('isEmoji', () {
     test('correctly identifies emojis vs icon names', () {
       expect(UiHelpers.isEmoji('☕'), isTrue);
       expect(UiHelpers.isEmoji('🏃'), isTrue);
@@ -79,34 +78,5 @@ void main() {
       expect(UiHelpers.isEmoji(''), isFalse);
       expect(UiHelpers.isEmoji(null), isFalse);
     });
-
-    testWidgets(
-      'buildIconOrEmoji renders Text for emoji and Icon for icon name',
-      (tester) async {
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: Column(
-                children: [
-                  UiHelpers.buildIconOrEmoji(
-                    iconName: '☕',
-                    color: Colors.brown,
-                    size: 24,
-                  ),
-                  UiHelpers.buildIconOrEmoji(
-                    iconName: 'fitness_center',
-                    color: Colors.blue,
-                    size: 20,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-
-        expect(find.text('☕'), findsOneWidget);
-        expect(find.byIcon(Icons.fitness_center), findsOneWidget);
-      },
-    );
   });
 }

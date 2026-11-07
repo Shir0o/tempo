@@ -207,8 +207,11 @@ Big, friendly radii. Activity blocks 20px, cards 24px, the Lap panel's lower cor
 - **Outline:** transparent, 2px ink border on paper.
 - **Focus:** 2px lime focus ring offset 2px.
 
+### Activity icon
+One component (`ActivityIcon`) draws an Activity's icon everywhere: a swatch in the Activity's colour (radius about a third of its size) with the emoji centred at ~58% of the swatch, or plain colour when there is no emoji yet. On surfaces already in the Activity's colour (Today blocks, Activities blocks, History Record blocks, the picker's suggestion tiles) only the emoji is drawn. Only emoji count as icons; legacy Material icon names read as "no icon yet". Emoji come from one vocabulary shared by auto-assign, the guesser and the pickers, and an emoji another Activity already wears is steered to an alternate (Sleep 😴, Nap 💤).
+
 ### Activity block
-- **Style:** square, Activity colour, 20px radius, ink text: today's total top-left (600, 13px), name bottom-left (700, 16px).
+- **Style:** square, Activity colour, 20px radius, ink text: today's total top-left (600, 13px), emoji above the name bottom-left, name (700, 16px).
 - **Behaviour:** tap labels the open Lap. In Activities, a key badge (ink, 22px, 6px radius) shows the Mac number shortcut.
 
 ### Lap panel
@@ -224,13 +227,16 @@ Under the Lap panel on Today, while the latest tracked Record ended today: a Nig
 Full-width, Activity colour, 16px radius, name left and duration right, optional note below in 12px, then one chip per tag: 22px pill in 12% ink with an 8px swatch in the tag's colour (3px radius) and the name at 600, 11px. Chips wrap and are display only; the block stays the tap target. Untracked blocks are hatched paper with an ink "What was it?" pill. The open Lap is a Night block with a 2px lime outline and a live timer.
 
 ### Edit sheet
-Ledger Paper bottom sheet, ordered by how often each part changes. Header: Activity swatch (44px, 14px radius) plus name in 30px, and an outline "Change" pill. Start and end steppers on Insert Paper, each with ± circle buttons, the zone, and which neighbour moves. Note field with People chips, then a Tags row of tag chips ending in "+ New tag". One row of Activity chips (selected = ink fill): the current one, up to three usually started around this time of day, and "All N". Three outline actions (Split…, Merge next, Untrack), then a full-width ink Save.
+Ledger Paper bottom sheet, ordered by how often each part changes. Header: Activity icon (44px swatch with its emoji, 2px ink border) plus name in 30px over the date, and an outline "Change" pill. Start and end steppers on Insert Paper, each with ± circle buttons and the zone, then a Duration row on Insert Paper: overline and "Only this Record changes" left, the live length right (700, 22px, tabular) with a 12%-ink pill showing the change from the saved Record ("+15m") once an edge moves. Note field with People chips, then a Tags row of tag chips ending in "+ New tag". One row of Activity chips (selected = ink fill): the current one, up to three usually started around this time of day, and "All N". Three outline actions (Split…, Merge next, Untrack), then a full-width ink Save.
+
+### Activity editor
+Ledger Paper sheet: title, then a 52px Activity icon preview beside the name field, updating as you type. An ICON row of 44px Insert Paper cells: the guess from the name (or the Category's name when the name gives nothing), its alternates, "More" for the whole vocabulary and "Clear". A small dot marks an emoji another Activity wears. A name that matches another Activity (any case) shows a note and Save does nothing.
 
 ### Activity picker
 Opened from "Change" or "All N" over the edit sheet. Back chevron, "Change Activity" and the times; a search field that opens the keyboard; "Around HH:mm" as three Activity blocks; then every Activity as 48px rows under its Category (Categories in their order, A–Z inside), a check on the current one. Picking stages it on the edit sheet; Save applies.
 
 ### Activity filter sheet
-Ledger Paper bottom sheet at 70% height, opened from the magnifier in "What was it?". Header "Find an Activity" with the context line "Label 10:06 → now · 25m". Search field on Insert Paper with a clear × and an optional mic. Result rows are 48px tall with a 16px radius: 16px colour swatch (5px radius), name at 600, optional uppercase category, and today's total right-aligned in tabular figures. The empty state names the query and offers Clear and Manage Activities.
+Ledger Paper bottom sheet at 70% height, opened from the magnifier in "What was it?". Header "Find an Activity" with the context line "Label 10:06 → now · 25m". Search field on Insert Paper with a clear × and an optional mic. Result rows are 48px tall with a 16px radius: 28px Activity icon, name at 600, optional uppercase category, and today's total right-aligned in tabular figures. The empty state names the query and offers Clear and Manage Activities.
 
 ### Undo bar
 Night Card, 16px radius: "Logged **Errands** 08:42–10:06" and a lime text button "Undo · 3" counting down.

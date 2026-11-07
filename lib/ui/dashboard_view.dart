@@ -18,6 +18,7 @@ import '../../core/time/timezone_id.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
 import 'activity_filter_sheet.dart';
+import 'activity_icon.dart';
 import 'activity_manager_view.dart';
 import 'helpers/activity_order.dart';
 import 'helpers/ui_helpers.dart';
@@ -1174,7 +1175,6 @@ class _DashboardViewState extends State<DashboardView>
   }
 
   Widget _buildSuggestedChip(Activity activity) {
-    final color = UiHelpers.parseHexColor(activity.colorHex);
     return Semantics(
       button: true,
       label: 'Suggested: ${activity.name}. Tap to label untracked time.',
@@ -1190,23 +1190,8 @@ class _DashboardViewState extends State<DashboardView>
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: color,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                if (activity.iconName.isNotEmpty) ...[
-                  const SizedBox(width: 6),
-                  UiHelpers.buildIconOrEmoji(
-                    iconName: activity.iconName,
-                    color: Colors.white,
-                    size: 14,
-                  ),
-                ],
-                const SizedBox(width: 6),
+                ActivityIcon(activity, size: 18),
+                const SizedBox(width: 8),
                 Text(
                   activity.name,
                   style: const TextStyle(
@@ -1428,19 +1413,10 @@ class _DashboardViewState extends State<DashboardView>
               padding: const EdgeInsets.symmetric(horizontal: 14),
               child: Row(
                 children: [
-                  SizedBox(
-                    width: 20,
-                    child: Center(
-                      child: activity.iconName.isEmpty
-                          ? const SizedBox.shrink()
-                          : UiHelpers.buildIconOrEmoji(
-                              iconName: activity.iconName,
-                              color: textColor.withValues(alpha: 0.8),
-                              size: 16,
-                            ),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
+                  if (ActivityIcon.has(activity)) ...[
+                    ActivityIcon.glyph(activity, size: 16),
+                    const SizedBox(width: 8),
+                  ],
                   Expanded(
                     child: Text(
                       activity.name,

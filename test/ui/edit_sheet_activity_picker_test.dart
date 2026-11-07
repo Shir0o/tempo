@@ -66,6 +66,8 @@ void main() {
     expect(find.text('Change Activity'), findsNothing);
     expect((await db.getRecords()).single.activityId, 'a0');
 
+    // The sheet scrolls; Save sits below the 600px test viewport.
+    await tester.ensureVisible(find.text('Save'));
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
     expect((await db.getRecords()).single.activityId, 'a8');

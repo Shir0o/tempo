@@ -11,6 +11,7 @@ import '../../core/state/record_commands.dart';
 import '../../core/time/timezone_id.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
+import '../../ui/activity_icon.dart';
 import '../../ui/helpers/ui_helpers.dart';
 import '../../ui/theme/tempo_theme.dart';
 
@@ -1001,14 +1002,7 @@ class _QuickPopoverViewState extends State<QuickPopoverView> {
               else
                 const SizedBox(width: 22),
               const SizedBox(width: 10),
-              Container(
-                width: 14,
-                height: 14,
-                decoration: BoxDecoration(
-                  color: UiHelpers.parseHexColor(activity.colorHex),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              ),
+              ActivityIcon(activity, size: 22),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(

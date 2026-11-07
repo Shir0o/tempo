@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/models/models.dart';
+import 'activity_icon.dart';
 import 'helpers/ui_helpers.dart';
 import 'theme/tempo_theme.dart';
 
@@ -37,14 +38,7 @@ class ActivityResultRow extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Row(
             children: [
-              Container(
-                width: 16,
-                height: 16,
-                decoration: BoxDecoration(
-                  color: UiHelpers.parseHexColor(activity.colorHex),
-                  borderRadius: BorderRadius.circular(5),
-                ),
-              ),
+              ActivityIcon(activity, size: 28),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
