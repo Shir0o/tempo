@@ -126,6 +126,79 @@ class ActivityEmoji {
     'cat': '🐈',
     'shower': '🚿',
     'hygiene': '🚿',
+    'bath': '🛁',
+    'snack': '🍎',
+    'brunch': '🥞',
+    'baking': '🧁',
+    'bake': '🧁',
+    'swim': '🏊',
+    'swimming': '🏊',
+    'bike': '🚲',
+    'cycling': '🚲',
+    'hike': '🥾',
+    'hiking': '🥾',
+    'dance': '💃',
+    'dancing': '💃',
+    'sports': '⚽',
+    'piano': '🎹',
+    'guitar': '🎸',
+    'singing': '🎤',
+    'choir': '🎤',
+    'haircut': '💈',
+    'dentist': '🦷',
+    'packing': '🧳',
+    'moving': '📦',
+    'photo': '📷',
+    'photography': '📷',
+    'sewing': '🧵',
+    'knitting': '🧶',
+    'puzzle': '🧩',
+    'kids': '🧸',
+    'baby': '🍼',
+    'party': '🎉',
+    'visit': '🏠',
+    'home': '🏠',
+    'relax': '🛋️',
+  };
+
+  /// Second choices for an emoji, in order, so two Activities that resolve to
+  /// the same thing (Sleep and Nap, Reading and Bible) can still be told apart
+  /// at a glance. Only used when the first choice is already worn.
+  static const Map<String, List<String>> alternates = {
+    '😴': ['💤', '🛌'],
+    '🌙': ['🛋️'],
+    '🍽️': ['🥘', '🍲'],
+    '🥗': ['🥪', '🍱'],
+    '🥣': ['🍳', '🥐'],
+    '☕': ['🫖'],
+    '🧹': ['🧼', '🪣'],
+    '🚗': ['🚙', '🛵'],
+    '🚆': ['🚇', '🚌'],
+    '🚶': ['🚶‍♀️', '🌳'],
+    '🏋️': ['💪', '🤸'],
+    '🧘': ['🪷', '🕯️'],
+    '🙏': ['🛐', '✝️'],
+    '⛪': ['✝️', '🕊️'],
+    '📖': ['📘', '📕', '📜'],
+    '📚': ['📝', '🧑‍🎓'],
+    '🎓': ['🏫'],
+    '✏️': ['🖊️'],
+    '🗂️': ['📁', '🧾'],
+    '📧': ['📨', '📬'],
+    '👥': ['🧑‍🤝‍🧑', '🗣️', '☕'],
+    '📞': ['📱'],
+    '💬': ['📱'],
+    '💻': ['⌨️', '🖥️'],
+    '💼': ['🏢', '📈'],
+    '🎨': ['🖌️'],
+    '🎵': ['🎶', '🎧'],
+    '📺': ['🍿'],
+    '🎮': ['🕹️', '🎲'],
+    '🏥': ['🩺'],
+    '💰': ['💳', '🏦'],
+    '📄': ['🧾'],
+    '🤝': ['💛'],
+    '🏠': ['🏡'],
   };
 
   /// Words that never carry the meaning of an Activity name, so they are
@@ -154,11 +227,17 @@ class ActivityEmoji {
       .map((key) => key.split(' ').length)
       .reduce(math.max);
 
-  /// Every emoji the table can produce, in table order, without duplicates.
-  /// Used to build the picker so auto and manual share one vocabulary.
+  /// Every emoji the table and its alternates can produce, in table order,
+  /// without duplicates. Used to build the picker so auto and manual share one
+  /// vocabulary.
   static final List<String> vocabulary = List.unmodifiable(
-    table.values.toSet().toList(),
+    {...table.values, for (final alts in alternates.values) ...alts}.toList(),
   );
+
+  static final List<String> _singleWordKeys = [
+    for (final key in table.keys)
+      if (!key.contains(' ')) key,
+  ];
 
   /// Resolves an Activity name to an emoji, or null when the table has no
   /// answer.
@@ -192,6 +271,127 @@ class ActivityEmoji {
       if (emoji != null) return emoji;
     }
     return null;
+  }
+
+  /// A best guess for a name [emojiForName] cannot resolve exactly: near
+  /// misses of known words (plurals, `-ing`/`-ed` forms, typos, shared
+  /// stems like `meditate` and `meditation`), then the same for
+  /// [categoryName]. Null when nothing is close.
+  static String? guess(String name, {String? categoryName}) {
+    final exact = emojiForName(name);
+    if (exact != null) return exact;
+    final near = _nearMatch(name);
+    if (near != null) return near;
+    if (categoryName == null) return null;
+    return emojiForName(categoryName) ?? _nearMatch(categoryName);
+  }
+
+  /// [guess], steered away from emoji in [taken] (the ones other Activities
+  /// already wear) by trying the guess's [alternates]. Falls back to the
+  /// shared emoji when every alternate is taken too, since a fitting
+  /// duplicate beats an unrelated icon.
+  static String? suggest(
+    String name, {
+    String? categoryName,
+    Iterable<String> taken = const [],
+  }) {
+    final base = guess(name, categoryName: categoryName);
+    if (base == null) return null;
+    return distinct(base, taken);
+  }
+
+  /// [emoji], or its first alternate not in [taken].
+  static String distinct(String emoji, Iterable<String> taken) {
+    final used = taken.toSet();
+    if (!used.contains(emoji)) return emoji;
+    for (final alternate in alternates[emoji] ?? const <String>[]) {
+      if (!used.contains(alternate)) return alternate;
+    }
+    return emoji;
+  }
+
+  /// Scans content tokens right to left (head noun first) for the closest
+  /// known single word.
+  static String? _nearMatch(String name) {
+    final tokens = _tokens(name);
+    final content = tokens
+        .where((token) => !_stopWords.contains(token))
+        .toList();
+    for (final token in content.reversed) {
+      if (token.length < 4) continue;
+      for (final variant in _variants(token)) {
+        final emoji = table[variant];
+        if (emoji != null) return emoji;
+      }
+      String? best;
+      var bestScore = 0;
+      for (final key in _singleWordKeys) {
+        final score = _closeness(token, key);
+        if (score > bestScore) {
+          bestScore = score;
+          best = key;
+        }
+      }
+      if (best != null) return table[best];
+    }
+    return null;
+  }
+
+  /// Simple English inflections of [token]: `walks` → `walk`,
+  /// `dishes` → `dish`, `baking` → `bake`, `cleaned` → `clean`.
+  static Iterable<String> _variants(String token) sync* {
+    for (final suffix in const ['ing', 'ed', 'es', 's', 'er', 'ers']) {
+      if (token.length - suffix.length < 3 || !token.endsWith(suffix)) {
+        continue;
+      }
+      final stem = token.substring(0, token.length - suffix.length);
+      yield stem;
+      yield '${stem}e';
+      // running → run, shopping → shop
+      if (stem.length > 3 && stem[stem.length - 1] == stem[stem.length - 2]) {
+        yield stem.substring(0, stem.length - 1);
+      }
+    }
+    for (final suffix in const ['s', 'ing']) {
+      yield '$token$suffix';
+    }
+  }
+
+  /// How close two words are, 0 when not close enough to guess from. A long
+  /// shared stem (5+ letters) or one typo in a word of 5+ letters counts.
+  static int _closeness(String a, String b) {
+    var prefix = 0;
+    final shorter = math.min(a.length, b.length);
+    while (prefix < shorter && a[prefix] == b[prefix]) {
+      prefix++;
+    }
+    if (prefix >= 5) return prefix;
+    if (shorter >= 5 && _withinOneEdit(a, b)) return 4;
+    return 0;
+  }
+
+  static bool _withinOneEdit(String a, String b) {
+    if ((a.length - b.length).abs() > 1) return false;
+    var i = 0;
+    var j = 0;
+    var edits = 0;
+    while (i < a.length && j < b.length) {
+      if (a[i] == b[j]) {
+        i++;
+        j++;
+        continue;
+      }
+      if (++edits > 1) return false;
+      if (a.length > b.length) {
+        i++;
+      } else if (b.length > a.length) {
+        j++;
+      } else {
+        i++;
+        j++;
+      }
+    }
+    return edits + (a.length - i) + (b.length - j) <= 1;
   }
 
   /// The letter shown for an Activity the table cannot resolve.

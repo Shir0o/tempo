@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
+import 'activity_icon.dart';
 import 'helpers/activity_emoji.dart';
 import 'helpers/ui_helpers.dart';
 import 'theme/tempo_theme.dart';
@@ -23,7 +24,8 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
   List<Activity> _activities = [];
   List<Category> _categories = [];
 
-  /// Icon stored on new Activities; the icon is not user-facing in design D.
+  /// Icon stored on a new Activity left without an emoji; it reads as "no
+  /// icon yet" everywhere, so the auto-assign pass can still fill it.
   static const String _defaultIcon = 'schedule';
 
   @override
@@ -68,14 +70,71 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
         UiHelpers.toHexColor(TempoColors.activityPalette.first);
     bool isPinned = existing?.isPinned ?? false;
     String? selectedCategoryId = existing?.categoryId;
+    // An emoji already worn counts as chosen; otherwise the sheet shows a
+    // live guess from the name until one is tapped.
+    String? pickedEmoji = existing == null
+        ? null
+        : ActivityIcon.emojiOf(existing.iconName);
+    var iconChosen = pickedEmoji != null;
+    var showAllEmoji = false;
+    var disposeScheduled = false;
+    final others = [
+      for (final a in _activities)
+        if (a.id != existing?.id) a,
+    ];
+    final takenBy = <String, String>{
+      for (final a in others.where((a) => !a.isArchived))
+        ?ActivityIcon.emojiOf(a.iconName): a.name,
+    };
 
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       builder: (ctx) {
+        // The sheet still rebuilds while it slides away, so the field's
+        // controller is disposed once the exit animation is done, not on pop.
+        if (!disposeScheduled) {
+          disposeScheduled = true;
+          ModalRoute.of(ctx)?.completed.whenComplete(nameController.dispose);
+        }
         return StatefulBuilder(
           builder: (context, setModalState) {
             final selectedCategory = _categoryById(selectedCategoryId);
+            final typedName = nameController.text.trim();
+            final guessed = ActivityEmoji.guess(
+              typedName,
+              categoryName: selectedCategory?.name,
+            );
+            final suggestion = guessed == null
+                ? null
+                : ActivityEmoji.distinct(guessed, takenBy.keys);
+            final emoji = iconChosen ? pickedEmoji : suggestion;
+            final previewColor = UiHelpers.parseHexColor(
+              selectedCategory?.colorHex ?? selectedColor,
+            );
+            // Quick picks: the guess, then its alternates, then whatever is
+            // already chosen, at most five.
+            final quickPicks = <String>{
+              ?suggestion,
+              ?guessed,
+              ...?ActivityEmoji.alternates[guessed],
+              ?pickedEmoji,
+            }.take(5).toList();
+            final duplicate = _sameName(others, typedName);
+            final sharedWith = emoji == null ? null : takenBy[emoji];
+            final iconCaption = sharedWith != null && iconChosen
+                ? 'Also used by $sharedWith.'
+                : !iconChosen && suggestion != null
+                ? 'Guessed from the name. Tap another to change it.'
+                : !iconChosen && typedName.isNotEmpty
+                ? 'No guess for this name yet. Pick one, or leave it blank.'
+                : null;
+
+            void choose(String? value) => setModalState(() {
+              pickedEmoji = value;
+              iconChosen = true;
+            });
+
             return Padding(
               padding: EdgeInsets.only(
                 bottom: MediaQuery.of(context).viewInsets.bottom,
@@ -96,25 +155,120 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    TextField(
-                      controller: nameController,
-                      style: TempoText.body.copyWith(color: TempoColors.ink),
-                      cursorColor: TempoColors.ink,
-                      autofocus: existing == null,
-                      decoration: InputDecoration(
-                        hintText: 'e.g. Reading, Meals, Errands',
-                        hintStyle: TempoText.body.copyWith(
-                          color: TempoColors.inkFaint,
+                    Row(
+                      children: [
+                        Semantics(
+                          label: emoji == null ? 'No icon' : 'Icon $emoji',
+                          child: ActivityIcon.parts(
+                            iconName: emoji ?? '',
+                            color: previewColor,
+                            size: 52,
+                            bordered: true,
+                          ),
                         ),
-                        filled: true,
-                        fillColor: TempoColors.paper,
-                        contentPadding: const EdgeInsets.all(14),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(TempoRadii.row),
-                          borderSide: BorderSide.none,
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: nameController,
+                            onChanged: (_) => setModalState(() {}),
+                            style: TempoText.body.copyWith(
+                              color: TempoColors.ink,
+                            ),
+                            cursorColor: TempoColors.ink,
+                            autofocus: existing == null,
+                            decoration: InputDecoration(
+                              hintText: 'e.g. Reading, Meals, Errands',
+                              hintStyle: TempoText.body.copyWith(
+                                color: TempoColors.inkFaint,
+                              ),
+                              filled: true,
+                              fillColor: TempoColors.paper,
+                              contentPadding: const EdgeInsets.all(14),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(
+                                  TempoRadii.row,
+                                ),
+                                borderSide: BorderSide.none,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (duplicate != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        duplicate.isArchived
+                            ? '${duplicate.name} is archived. Unarchive it '
+                                  'instead of adding it again.'
+                            : 'There is already an activity called '
+                                  '${duplicate.name}.',
+                        style: TempoText.label.copyWith(
+                          color: TempoColors.ink,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
+                    ],
+                    const SizedBox(height: 18),
+                    Text(
+                      'ICON',
+                      style: TempoText.overline.copyWith(
+                        color: TempoColors.inkMuted,
+                      ),
                     ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final pick in quickPicks)
+                          _EmojiCell(
+                            emoji: pick,
+                            selected: pick == emoji,
+                            usedBy: takenBy[pick],
+                            onTap: () => choose(pick),
+                          ),
+                        _CategoryChip(
+                          label: showAllEmoji ? 'Fewer' : 'More',
+                          selected: false,
+                          onTap: () =>
+                              setModalState(() => showAllEmoji = !showAllEmoji),
+                        ),
+                        if (emoji != null)
+                          _CategoryChip(
+                            label: 'Clear',
+                            selected: false,
+                            onTap: () => choose(null),
+                          ),
+                      ],
+                    ),
+                    if (showAllEmoji) ...[
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final option in ActivityEmoji.vocabulary)
+                            if (!quickPicks.contains(option))
+                              _EmojiCell(
+                                emoji: option,
+                                selected: option == emoji,
+                                usedBy: takenBy[option],
+                                onTap: () => choose(option),
+                              ),
+                        ],
+                      ),
+                    ],
+                    if (iconCaption != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        iconCaption,
+                        style: TempoText.label.copyWith(
+                          color: TempoColors.inkMuted,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 18),
                     Text(
                       'CATEGORY',
@@ -273,7 +427,12 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                             filled: true,
                             onTap: () async {
                               final name = nameController.text.trim();
-                              if (name.isEmpty) return;
+                              if (name.isEmpty || duplicate != null) return;
+                              final iconName =
+                                  emoji ??
+                                  (iconChosen || existing == null
+                                      ? _defaultIcon
+                                      : existing.iconName);
 
                               final now = DateTime.now()
                                   .toUtc()
@@ -283,6 +442,7 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                               if (existing != null) {
                                 final updated = existing.copyWith(
                                   name: name,
+                                  iconName: iconName,
                                   colorHex: effectiveColor,
                                   isPinned: isPinned,
                                   categoryId: selectedCategoryId,
@@ -295,7 +455,7 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                                   id: const Uuid().v4(),
                                   name: name,
                                   colorHex: effectiveColor,
-                                  iconName: _defaultIcon,
+                                  iconName: iconName,
                                   isPinned: isPinned,
                                   categoryId: selectedCategoryId,
                                   sortOrder: _activities.length,
@@ -322,7 +482,16 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
         );
       },
     );
-    nameController.dispose();
+  }
+
+  /// Another Activity already called [name] (any case), archived or not.
+  static Activity? _sameName(List<Activity> others, String name) {
+    if (name.isEmpty) return null;
+    final key = name.toLowerCase();
+    for (final a in others) {
+      if (a.name.trim().toLowerCase() == key) return a;
+    }
+    return null;
   }
 
   Future<void> _toggleArchive(Activity activity) async {
@@ -347,14 +516,19 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
   Future<void> _autoAssignEmoji() async {
     final all = await widget.database.getAllActivities(includeArchived: true);
     final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+    // Emoji already worn, so two matches on the same word (Sleep, Nap) are
+    // told apart by an alternate instead of sharing one icon.
+    final taken = _wornEmoji(all);
     var updated = 0;
     for (final activity in all) {
       if (!ActivityEmoji.needsIcon(activity.iconName)) continue;
-      final emoji = ActivityEmoji.emojiForName(activity.name);
-      if (emoji == null) continue;
+      final match = ActivityEmoji.emojiForName(activity.name);
+      if (match == null) continue;
+      final emoji = ActivityEmoji.distinct(match, taken);
       await widget.database.updateActivity(
         activity.copyWith(iconName: emoji, updatedAtEpochMs: now),
       );
+      taken.add(emoji);
       updated++;
     }
     await _loadActivities();
@@ -377,6 +551,20 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
       ),
     );
   }
+
+  /// Emoji worn by Activities that are not archived.
+  static Set<String> _wornEmoji(Iterable<Activity> activities) => {
+    for (final a in activities)
+      if (!a.isArchived) ?ActivityIcon.emojiOf(a.iconName),
+  };
+
+  /// A guessed emoji for an Activity with no exact match, steered away from
+  /// the ones other Activities wear.
+  String? _guessFor(Activity activity) => ActivityEmoji.suggest(
+    activity.name,
+    categoryName: _categoryById(activity.categoryId)?.name,
+    taken: _wornEmoji(_activities.where((a) => a.id != activity.id)),
+  );
 
   Future<void> _setIcon(Activity activity, String iconName) async {
     await widget.database.updateActivity(
@@ -408,6 +596,20 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                         remaining,
                         onPick: (picked) =>
                             setSheetState(() => selected = picked),
+                        onUseGuesses: (guesses) async {
+                          for (final entry in guesses.entries) {
+                            await _setIcon(entry.key, entry.value);
+                          }
+                          if (!mounted || !sheetContext.mounted) return;
+                          setSheetState(() {
+                            remaining = remaining
+                                .where((a) => !guesses.containsKey(a))
+                                .toList();
+                          });
+                          if (remaining.isEmpty) {
+                            Navigator.of(sheetContext).pop();
+                          }
+                        },
                       )
                     : _buildEmojiPicker(
                         activity,
@@ -437,7 +639,22 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
   Widget _buildSweepList(
     List<Activity> pending, {
     required ValueChanged<Activity> onPick,
+    required ValueChanged<Map<Activity, String>> onUseGuesses,
   }) {
+    // Guesses are made one after another so two guesses don't land on the
+    // same emoji either.
+    final taken = _wornEmoji(_activities);
+    final guesses = <Activity, String>{};
+    for (final activity in pending) {
+      final guess = ActivityEmoji.guess(
+        activity.name,
+        categoryName: _categoryById(activity.categoryId)?.name,
+      );
+      if (guess == null) continue;
+      final emoji = ActivityEmoji.distinct(guess, taken);
+      taken.add(emoji);
+      guesses[activity] = emoji;
+    }
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -456,6 +673,18 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
               : '${pending.length} activities have no match yet.',
           style: TempoText.body.copyWith(color: TempoColors.inkMuted),
         ),
+        if (guesses.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            guesses.length == pending.length
+                ? 'Each has a guess below.'
+                : '${guesses.length} have a guess below.',
+            style: TempoText.label.copyWith(
+              color: TempoColors.inkMuted,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
         const SizedBox(height: 14),
         ConstrainedBox(
           constraints: BoxConstraints(
@@ -480,22 +709,29 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                     ),
                     child: Row(
                       children: [
-                        Container(
-                          width: 34,
-                          height: 34,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
+                        if (guesses[activity] case final guess?)
+                          ActivityIcon.parts(
+                            iconName: guess,
                             color: UiHelpers.parseHexColor(activity.colorHex),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Text(
-                            ActivityEmoji.monogram(activity.name),
-                            style: TempoText.label.copyWith(
-                              color: TempoColors.ink,
-                              fontWeight: FontWeight.w700,
+                            size: 34,
+                          )
+                        else
+                          Container(
+                            width: 34,
+                            height: 34,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: UiHelpers.parseHexColor(activity.colorHex),
+                              borderRadius: BorderRadius.circular(11),
+                            ),
+                            child: Text(
+                              ActivityEmoji.monogram(activity.name),
+                              style: TempoText.label.copyWith(
+                                color: TempoColors.ink,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                           ),
-                        ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
@@ -508,6 +744,17 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                             ),
                           ),
                         ),
+                        if (guesses.containsKey(activity))
+                          Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: Text(
+                              'guess',
+                              style: TempoText.label.copyWith(
+                                color: TempoColors.inkMuted,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
                         const Icon(
                           Icons.chevron_right_rounded,
                           color: TempoColors.inkMuted,
@@ -520,6 +767,16 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
             },
           ),
         ),
+        if (guesses.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          _SheetPill(
+            label: guesses.length == 1
+                ? 'Use the guess'
+                : 'Use ${guesses.length} guesses',
+            filled: true,
+            onTap: () => onUseGuesses(guesses),
+          ),
+        ],
       ],
     );
   }
@@ -562,7 +819,10 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                for (final emoji in ActivityEmoji.vocabulary)
+                for (final emoji in {
+                  ?_guessFor(activity),
+                  ...ActivityEmoji.vocabulary,
+                })
                   Semantics(
                     button: true,
                     label: 'Icon $emoji',
@@ -604,7 +864,7 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                 label: 'Auto',
                 filled: false,
                 onTap: () {
-                  final derived = ActivityEmoji.emojiForName(activity.name);
+                  final derived = _guessFor(activity);
                   if (derived != null) {
                     onPicked(derived);
                     return;
@@ -907,14 +1167,24 @@ class _ActivityBlock extends StatelessWidget {
                   ),
                 Align(
                   alignment: Alignment.bottomLeft,
-                  child: Text(
-                    activity.name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TempoText.title.copyWith(
-                      color: TempoColors.ink,
-                      fontSize: 15,
-                    ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (ActivityIcon.has(activity)) ...[
+                        ActivityIcon.glyph(activity, size: 22),
+                        const SizedBox(height: 6),
+                      ],
+                      Text(
+                        activity.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TempoText.title.copyWith(
+                          color: TempoColors.ink,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -1018,6 +1288,69 @@ class _SheetPill extends StatelessWidget {
                 fontWeight: FontWeight.w700,
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One emoji in the activity editor's icon picker: Insert Paper, ink ring when
+/// selected. An emoji another Activity wears gets a small ink dot so a repeat
+/// is a choice, not an accident.
+class _EmojiCell extends StatelessWidget {
+  final String emoji;
+  final bool selected;
+  final String? usedBy;
+  final VoidCallback onTap;
+
+  const _EmojiCell({
+    required this.emoji,
+    required this.selected,
+    required this.onTap,
+    this.usedBy,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: usedBy == null ? 'Icon $emoji' : 'Icon $emoji, used by $usedBy',
+      excludeSemantics: true,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Container(
+          width: 44,
+          height: 44,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: TempoColors.paper,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected ? TempoColors.ink : Colors.transparent,
+              width: 2,
+            ),
+          ),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Text(emoji, style: const TextStyle(fontSize: 22, height: 1)),
+              if (usedBy != null && !selected)
+                Positioned(
+                  right: 4,
+                  bottom: 4,
+                  child: Container(
+                    width: 6,
+                    height: 6,
+                    decoration: const BoxDecoration(
+                      color: TempoColors.inkFaint,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),

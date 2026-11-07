@@ -209,6 +209,9 @@ class HistoryTimelineRow extends StatelessWidget {
 class HistoryRecordBlock extends StatelessWidget {
   final String name;
   final Color color;
+
+  /// The Activity's emoji, drawn before the name when it has one.
+  final Widget? icon;
   final String duration;
   final String? endLabel;
   final String? zonedRange;
@@ -221,6 +224,7 @@ class HistoryRecordBlock extends StatelessWidget {
     super.key,
     required this.name,
     required this.color,
+    this.icon,
     required this.duration,
     this.endLabel,
     required this.zonedRange,
@@ -257,6 +261,7 @@ class HistoryRecordBlock extends StatelessWidget {
                 children: [
                   Row(
                     children: [
+                      if (icon != null) ...[icon!, const SizedBox(width: 8)],
                       Expanded(
                         child: Text(
                           name,
@@ -553,7 +558,7 @@ class SheetOverline extends StatelessWidget {
 class EdgeStepper extends StatelessWidget {
   final String overline;
   final String time;
-  final String caption;
+  final String? caption;
   final String edgeName;
   final VoidCallback? onEarlier;
   final VoidCallback? onLater;
@@ -563,7 +568,7 @@ class EdgeStepper extends StatelessWidget {
     super.key,
     required this.overline,
     required this.time,
-    required this.caption,
+    this.caption,
     required this.edgeName,
     required this.onEarlier,
     required this.onLater,
@@ -630,17 +635,18 @@ class EdgeStepper extends StatelessWidget {
               ),
             ],
           ),
-          Padding(
-            padding: const EdgeInsets.only(left: 2),
-            child: Text(
-              caption,
-              style: TempoText.label.copyWith(
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                color: TempoColors.inkMuted,
+          if (caption != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 2),
+              child: Text(
+                caption!,
+                style: TempoText.label.copyWith(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: TempoColors.inkMuted,
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
@@ -699,12 +705,104 @@ class _CircleStep extends StatelessWidget {
   }
 }
 
+/// The edit sheet's live length under the edge steppers: overline and what
+/// an edge move touches on the left, then how far the length moved from the
+/// saved Record ("+15m") and the length itself in tabular figures.
+class DurationReadout extends StatelessWidget {
+  final String duration;
+  final int deltaMs;
+  final String? caption;
+
+  const DurationReadout({
+    super.key,
+    required this.duration,
+    required this.deltaMs,
+    this.caption,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final delta = deltaMs == 0
+        ? null
+        : '${deltaMs > 0 ? '+' : '−'}'
+              '${UiHelpers.formatDurationHuman(deltaMs.abs())}';
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: delta == null
+          ? 'Duration $duration'
+          : 'Duration $duration, $delta from saved',
+      excludeSemantics: true,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: TempoColors.paper,
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SheetOverline('Duration'),
+                  if (caption != null)
+                    Text(
+                      caption!,
+                      style: TempoText.label.copyWith(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: TempoColors.inkMuted,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (delta != null) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                height: 22,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: TempoColors.ink.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(TempoRadii.pill),
+                ),
+                child: Text(
+                  delta,
+                  style: TempoText.label.copyWith(
+                    fontSize: 12,
+                    color: TempoColors.inkMuted,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+            ],
+            Text(
+              duration,
+              style: TempoText.numeral.copyWith(
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.6,
+                color: TempoColors.ink,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// A selectable pill: ink fill and white text when selected, Insert Paper
-/// otherwise, with an optional colour swatch. The tap target is 48dp tall.
+/// otherwise, with an optional colour swatch or leading icon. The tap target
+/// is 48dp tall.
 class SheetChip extends StatelessWidget {
   final String label;
   final bool selected;
   final Color? swatch;
+  final Widget? leading;
   final VoidCallback onTap;
   final double height;
 
@@ -714,6 +812,7 @@ class SheetChip extends StatelessWidget {
     required this.selected,
     required this.onTap,
     this.swatch,
+    this.leading,
     this.height = 36,
   });
 
@@ -734,7 +833,11 @@ class SheetChip extends StatelessWidget {
             child: Container(
               height: height,
               padding: EdgeInsets.only(
-                left: swatch == null ? 12 : 10,
+                left: swatch == null && leading == null
+                    ? 12
+                    : leading == null
+                    ? 10
+                    : 8,
                 right: 14,
               ),
               decoration: BoxDecoration(
@@ -744,7 +847,10 @@ class SheetChip extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (swatch != null) ...[
+                  if (leading != null) ...[
+                    leading!,
+                    const SizedBox(width: 8),
+                  ] else if (swatch != null) ...[
                     Container(
                       width: 12,
                       height: 12,

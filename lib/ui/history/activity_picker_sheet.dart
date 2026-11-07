@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../data/models/models.dart';
+import '../activity_icon.dart';
 import '../helpers/ui_helpers.dart';
 import '../theme/tempo_theme.dart';
 import 'history_widgets.dart';
@@ -249,15 +250,22 @@ class _SuggestionTile extends StatelessWidget {
             height: 76,
             padding: const EdgeInsets.all(10),
             alignment: Alignment.bottomLeft,
-            child: Text(
-              activity.name,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TempoText.label.copyWith(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: TempoColors.ink,
-              ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ActivityIcon.glyph(activity, size: 18),
+                Text(
+                  activity.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TempoText.label.copyWith(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: TempoColors.ink,
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -293,14 +301,7 @@ class _ActivityRow extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 4),
             child: Row(
               children: [
-                Container(
-                  width: 24,
-                  height: 24,
-                  decoration: BoxDecoration(
-                    color: UiHelpers.parseHexColor(activity.colorHex),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
+                ActivityIcon(activity, size: 28),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(

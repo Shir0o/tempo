@@ -54,6 +54,8 @@ void main() {
     // Staged, not yet on the Record.
     expect((await db.getRecords()).single.tagIds, isEmpty);
 
+    // The sheet scrolls; Save sits below the 600px test viewport.
+    await tester.ensureVisible(find.text('Save'));
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
     expect((await db.getRecords()).single.tagIds, [tag.id]);
