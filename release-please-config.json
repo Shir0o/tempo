@@ -11,6 +11,10 @@
           "type": "yaml",
           "path": "pubspec.yaml",
           "jsonpath": "$.version"
+        },
+        {
+          "type": "generic",
+          "path": "lib/core/app_version.dart"
         }
       ],
       "changelog-path": "RELEASE.md",
