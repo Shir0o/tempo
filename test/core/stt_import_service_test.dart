@@ -221,6 +221,135 @@ record\t1\t10\t$start\t$end\tConflicting prayer\t
     });
 
     test(
+      'importing the same history twice does not duplicate gap Records',
+      () async {
+        const dayMidnight = 1700006400000;
+        final start = dayMidnight + 3600000; // 01:00
+        final end = dayMidnight + 7200000; // 02:00
+        final lapStart = dayMidnight + 10800000; // 03:00
+
+        await db.setLap(
+          Lap(
+            id: 1,
+            startedAtEpochMs: lapStart,
+            startedTimezoneId: 'UTC',
+            revision: 1,
+          ),
+        );
+
+        final service = SttImportService(
+          database: db,
+          getTimezoneId: () => 'UTC',
+          nowUtcMs: () => lapStart + 1000,
+        );
+
+        final backup =
+            '''
+app simple time tracker
+recordType\t10\tPrayer\tic_sports_bar_24px\t3\t0\t\t\t\t\t\t0\t
+record\t1\t10\t$start\t$end\tPrayer\t
+''';
+
+        await service.import(
+          content: backup,
+          scope: SttImportScope.fullHistory,
+        );
+        final first = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+        expect(first.length, equals(3));
+
+        final second = await service.import(
+          content: backup,
+          scope: SttImportScope.fullHistory,
+        );
+        expect(second.recordsImported, equals(0));
+        expect(second.skippedDueToCollision, equals(1));
+
+        final after = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+        expect(
+          after.length,
+          equals(3),
+          reason: 'the second import must not write a second gap Record',
+        );
+        for (var i = 1; i < after.length; i++) {
+          expect(
+            after[i].startedAtEpochMs,
+            equals(after[i - 1].endedAtEpochMs),
+            reason: 'Records must stay contiguous after a re-import',
+          );
+        }
+      },
+    );
+
+    test(
+      'an existing Record that starts before the import day is not overlapped',
+      () async {
+        const dayMidnight = 1700006400000;
+        final lapStart = dayMidnight + 10 * 3600000; // 10:00
+
+        await db.setLap(
+          Lap(
+            id: 1,
+            startedAtEpochMs: lapStart,
+            startedTimezoneId: 'UTC',
+            revision: 1,
+          ),
+        );
+
+        final activity = Activity(
+          id: 'act-cross',
+          name: 'Night',
+          createdAtEpochMs: dayMidnight,
+          updatedAtEpochMs: dayMidnight,
+        );
+        await db.insertActivity(activity);
+        await db.insertRecord(
+          Record(
+            id: 'rec-cross',
+            activityId: activity.id,
+            // Starts on the previous day and runs into the import window.
+            startedAtEpochMs: dayMidnight - 3600000,
+            endedAtEpochMs: dayMidnight + 9 * 3600000,
+            timezoneId: 'UTC',
+            createdAtEpochMs: dayMidnight,
+            updatedAtEpochMs: dayMidnight,
+          ),
+        );
+
+        final service = SttImportService(
+          database: db,
+          getTimezoneId: () => 'UTC',
+          nowUtcMs: () => lapStart + 1000,
+        );
+
+        final nestedStart = dayMidnight + 6 * 3600000; // 06:00
+        final backup =
+            '''
+app simple time tracker
+recordType\t10\tPrayer\tic_sports_bar_24px\t3\t0\t\t\t\t\t\t0\t
+record\t1\t10\t$nestedStart\t${nestedStart + 370000}\tNested\t
+''';
+
+        final result = await service.import(
+          content: backup,
+          scope: SttImportScope.fullHistory,
+        );
+
+        expect(result.skippedDueToCollision, equals(1));
+        expect(result.recordsImported, equals(0));
+
+        final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+        expect(records.first.id, equals('rec-cross'));
+        for (var i = 1; i < records.length; i++) {
+          expect(
+            records[i].startedAtEpochMs,
+            equals(records[i - 1].endedAtEpochMs),
+            reason: 'the crossing Record must not be overlapped',
+          );
+        }
+      },
+    );
+
+    test(
       'Splits multi-day spans across local midnight into distinct records',
       () async {
         // 2023-11-15 00:00:00 UTC = 1700006400000

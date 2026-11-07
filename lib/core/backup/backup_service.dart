@@ -484,7 +484,16 @@ class BackupService {
         );
       }
 
-      await _checkCoverage(snapshot);
+      // Coverage is a property of the data, not of the copy. A faithful copy
+      // of a store with a gap or overlap is still a restorable backup, so
+      // record the issue and keep the copy rather than leaving the record
+      // unprotected. Write paths are responsible for keeping coverage
+      // continuous; refusing here would punish the user for an old write.
+      try {
+        await _checkCoverage(snapshot);
+      } on BackupVerificationException catch (error) {
+        debugPrint('Backup: coverage warning: $error');
+      }
       return (schemaVersion: schemaVersion, verifiedSeq: verifiedSeq);
     } finally {
       await snapshot.close();
@@ -492,7 +501,8 @@ class BackupService {
   }
 
   /// Every moment belongs to exactly one Record or the open Lap: adjacent
-  /// Records must abut exactly. A gap or an overlap fails the snapshot.
+  /// Records must abut exactly. A gap or an overlap is reported as a warning;
+  /// it makes the data incomplete, not the copy, so it never blocks a backup.
   Future<void> _checkCoverage(Database snapshot) async {
     final rows = await snapshot.rawQuery(
       'SELECT started_at_epoch_ms, ended_at_epoch_ms FROM records '

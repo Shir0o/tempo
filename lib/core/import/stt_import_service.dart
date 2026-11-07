@@ -456,14 +456,17 @@ class SttImportService {
       return const _ReconciliationSummary(0, 0, 0);
     }
 
-    // 4. Query existing Tempo records within [earliestMidnight, latestCeiling]
+    // 4. Query every existing Tempo Record that overlaps
+    // [earliestMidnight, latestCeiling). A Record that starts before the window
+    // still occupies time inside it, so filtering on the start alone would let
+    // an imported interval land on top of it.
     // Existing tracked user records (activityId != null) take absolute precedence.
     // Pre-existing synthetic untracked gaps (activityId == null) that collide with imported
     // historical activities are removed and replaced so imported records are not blocked.
     final allExistingInRange = (await txn.query(
       'records',
-      where: 'started_at_epoch_ms >= ? AND started_at_epoch_ms <= ?',
-      whereArgs: [earliestMidnight, latestCeiling],
+      where: 'started_at_epoch_ms < ? AND ended_at_epoch_ms > ?',
+      whereArgs: [latestCeiling, earliestMidnight],
       orderBy: 'started_at_epoch_ms ASC',
     )).map(Record.fromMap).toList();
 
@@ -513,9 +516,22 @@ class SttImportService {
       }
     }
 
-    // 5. Combine nonColliding with remaining existing tracked records to synthesize gaps
+    // 5. Combine nonColliding with the Records that already cover the window to
+    // synthesize gaps. Surviving Untracked Records are part of that coverage:
+    // leaving them out would write a second Untracked Record over the same span
+    // on every re-import.
+    final survivingUntracked = allExistingInRange
+        .where((record) => record.activityId == null)
+        .toList();
     final allEvents = <_IntervalSpan>[
       for (final r in existingTrackedRecords)
+        _IntervalSpan(
+          r.startedAtEpochMs,
+          r.endedAtEpochMs,
+          isExisting: true,
+          record: r,
+        ),
+      for (final r in survivingUntracked)
         _IntervalSpan(
           r.startedAtEpochMs,
           r.endedAtEpochMs,
