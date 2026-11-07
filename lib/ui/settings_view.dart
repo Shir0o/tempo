@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import '../../core/app_version.dart';
 import '../../core/backup/backup_destination.dart';
 import '../../core/backup/backup_service.dart';
 import '../../core/export/csv_export_engine.dart';
@@ -102,19 +103,41 @@ class _SettingsViewState extends State<SettingsView> {
   bool _isReplica = false;
   bool _replicateEnabled = false;
 
+  /// Bumped on every rebuild so an open second-level page redraws with it.
+  final ValueNotifier<int> _revision = ValueNotifier(0);
+
   @override
   void initState() {
     super.initState();
     _loadActivities();
+    _loadExportSettings();
     _loadBackupSettings();
     _loadSyncDiagnostics();
     widget.todayOrder?.addListener(_onTodayOrderChanged);
   }
 
   @override
+  void setState(VoidCallback fn) {
+    super.setState(fn);
+    _revision.value++;
+  }
+
+  @override
   void dispose() {
     widget.todayOrder?.removeListener(_onTodayOrderChanged);
+    _revision.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadExportSettings() async {
+    try {
+      final redact = await widget.database.getSetting(
+        SyncSettingKeys.exportRedactComments,
+      );
+      if (mounted) setState(() => _redactComments = redact == 'true');
+    } catch (_) {
+      // The export setting is optional; a read failure keeps the default.
+    }
   }
 
   void _onTodayOrderChanged() {
@@ -483,10 +506,6 @@ class _SettingsViewState extends State<SettingsView> {
         await widget.database.getSetting(BackupService.generationsSetting) ??
             '',
       );
-      final redact = await widget.database.getSetting(
-        SyncSettingKeys.exportRedactComments,
-      );
-
       // Reopen the folder so an erased permission reads as unreachable here
       // rather than as silence when the next promotion runs.
       BackupDestination? destination;
@@ -519,7 +538,6 @@ class _SettingsViewState extends State<SettingsView> {
       if (!mounted) return;
       setState(() {
         _backupEnabled = enabled == 'true';
-        _redactComments = redact == 'true';
         _destinationLocator = locator;
         _destination = destination;
         _destinationUnreachable = locator.isNotEmpty && destination == null;
@@ -918,13 +936,23 @@ class _SettingsViewState extends State<SettingsView> {
     }
   }
 
+  /// Opens one of Settings' second-level pages. The page rebuilds whenever this
+  /// state does, so its switches and statuses stay live.
+  Future<void> _openPage(String title, List<Widget> Function() body) {
+    return Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            _SettingsPage(title: title, revision: _revision, body: body),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final syncService = widget.syncService;
-    final isSignedIn = syncService?.isSignedIn ?? false;
-    final lastSync = syncService?.lastSyncTime;
     final active = _activities.where((a) => !a.isArchived).toList();
     final archivedCount = _activities.length - active.length;
+    final hasExport = widget.syncService != null || widget.exportEngine != null;
+    final hasDevices = _isReplica || widget.syncListener != null;
 
     return Scaffold(
       backgroundColor: TempoColors.background,
@@ -937,69 +965,20 @@ class _SettingsViewState extends State<SettingsView> {
               style: TempoText.screenTitle.copyWith(color: Colors.white),
             ),
             const SizedBox(height: 20),
-            _buildSectionHeader('CSV EXPORT TO GOOGLE DRIVE'),
-            _buildDriveCard(isSignedIn, lastSync, syncService != null),
-            if (syncService != null) ...[
-              const SizedBox(height: 12),
-              _buildGroup([
-                _SettingsRow(
-                  title: 'Send CSV after each label',
-                  subtitle: 'stt_records_automatic.csv',
-                  trailing: Switch(
-                    value: syncService.autoSyncEnabled,
-                    onChanged: (val) {
-                      setState(() => syncService.autoSyncEnabled = val);
-                    },
-                  ),
-                ),
-              ]),
-            ],
-            if (widget.backupService != null) ...[
-              const SizedBox(height: 24),
-              _buildSectionHeader('BACKUP'),
-              _buildBackupGroup(),
-              if (_destinationUnreachable) ...[
-                const SizedBox(height: 8),
-                _buildBackupNote(
-                  'The backup folder cannot be reached. Choose it again so '
-                  'automatic backups can resume.',
-                  icon: Icons.folder_off_rounded,
-                ),
-              ],
-              if (_destination?.isCloudSynced ?? false) ...[
-                const SizedBox(height: 8),
-                _buildBackupNote(
-                  'This folder syncs to a cloud service. Backups are '
-                  'unencrypted there, so the service can read them.',
-                  icon: Icons.cloud_rounded,
-                ),
-              ],
-            ],
-            if (_isReplica || widget.syncListener != null) ...[
-              const SizedBox(height: 24),
-              _buildSectionHeader('SYNC'),
-              _buildSyncGroup(),
-            ],
-            const SizedBox(height: 24),
-            _buildSectionHeader('HABITS & DATA'),
+            _buildSectionHeader('YOUR DAY'),
             _buildGroup([
-              _SettingsRow(
-                title: "Today's order",
-                subtitle:
-                    (widget.todayOrder?.value ?? TodayOrder.categories).label,
-                onTap: _chooseTodayOrder,
-              ),
               _SettingsRow(
                 title: 'Activities',
                 subtitle: _activities.isEmpty
                     ? null
-                    : '${active.length} active \u00b7 $archivedCount archived',
+                    : '${active.length} active · $archivedCount archived',
                 leading: _ColourBars(
                   colors: [
                     for (final a in active.take(3))
                       UiHelpers.parseHexColor(a.colorHex),
                   ],
                 ),
+                opensPage: true,
                 onTap: _openActivityManager,
               ),
               _SettingsRow(
@@ -1013,22 +992,52 @@ class _SettingsViewState extends State<SettingsView> {
                       UiHelpers.parseHexColor(c.colorHex),
                   ],
                 ),
+                opensPage: true,
                 onTap: _openCategoryManager,
               ),
               _SettingsRow(
                 title: 'Tags',
                 subtitle: 'Labels, and which one is the Contact tag',
+                opensPage: true,
                 onTap: _openTagManager,
               ),
               _SettingsRow(
-                title: 'Import from Simple Time Tracker',
-                subtitle: 'Ingest catalog or history from .backup or .csv',
-                onTap: _isProcessing ? null : _handleImportSimpleTimeTracker,
+                title: 'Order on Today',
+                subtitle:
+                    (widget.todayOrder?.value ?? TodayOrder.categories).label,
+                opensPage: true,
+                onTap: _chooseTodayOrder,
               ),
+            ]),
+            const SizedBox(height: 24),
+            _buildSectionHeader('DATA'),
+            _buildGroup([
+              if (hasExport)
+                _SettingsRow(
+                  title: _exportTitle,
+                  subtitle: _exportSummary(),
+                  opensPage: true,
+                  onTap: () => _openPage(_exportTitle, _buildExportPage),
+                ),
+              if (widget.backupService != null)
+                _SettingsRow(
+                  title: 'Backup',
+                  subtitle: _backupSummary(),
+                  opensPage: true,
+                  onTap: () => _openPage('Backup', _buildBackupPage),
+                ),
+              if (hasDevices)
+                _SettingsRow(
+                  title: _devicesTitle,
+                  subtitle: _devicesSummary(),
+                  opensPage: true,
+                  onTap: () => _openPage(_devicesTitle, _buildDevicesPage),
+                ),
               _SettingsRow(
-                title: 'Export CSV to this device',
-                subtitle: 'Simple Time Tracker format',
-                onTap: _isProcessing ? null : _handleExportCsvNow,
+                title: 'Import from Simple Time Tracker',
+                subtitle: 'Pick a .backup or .csv file',
+                trailing: const _RowAction(label: 'Choose file'),
+                onTap: _isProcessing ? null : _handleImportSimpleTimeTracker,
               ),
             ]),
             const SizedBox(height: 24),
@@ -1051,7 +1060,7 @@ class _SettingsViewState extends State<SettingsView> {
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    'Tempo v1.0.0 (Build 1)',
+                    'Tempo $appVersion',
                     style: TempoText.label.copyWith(
                       color: TempoColors.textMuted,
                     ),
@@ -1065,215 +1074,170 @@ class _SettingsViewState extends State<SettingsView> {
     );
   }
 
-  Widget _buildDriveCard(bool isSignedIn, DateTime? lastSync, bool hasService) {
-    final String detail;
-    if (!isSignedIn) {
-      detail = 'Connect for the CSV export to “Time track”';
-    } else if (lastSync != null) {
-      final hh = lastSync.hour.toString().padLeft(2, '0');
-      final mm = lastSync.minute.toString().padLeft(2, '0');
-      detail = 'CSV last sent to “Time track” at $hh:$mm';
-    } else {
-      detail = 'Ready to send CSV to “Time track”';
-    }
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: TempoColors.panel,
-        borderRadius: BorderRadius.circular(TempoRadii.card),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 14,
-                height: 14,
-                decoration: BoxDecoration(
-                  color: isSignedIn ? TempoColors.ink : TempoColors.track,
-                  shape: BoxShape.circle,
-                  border: isSignedIn
-                      ? Border.all(color: TempoColors.accent, width: 3)
-                      : null,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  isSignedIn
-                      ? 'Google Drive connected'
-                      : 'Google Drive not connected',
-                  style: TempoText.title.copyWith(color: TempoColors.ink),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            detail,
-            style: TempoText.label.copyWith(
-              color: TempoColors.inkMuted,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              if (isSignedIn && hasService) ...[
-                Expanded(
-                  child: _Pill(
-                    label: 'Send CSV now',
-                    filled: true,
-                    onTap: _isProcessing ? null : _handleSyncCsvNow,
-                  ),
-                ),
-                const SizedBox(width: 10),
-              ],
-              Expanded(
-                child: _Pill(
-                  label: isSignedIn ? 'Disconnect' : 'Connect',
-                  filled: !isSignedIn,
-                  onTap: _isProcessing ? null : _handleGoogleSignInToggle,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
+  String get _exportTitle => widget.syncService == null
+      ? 'Spreadsheet export'
+      : 'Spreadsheet in Drive';
+
+  String get _devicesTitle =>
+      widget.syncListener != null ? 'Mac & devices' : 'Phone & devices';
+
+  String _exportSummary() {
+    final service = widget.syncService;
+    if (service == null) return 'Save your record as a spreadsheet';
+    if (!service.isSignedIn) return 'Not connected';
+    if (!service.autoSyncEnabled) return 'Connected · automatic updates off';
+    final last = service.lastSyncTime;
+    if (last == null) return 'Connected';
+    return 'Up to date · ${_clock(last)}';
   }
 
-  Widget _buildBackupGroup() {
-    final autoSubtitle = !_backupEnabled
-        ? 'Off'
-        : _destinationUnreachable
-        ? 'On, but the folder needs to be chosen again'
-        : 'Snapshots stay current while Tempo is open';
-    final folderSubtitle = _destinationLocator.isEmpty
-        ? 'Choose a folder outside this device'
-        : _destinationLabel();
+  String _backupSummary() {
+    if (!_backupEnabled) return 'Off';
+    if (_destinationUnreachable) return 'On · the folder needs choosing again';
     final last = _lastGeneration;
-    final lastSubtitle = last == null
-        ? (_destinationLocator.isEmpty
-              ? 'No folder chosen'
-              : 'No verified backup yet')
-        : '${_formatBackupTime(last.createdAtEpochMs)} \u00b7 '
-              '$_keptGenerations kept';
+    if (last == null) return 'On · no backup yet';
+    return 'On · ${_formatBackupTime(last.createdAtEpochMs)}';
+  }
 
-    return _buildGroup([
-      _SettingsRow(
-        title: 'Automatic backup',
-        subtitle: autoSubtitle,
-        trailing: Switch(
-          value: _backupEnabled,
-          onChanged: _isProcessing ? null : _setBackupEnabled,
+  String _devicesSummary() {
+    if (!_replicateEnabled) return 'Sync off';
+    if (_peers.isEmpty) return 'On · not paired yet';
+    if (widget.syncListener != null) {
+      return _peers.length == 1
+          ? '${_peers.first.host} · paired'
+          : '${_peers.length} devices paired';
+    }
+    return _syncStatusText();
+  }
+
+  static String _clock(DateTime at) =>
+      '${at.hour.toString().padLeft(2, '0')}:'
+      '${at.minute.toString().padLeft(2, '0')}';
+
+  /// The CSV export: what the file is and who reads it, the Drive connection,
+  /// and the one-off copy to this device.
+  List<Widget> _buildExportPage() {
+    final service = widget.syncService;
+    final engine = widget.exportEngine;
+    final isSignedIn = service?.isSignedIn ?? false;
+
+    return [
+      if (service != null) ...[
+        _buildDriveCard(service, isSignedIn),
+        const SizedBox(height: 16),
+      ],
+      _buildGroup([
+        if (service != null && isSignedIn)
+          _SettingsRow(
+            title: 'Update after each label',
+            subtitle: 'The file refreshes a moment after you label time',
+            trailing: Switch(
+              value: service.autoSyncEnabled,
+              onChanged: (val) {
+                setState(() => service.autoSyncEnabled = val);
+              },
+            ),
+          ),
+        _SettingsRow(
+          title: 'Leave notes out',
+          subtitle: 'The comment column stays empty; tags are kept',
+          trailing: Switch(
+            value: _redactComments,
+            onChanged: _isProcessing ? null : _setRedactComments,
+          ),
         ),
-      ),
-      _SettingsRow(
-        title: 'Backup folder',
-        subtitle: folderSubtitle,
-        onTap: _isProcessing ? null : _chooseBackupDestination,
-      ),
-      _SettingsRow(
-        title: 'Last backup',
-        subtitle: lastSubtitle,
-        trailing: last == null
-            ? const SizedBox.shrink()
-            : const Icon(
-                Icons.verified_rounded,
-                color: TempoColors.accent,
-                size: 20,
-              ),
-      ),
-      _SettingsRow(
-        title: 'Backups kept',
-        subtitle: _generations == 1
-            ? '1 generation'
-            : '$_generations generations',
-        onTap: _chooseGenerations,
-      ),
-      _SettingsRow(
-        title: 'Redact comments in the CSV export',
-        subtitle: 'Blanks the comment column; record tags are kept',
-        trailing: Switch(
-          value: _redactComments,
-          onChanged: _isProcessing ? null : _setRedactComments,
+        if (service != null && isSignedIn && engine != null)
+          _SettingsRow(
+            title: 'Update now',
+            subtitle: 'Only needed if automatic updates are off',
+            trailing: const _RowAction(label: 'Update'),
+            onTap: _isProcessing ? null : _handleSyncCsvNow,
+          ),
+      ]),
+      if (engine != null) ...[
+        const SizedBox(height: 24),
+        _buildSectionHeader('OTHER WAYS'),
+        _buildGroup([
+          _SettingsRow(
+            title: 'Save a copy to this device',
+            subtitle: 'The same spreadsheet, as a file you keep',
+            trailing: const _RowAction(label: 'Save'),
+            onTap: _isProcessing ? null : _handleExportCsvNow,
+          ),
+        ]),
+      ],
+      if (service != null && isSignedIn) ...[
+        const SizedBox(height: 24),
+        _buildGroup([
+          _SettingsRow(
+            title: 'Disconnect Google Drive',
+            subtitle: 'Stops updating the file; it stays in your Drive',
+            onTap: _isProcessing ? null : _handleGoogleSignInToggle,
+          ),
+        ]),
+      ],
+    ];
+  }
+
+  List<Widget> _buildBackupPage() {
+    return [
+      _buildBackupCard(),
+      if (_destinationUnreachable) ...[
+        const SizedBox(height: 8),
+        _buildBackupNote(
+          'The backup folder cannot be reached. Choose it again so '
+          'automatic backups can resume.',
+          icon: Icons.folder_off_rounded,
         ),
-      ),
-      _SettingsRow(
-        title: 'Back up now',
-        onTap: _isProcessing ? null : _handleBackupNow,
-      ),
-      _SettingsRow(
-        title: 'Restore from backup',
-        subtitle: 'Replaces this device\u2019s record with a verified backup',
-        onTap: _isProcessing ? null : _handleRestoreDatabaseNow,
-      ),
-    ]);
+      ],
+      if (_destination?.isCloudSynced ?? false) ...[
+        const SizedBox(height: 8),
+        _buildBackupNote(
+          'This folder syncs to a cloud service. Backups are '
+          'unencrypted there, so the service can read them.',
+          icon: Icons.cloud_rounded,
+        ),
+      ],
+      const SizedBox(height: 16),
+      _buildBackupGroup(),
+      const SizedBox(height: 24),
+      _buildGroup([
+        _SettingsRow(
+          title: 'Restore from backup',
+          subtitle: 'Replaces this device’s record with a verified backup',
+          onTap: _isProcessing ? null : _handleRestoreDatabaseNow,
+        ),
+      ]),
+    ];
   }
 
   /// The replication state for this device: the switch that gates it, the
-  /// phone's pairing code, and on the Mac the cursor and intent counters.
-  Widget _buildSyncGroup() {
+  /// paired devices, and on the Mac the cursor and intent counters one level
+  /// down.
+  List<Widget> _buildDevicesPage() {
     final isPhone = widget.syncListener != null;
-    final stats = _syncStats;
-    final appliedSeq = stats?.appliedSeq ?? 0;
-    final applied = stats?.intentsApplied ?? 0;
-    final rejected = stats?.intentsRejected ?? 0;
-    final pending = stats?.intentsPending ?? 0;
-    final lastExchange = stats == null || stats.lastSuccessEpochMs <= 0
-        ? 'No exchange yet'
-        : _formatBackupTime(stats.lastSuccessEpochMs);
 
-    final rows = <Widget>[
-      _SettingsRow(
-        title: 'Replication',
-        subtitle: _replicationSubtitle(isPhone),
-        trailing: Switch(
-          value: _replicateEnabled,
-          onChanged: _syncLoading || _isProcessing
-              ? null
-              : _setReplicateEnabled,
-        ),
-      ),
-      if (isPhone)
-        _SettingsRow(
-          title: 'Pair a device',
-          subtitle: 'Show a code the Mac scans once',
-          onTap: widget.pairing == null || _isProcessing
-              ? null
-              : _openPhonePairing,
-        ),
-      if (!isPhone) ...[
-        _SettingsRow(title: 'Last exchange', subtitle: lastExchange),
-        _SettingsRow(title: 'Cursor', subtitle: 'applied_seq $appliedSeq'),
-        _SettingsRow(
-          title: 'Intents',
-          subtitle:
-              '$applied applied \u00b7 $rejected rejected \u00b7 '
-              '$pending pending',
-        ),
-      ],
+    final pairedRows = <Widget>[
       for (final peer in _peers)
         _SettingsRow(
           title: peer.host,
           subtitle:
-              'store ${_shortStoreId(peer.storeId)} \u00b7 last seen '
+              'store ${_shortStoreId(peer.storeId)} · last seen '
               '${_formatBackupTime(peer.lastSeenEpochMs)}',
           trailing: widget.pairing == null
               ? const SizedBox.shrink()
-              : TextButton(
-                  style: TextButton.styleFrom(
-                    foregroundColor: TempoColors.ink,
-                    minimumSize: const Size(0, 44),
-                    textStyle: TempoText.label.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  onPressed: _syncLoading ? null : () => _disconnectPeer(peer),
-                  child: const Text('Disconnect'),
+              : _RowAction(
+                  label: 'Disconnect',
+                  onTap: _syncLoading ? null : () => _disconnectPeer(peer),
                 ),
+        ),
+      if (isPhone)
+        _SettingsRow(
+          title: _peers.isEmpty ? 'Pair a device' : 'Pair another device',
+          subtitle: 'Show a code the Mac scans once',
+          onTap: widget.pairing == null || _isProcessing
+              ? null
+              : _openPhonePairing,
         ),
       if (!isPhone && _peers.isEmpty)
         _SettingsRow(
@@ -1289,14 +1253,276 @@ class _SettingsViewState extends State<SettingsView> {
           subtitle: 'Scan the code Tempo shows on the phone',
           onTap: _syncLoading ? null : _openPairing,
         ),
+    ];
+
+    final moreRows = <Widget>[
+      if (!isPhone)
+        _SettingsRow(
+          title: 'Technical details',
+          subtitle: 'Last exchange, cursor, queued changes',
+          opensPage: true,
+          onTap: () => _openPage('Technical details', _buildSyncDetailsPage),
+        ),
       if (widget.pairing != null && _peers.isNotEmpty)
         _SettingsRow(
-          title: 'Revoke all paired devices',
+          title: 'Unpair every device',
           subtitle: 'Each paired device must pair again',
           onTap: _syncLoading ? null : _revokeAllPeers,
         ),
     ];
-    return _buildGroup(rows);
+
+    return [
+      _buildGroup([
+        _SettingsRow(
+          title: 'Sync with paired devices',
+          subtitle: _replicationSubtitle(isPhone),
+          trailing: Switch(
+            value: _replicateEnabled,
+            onChanged: _syncLoading || _isProcessing
+                ? null
+                : _setReplicateEnabled,
+          ),
+        ),
+      ]),
+      if (pairedRows.isNotEmpty) ...[
+        const SizedBox(height: 24),
+        _buildSectionHeader('PAIRED'),
+        _buildGroup(pairedRows),
+      ],
+      if (moreRows.isNotEmpty) ...[
+        const SizedBox(height: 24),
+        _buildGroup(moreRows),
+      ],
+    ];
+  }
+
+  List<Widget> _buildSyncDetailsPage() {
+    final stats = _syncStats;
+    final appliedSeq = stats?.appliedSeq ?? 0;
+    final applied = stats?.intentsApplied ?? 0;
+    final rejected = stats?.intentsRejected ?? 0;
+    final pending = stats?.intentsPending ?? 0;
+    final lastExchange = stats == null || stats.lastSuccessEpochMs <= 0
+        ? 'No exchange yet'
+        : _formatBackupTime(stats.lastSuccessEpochMs);
+
+    return [
+      _buildGroup([
+        _SettingsRow(
+          title: 'Last exchange',
+          subtitle: lastExchange,
+          trailing: const SizedBox.shrink(),
+        ),
+        _SettingsRow(
+          title: 'Cursor',
+          subtitle: 'applied_seq $appliedSeq',
+          trailing: const SizedBox.shrink(),
+        ),
+        _SettingsRow(
+          title: 'Intents',
+          subtitle:
+              '$applied applied · $rejected rejected · '
+              '$pending pending',
+          trailing: const SizedBox.shrink(),
+        ),
+      ]),
+    ];
+  }
+
+  /// Drive connection on paper: what the file is for, where it lives, when it
+  /// last changed, and the one button that matters in this state.
+  Widget _buildDriveCard(GoogleDriveSyncService service, bool isSignedIn) {
+    final lastSync = service.lastSyncTime;
+    final status = !isSignedIn
+        ? 'Google Drive not connected'
+        : lastSync == null
+        ? 'Connected · not updated yet'
+        : 'Updated at ${_clock(lastSync)}';
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: TempoColors.panel,
+        borderRadius: BorderRadius.circular(TempoRadii.card),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Tempo keeps a spreadsheet copy of your record in your Google '
+            'Drive, so other apps can read it. BNPB reads this file.',
+            style: TempoText.body.copyWith(
+              color: TempoColors.ink,
+              height: 1.45,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: TempoColors.paper,
+              borderRadius: BorderRadius.circular(TempoRadii.row),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.description_outlined,
+                  color: TempoColors.ink,
+                  size: 22,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Time track /',
+                        style: TempoText.label.copyWith(
+                          color: TempoColors.inkMuted,
+                        ),
+                      ),
+                      Text(
+                        'stt_records_automatic.csv',
+                        style: TempoText.label.copyWith(
+                          color: TempoColors.ink,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: isSignedIn ? TempoColors.ink : TempoColors.track,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  status,
+                  style: TempoText.label.copyWith(
+                    color: TempoColors.ink,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (!isSignedIn) ...[
+            const SizedBox(height: 14),
+            _Pill(
+              label: 'Connect Google Drive',
+              filled: true,
+              onTap: _isProcessing ? null : _handleGoogleSignInToggle,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// The newest verified backup on paper, with the one action anyone needs.
+  Widget _buildBackupCard() {
+    final last = _lastGeneration;
+    final title = last == null
+        ? 'No backup yet'
+        : 'Backed up ${_formatBackupTime(last.createdAtEpochMs)}';
+    final detail = _destinationLocator.isEmpty
+        ? 'Choose a folder outside this device to keep copies in.'
+        : last == null
+        ? 'Copies go to ${_destinationLabel()}.'
+        : 'A checked copy of this device’s record. '
+              '$_keptGenerations kept in ${_destinationLabel()}.';
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: TempoColors.panel,
+        borderRadius: BorderRadius.circular(TempoRadii.card),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                last == null
+                    ? Icons.history_rounded
+                    : Icons.check_circle_outline_rounded,
+                color: TempoColors.ink,
+                size: 22,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TempoText.title.copyWith(color: TempoColors.ink),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            detail,
+            style: TempoText.label.copyWith(
+              color: TempoColors.inkMuted,
+              fontWeight: FontWeight.w500,
+              height: 1.45,
+            ),
+          ),
+          const SizedBox(height: 14),
+          _Pill(
+            label: 'Back up now',
+            filled: true,
+            onTap: _isProcessing ? null : _handleBackupNow,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBackupGroup() {
+    final autoSubtitle = !_backupEnabled
+        ? 'Off'
+        : _destinationUnreachable
+        ? 'On, but the folder needs to be chosen again'
+        : 'Keeps a current copy while Tempo is open';
+
+    return _buildGroup([
+      _SettingsRow(
+        title: 'Back up automatically',
+        subtitle: autoSubtitle,
+        trailing: Switch(
+          value: _backupEnabled,
+          onChanged: _isProcessing ? null : _setBackupEnabled,
+        ),
+      ),
+      _SettingsRow(
+        title: 'Folder',
+        subtitle: _destinationLocator.isEmpty
+            ? 'Somewhere off this device is safest'
+            : null,
+        trailing: _RowValue(
+          _destinationLocator.isEmpty ? 'Choose' : _destinationLabel(),
+        ),
+        onTap: _isProcessing ? null : _chooseBackupDestination,
+      ),
+      _SettingsRow(
+        title: 'Copies to keep',
+        trailing: _RowValue('$_generations'),
+        onTap: _chooseGenerations,
+      ),
+    ]);
   }
 
   /// One line under the switch. The phone has no exchange status to report, so
@@ -1459,6 +1685,114 @@ class _Pill extends StatelessWidget {
   }
 }
 
+/// A second-level Settings page: back to Settings, the title, then [body],
+/// rebuilt whenever [revision] changes.
+class _SettingsPage extends StatelessWidget {
+  final String title;
+  final ValueNotifier<int> revision;
+  final List<Widget> Function() body;
+
+  const _SettingsPage({
+    required this.title,
+    required this.revision,
+    required this.body,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: TempoColors.background,
+      body: SafeArea(
+        child: ValueListenableBuilder<int>(
+          valueListenable: revision,
+          builder: (context, _, _) => ListView(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => Navigator.of(context).maybePop(),
+                  icon: const Icon(Icons.chevron_left_rounded),
+                  label: const Text('Settings'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: TempoColors.textMuted,
+                    minimumSize: const Size(0, 44),
+                    padding: const EdgeInsets.only(right: 12),
+                    textStyle: TempoText.body.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                title,
+                style: TempoText.screenTitle.copyWith(color: Colors.white),
+              ),
+              const SizedBox(height: 20),
+              ...body(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A small outline pill at the end of a row that acts right away, so it reads
+/// as a button rather than a way into another page. Without [onTap] it only
+/// labels the row's own tap.
+class _RowAction extends StatelessWidget {
+  final String label;
+  final VoidCallback? onTap;
+
+  const _RowAction({required this.label, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final pill = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: ShapeDecoration(
+        shape: const StadiumBorder(side: BorderSide(color: Colors.white24)),
+      ),
+      child: Text(
+        label,
+        style: TempoText.label.copyWith(
+          color: Colors.white,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+    if (onTap == null) return pill;
+    return InkWell(
+      customBorder: const StadiumBorder(),
+      onTap: onTap,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 44),
+        child: Center(widthFactor: 1, child: pill),
+      ),
+    );
+  }
+}
+
+/// The current value at the end of a row whose tap changes it.
+class _RowValue extends StatelessWidget {
+  final String value;
+
+  const _RowValue(this.value);
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      value,
+      style: TempoText.body.copyWith(
+        color: TempoColors.textMuted,
+        fontWeight: FontWeight.w600,
+      ),
+    );
+  }
+}
+
 class _SettingsRow extends StatelessWidget {
   final String title;
   final String? subtitle;
@@ -1466,12 +1800,17 @@ class _SettingsRow extends StatelessWidget {
   final Widget? trailing;
   final VoidCallback? onTap;
 
+  /// Shows a chevron. Only rows that open another page set it; rows that act
+  /// right away or show a value never do.
+  final bool opensPage;
+
   const _SettingsRow({
     required this.title,
     this.subtitle,
     this.leading,
     this.trailing,
     this.onTap,
+    this.opensPage = false,
   });
 
   @override
@@ -1507,11 +1846,12 @@ class _SettingsRow extends StatelessWidget {
                 ],
               ),
             ),
-            trailing ??
-                const Icon(
-                  Icons.chevron_right_rounded,
-                  color: TempoColors.textMuted,
-                ),
+            ?trailing,
+            if (trailing == null && opensPage)
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: TempoColors.textMuted,
+              ),
           ],
         ),
       ),

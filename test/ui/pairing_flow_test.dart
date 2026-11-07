@@ -153,6 +153,16 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  /// Settings keeps replication one level down, under "Mac & devices" on the
+  /// phone and "Phone & devices" on the Mac.
+  Future<void> openDevices(WidgetTester tester) async {
+    final row = find.textContaining(' & devices');
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+  }
+
   Widget settings({
     required TempoDatabase database,
     SyncListener? listener,
@@ -187,6 +197,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openDevices(tester);
 
     expect(phone.listener.isRunning, isFalse);
 
@@ -225,6 +236,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openDevices(tester);
 
     await tester.tap(find.text('Pair a device'));
     await letListenerWork(tester);
@@ -271,6 +283,7 @@ void main() {
       settings(database: database, client: client, pairing: pairing),
     );
     await tester.pumpAndSettle();
+    await openDevices(tester);
 
     await tester.tap(find.byType(Switch));
     await tester.pumpAndSettle();
@@ -304,6 +317,7 @@ void main() {
       settings(database: database, client: client, pairing: pairing),
     );
     await tester.pumpAndSettle();
+    await openDevices(tester);
 
     final pairRow = find.text('Pair a phone');
     await tester.ensureVisible(pairRow);
