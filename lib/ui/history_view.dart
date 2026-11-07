@@ -1360,6 +1360,10 @@ class _HistoryViewState extends State<HistoryView> {
 
     final activity = _activitiesMap[record.activityId];
     final name = _recordName(record);
+    final tags = [for (final id in record.tagIds) ?_tagsMap[id]];
+    final tagsLabel = tags.isEmpty
+        ? ''
+        : ', tags ${tags.map((t) => t.name).join(', ')}';
     return HistoryRecordBlock(
       name: name,
       color: UiHelpers.parseHexColor(activity?.colorHex),
@@ -1367,7 +1371,9 @@ class _HistoryViewState extends State<HistoryView> {
       endLabel: endLabel,
       zonedRange: zonedRange,
       note: record.comment,
-      semanticsLabel: '$name, $timeRange, $durationStr$noteLabel. Edit',
+      tags: tags,
+      semanticsLabel:
+          '$name, $timeRange, $durationStr$noteLabel$tagsLabel. Edit',
       onTap: () => _openEditRecordDialog(record),
     );
   }

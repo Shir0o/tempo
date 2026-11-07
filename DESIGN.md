@@ -221,7 +221,7 @@ Under the Lap panel on Today, while the latest tracked Record ended today: a Nig
 16px tall (10px in the popover), 4–8px radius. Records in Activity colours, Untracked hatched on Strip Track, the open Lap in ink, zone changes marked with a 2px tick. Always has a screen-reader label describing each span.
 
 ### Record block (History)
-Full-width, Activity colour, 16px radius, name left and duration right, optional note below in 12px. Untracked blocks are hatched paper with an ink "What was it?" pill. The open Lap is a Night block with a 2px lime outline and a live timer.
+Full-width, Activity colour, 16px radius, name left and duration right, optional note below in 12px, then one chip per tag: 22px pill in 12% ink with an 8px swatch in the tag's colour (3px radius) and the name at 600, 11px. Chips wrap and are display only; the block stays the tap target. Untracked blocks are hatched paper with an ink "What was it?" pill. The open Lap is a Night block with a 2px lime outline and a live timer.
 
 ### Edit sheet
 Ledger Paper bottom sheet, ordered by how often each part changes. Header: Activity swatch (44px, 14px radius) plus name in 30px, and an outline "Change" pill. Start and end steppers on Insert Paper, each with ± circle buttons, the zone, and which neighbour moves. Note field with People chips, then a Tags row of tag chips ending in "+ New tag". One row of Activity chips (selected = ink fill): the current one, up to three usually started around this time of day, and "All N". Three outline actions (Split…, Merge next, Untrack), then a full-width ink Save.
