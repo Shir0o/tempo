@@ -32,7 +32,7 @@ object LapNotification {
     private const val NOTIFICATION_ID = 1
     private const val CHIPS_PER_ROW = 3
     private const val REQUEST_OPEN_APP = 100
-    private const val REQUEST_SPLIT = 101
+    private const val REQUEST_CONTINUE = 101
     private const val REQUEST_UNDO = 102
     private const val REQUEST_REPEAT = 103
     private const val FALLBACK_COLOR = "#4CAF50"
@@ -139,9 +139,16 @@ object LapNotification {
             val repeatId = lastActivity?.get("id") as? String
             val repeatName = lastActivity?.get("name") as? String
             if (repeatId == null || repeatName == null) {
+                setViewVisibility(R.id.lap_continue, View.GONE)
                 setViewVisibility(R.id.lap_repeat, View.GONE)
             } else {
-                setTextViewText(R.id.lap_repeat, "Repeat $repeatName")
+                // "Still" grows the last Record over the Lap; "again" starts a new one.
+                setTextViewText(R.id.lap_continue, "Still $repeatName")
+                setOnClickPendingIntent(
+                    R.id.lap_continue,
+                    actionIntent(context, LapNotificationReceiver.ACTION_CONTINUE, REQUEST_CONTINUE)
+                )
+                setTextViewText(R.id.lap_repeat, "$repeatName again")
                 setOnClickPendingIntent(
                     R.id.lap_repeat,
                     actionIntent(
@@ -152,10 +159,6 @@ object LapNotification {
                     )
                 )
             }
-            setOnClickPendingIntent(
-                R.id.lap_split,
-                actionIntent(context, LapNotificationReceiver.ACTION_SPLIT, REQUEST_SPLIT)
-            )
             setOnClickPendingIntent(R.id.lap_other, openAppIntent(context))
         }
 

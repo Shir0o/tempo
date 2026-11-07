@@ -33,6 +33,12 @@ class _RecordingCommands implements RecordCommands {
   }
 
   @override
+  Future<Record?> continueLast() async {
+    calls.add('continueLast');
+    return null;
+  }
+
+  @override
   Future<Record?> relabel(String recordId, String? activityId) async {
     calls.add('relabel:$recordId:$activityId');
     return null;

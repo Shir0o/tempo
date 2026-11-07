@@ -1199,6 +1199,8 @@ class _HistoryViewState extends State<HistoryView> {
         return _activitiesMap[intent.activityId]?.name ?? 'Label';
       case SyncIntentKind.split:
         return 'Split';
+      case SyncIntentKind.continueLast:
+        return 'Still';
       case SyncIntentKind.relabel:
         return 'Relabel';
       case SyncIntentKind.annotate:
@@ -1248,6 +1250,8 @@ class _HistoryViewState extends State<HistoryView> {
           );
         case SyncIntentKind.split:
           await _commands.split();
+        case SyncIntentKind.continueLast:
+          await _commands.continueLast();
         case SyncIntentKind.relabel:
           await _commands.relabel(intent.recordId!, intent.activityId);
         case SyncIntentKind.annotate:

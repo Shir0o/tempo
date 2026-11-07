@@ -355,19 +355,25 @@ class _DashboardViewState extends State<DashboardView>
     }
   }
 
-  Future<void> _split() async {
+  /// "Still" plus the Activity name: the last Record grows over the open Lap, keeping its
+  /// note and tags.
+  Future<void> _continueLast() async {
+    final last = _lastActivity;
+    if (last == null) {
+      _showError('There is no earlier Record to continue yet.');
+      return;
+    }
     try {
-      final record = await _commands.split();
+      final record = await _commands.continueLast();
       await _loadData();
       if (record == null) {
-        _showQueued('The split is waiting for the phone.');
+        _showQueued('Still ${last.name} is waiting for the phone.');
         return;
       }
-      final at = DateFormat('HH:mm')
-          .format(wallClockAt(record.endTimezoneId, record.endedAtEpochMs));
-      _showUndo('Split at $at', record);
+      final name = _activitiesById[record.activityId]?.name ?? 'Record';
+      _showUndo('$name now ${_rangeLabel(record)}', record);
     } catch (e) {
-      _showError('Failed to split the Lap: $e');
+      _showError('Failed to continue the last Record: $e');
     }
   }
 
@@ -860,48 +866,31 @@ class _DashboardViewState extends State<DashboardView>
     final lastColor = last == null
         ? _accent
         : UiHelpers.parseHexColor(last.colorHex);
+    const textStyle = TextStyle(
+      fontFamily: _fontFamily,
+      fontSize: 14,
+      fontWeight: FontWeight.w600,
+    );
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(14),
+    );
 
+    // Both repeat the last Activity: "Still" grows its Record, "again" starts a
+    // new one.
     return Row(
       children: [
         Expanded(
-          child: OutlinedButton(
-            onPressed: _split,
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(0, 52),
-              foregroundColor: _ink,
-              side: const BorderSide(color: _ink, width: 1.2),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-              textStyle: const TextStyle(
-                fontFamily: _fontFamily,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            child: const Text('Split'),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          flex: 2,
           child: FilledButton(
-            onPressed: last == null ? null : _labelSameAsLast,
+            onPressed: last == null ? null : _continueLast,
             style: FilledButton.styleFrom(
               minimumSize: const Size(0, 52),
               backgroundColor: _ink,
               foregroundColor: _panel,
               disabledBackgroundColor: const Color(0x33121210),
               disabledForegroundColor: _inkFaint,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              textStyle: const TextStyle(
-                fontFamily: _fontFamily,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
+              shape: shape,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              textStyle: textStyle,
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -917,14 +906,31 @@ class _DashboardViewState extends State<DashboardView>
                 const SizedBox(width: 8),
                 Flexible(
                   child: Text(
-                    last == null
-                        ? 'Same as last'
-                        : 'Same as last: ${last.name}',
+                    last == null ? 'Still' : 'Still ${last.name}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: OutlinedButton(
+            onPressed: last == null ? null : _labelSameAsLast,
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(0, 52),
+              foregroundColor: _ink,
+              side: const BorderSide(color: _ink, width: 1.2),
+              shape: shape,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              textStyle: textStyle,
+            ),
+            child: Text(
+              last == null ? 'Again' : '${last.name} again',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ),

@@ -177,10 +177,25 @@ void main() {
       },
     );
 
+    test('Still grows the last Record and Undo shrinks it back', () async {
+      mockTime = lapStart + 60000;
+      await service.handleAction('LABEL', activityId: 'a');
+      final labelledAt = mockTime;
+
+      mockTime += 60000;
+      await service.handleAction('CONTINUE');
+      expect(dayRecorder.lap!.startedAtEpochMs, mockTime);
+      final shown = posted.last['lastLabel'] as Map;
+      expect(shown['activityName'], 'Activity a');
+
+      await service.handleAction('UNDO');
+      expect(dayRecorder.lap!.startedAtEpochMs, labelledAt);
+    });
+
     test('Undo restores the Lap and settles at once', () async {
       mockTime = lapStart + 60000;
-      await service.handleAction('SPLIT');
-      expect((posted.single['lastLabel'] as Map)['activityName'], 'Untracked');
+      await service.handleAction('LABEL', activityId: 'a');
+      expect((posted.single['lastLabel'] as Map)['activityName'], 'Activity a');
 
       await service.handleAction('UNDO');
       expect(dayRecorder.lap!.startedAtEpochMs, lapStart);

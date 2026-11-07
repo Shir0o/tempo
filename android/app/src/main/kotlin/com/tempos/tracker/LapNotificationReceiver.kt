@@ -20,7 +20,7 @@ class LapNotificationReceiver : BroadcastReceiver() {
 
     companion object {
         const val ACTION_LABEL = "com.tempos.tracker.notification.LABEL"
-        const val ACTION_SPLIT = "com.tempos.tracker.notification.SPLIT"
+        const val ACTION_CONTINUE = "com.tempos.tracker.notification.CONTINUE"
         const val ACTION_UNDO = "com.tempos.tracker.notification.UNDO"
         const val EXTRA_ACTIVITY_ID = "activityId"
     }
@@ -28,7 +28,7 @@ class LapNotificationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val type = when (intent.action) {
             ACTION_LABEL -> "LABEL"
-            ACTION_SPLIT -> "SPLIT"
+            ACTION_CONTINUE -> "CONTINUE"
             ACTION_UNDO -> "UNDO"
             else -> return
         }
