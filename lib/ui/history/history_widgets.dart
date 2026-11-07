@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../core/state/day_recorder.dart';
+import '../../data/models/tag.dart';
 import '../helpers/ui_helpers.dart';
 import '../theme/tempo_theme.dart';
 
@@ -204,7 +205,7 @@ class HistoryTimelineRow extends StatelessWidget {
 
 /// A labeled Record: Activity colour, ink text, name left, duration right,
 /// optional end time below it, optional note and both lived times when the
-/// Record crosses zones.
+/// Record crosses zones, then a chip per tag.
 class HistoryRecordBlock extends StatelessWidget {
   final String name;
   final Color color;
@@ -212,6 +213,7 @@ class HistoryRecordBlock extends StatelessWidget {
   final String? endLabel;
   final String? zonedRange;
   final String note;
+  final List<Tag> tags;
   final String semanticsLabel;
   final VoidCallback onTap;
 
@@ -223,6 +225,7 @@ class HistoryRecordBlock extends StatelessWidget {
     this.endLabel,
     required this.zonedRange,
     required this.note,
+    this.tags = const [],
     required this.semanticsLabel,
     required this.onTap,
   });
@@ -292,11 +295,61 @@ class HistoryRecordBlock extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ],
+                  if (tags.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 4,
+                      runSpacing: 4,
+                      children: [for (final tag in tags) _TagChip(tag: tag)],
+                    ),
+                  ],
                 ],
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// A tag on a Record block: a translucent ink pill with the tag's colour as
+/// a small swatch. Display only; the block itself is the tap target.
+class _TagChip extends StatelessWidget {
+  final Tag tag;
+
+  const _TagChip({required this.tag});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 22,
+      padding: const EdgeInsets.only(left: 7, right: 9),
+      decoration: BoxDecoration(
+        color: TempoColors.ink.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(TempoRadii.pill),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: UiHelpers.parseHexColor(tag.colorHex),
+              borderRadius: BorderRadius.circular(3),
+            ),
+          ),
+          const SizedBox(width: 5),
+          Text(
+            tag.name,
+            style: TempoText.label.copyWith(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: TempoColors.ink,
+            ),
+          ),
+        ],
       ),
     );
   }
