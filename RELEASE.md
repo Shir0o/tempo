@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/Shir0o/tempo/compare/v1.13.0...v1.14.0) (2026-11-07)
+
+
+### Features
+
+* **today:** split Repeat into Still and Again ([#106](https://github.com/Shir0o/tempo/issues/106)) ([0b5ee8f](https://github.com/Shir0o/tempo/commit/0b5ee8fc807b760bad66842099b5b21dc6cd734c))
+
 ## [1.13.0](https://github.com/Shir0o/tempo/compare/v1.12.0...v1.13.0) (2026-11-07)
 
 
