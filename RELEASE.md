@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.13.0](https://github.com/Shir0o/tempo/compare/v1.12.0...v1.13.0) (2026-11-07)
+
+
+### Features
+
+* **android:** adaptive launcher icon with themed-icon layer ([#100](https://github.com/Shir0o/tempo/issues/100)) ([e5bc626](https://github.com/Shir0o/tempo/commit/e5bc62611aea38be0b0d9d6e1dffca0b0301a407))
+* **history:** show a Record's tags as chips on its block ([#105](https://github.com/Shir0o/tempo/issues/105)) ([2b10945](https://github.com/Shir0o/tempo/commit/2b109453b810088fac4ba1efef228509d4cc8d95))
+* **settings:** regroup Settings into a short main list with sub-pages ([#101](https://github.com/Shir0o/tempo/issues/101)) ([c0c3e0a](https://github.com/Shir0o/tempo/commit/c0c3e0a0e7ae5447b18d4cb864ce53d6f3a790ae))
+
+
+### Bug Fixes
+
+* **backup:** keep backing up when the store has a coverage defect ([#103](https://github.com/Shir0o/tempo/issues/103)) ([6c818cc](https://github.com/Shir0o/tempo/commit/6c818ccc2d0bdd9be5c7d4c269dbd0de1d5b9910)), closes [#102](https://github.com/Shir0o/tempo/issues/102)
+
 ## [1.12.0](https://github.com/Shir0o/tempo/compare/v1.11.0...v1.12.0) (2026-11-06)
 
 
