@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.15.0](https://github.com/Shir0o/tempo/compare/v1.14.0...v1.15.0) (2026-11-07)
+
+
+### Features
+
+* **activities:** one emoji icon everywhere, guesses, and live duration ([#109](https://github.com/Shir0o/tempo/issues/109)) ([820e0ef](https://github.com/Shir0o/tempo/commit/820e0efd4abf643be41e417987318e381b6d843c))
+
+
+### Bug Fixes
+
+* **today:** keep WITH NOTE chip text inside the chip ([#111](https://github.com/Shir0o/tempo/issues/111)) ([7f44f11](https://github.com/Shir0o/tempo/commit/7f44f11e2a1ce7ddfa72fd9d8dab214f1511f140))
+
 ## [1.14.0](https://github.com/Shir0o/tempo/compare/v1.13.0...v1.14.0) (2026-11-07)
 
 
