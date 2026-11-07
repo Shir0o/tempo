@@ -209,44 +209,38 @@ CREATE TABLE IF NOT EXISTS changes (
       },
     );
 
-    test('a gap in coverage rejects the snapshot and leaves no file', () async {
+    test('a gap in coverage still produces a restorable snapshot', () async {
       await insertRecord('r1', base, base + 3600000);
       await insertRecord('r2', base + 7200000, base + 10800000);
 
-      await expectLater(
-        buildService().snapshot(),
-        throwsA(
-          isA<BackupVerificationException>().having(
-            (e) => e.message,
-            'message',
-            contains('gap in coverage'),
-          ),
-        ),
-      );
+      final snapshot = await buildService().snapshot();
 
-      final storeDirectory = Directory(p.join(localDirectory.path, 'store-1'));
-      expect(
-        await storeDirectory.list().toList(),
-        isEmpty,
-        reason: 'the rolling snapshot was never written',
+      expect(await snapshot.file.exists(), isTrue);
+      final copy = await databaseFactoryFfi.openDatabase(
+        snapshot.file.path,
+        options: OpenDatabaseOptions(readOnly: true),
       );
+      try {
+        final count = await copy.rawQuery(
+          'SELECT COUNT(*) AS count FROM records',
+        );
+        expect(count.first['count'], 2);
+      } finally {
+        await copy.close();
+      }
     });
 
-    test('an overlap in coverage rejects the snapshot', () async {
-      await insertRecord('r1', base, base + 7200000);
-      await insertRecord('r2', base + 3600000, base + 10800000);
+    test(
+      'an overlap in coverage still produces a restorable snapshot',
+      () async {
+        await insertRecord('r1', base, base + 7200000);
+        await insertRecord('r2', base + 3600000, base + 10800000);
 
-      await expectLater(
-        buildService().snapshot(),
-        throwsA(
-          isA<BackupVerificationException>().having(
-            (e) => e.message,
-            'message',
-            contains('overlapping Records'),
-          ),
-        ),
-      );
-    });
+        final snapshot = await buildService().snapshot();
+
+        expect(await snapshot.file.exists(), isTrue);
+      },
+    );
   });
 
   group('promotion and manifest', () {
