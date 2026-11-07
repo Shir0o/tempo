@@ -142,7 +142,7 @@ The system is flat. Depth comes from tone (paper on black, colour on paper), nev
 A black ledger with paper inserts and a box of pastel markers; one lime highlighter.
 
 ### Primary
-- **Highlighter Lime** (#C6F432): selected nav pill, open-Lap outline in History, "Undo" text, the dot on "Same as last", switches that are on. Never a large fill except the watch's confirmation flash and the Activity block that happens to be lime.
+- **Highlighter Lime** (#C6F432): selected nav pill, open-Lap outline in History, "Undo" text, the dot on "Still", switches that are on. Never a large fill except the watch's confirmation flash and the Activity block that happens to be lime.
 
 ### Neutral
 - **Ledger Ink** (#121210): text on paper, primary buttons on paper, the open Lap's segment in the strip.
@@ -212,7 +212,7 @@ Big, friendly radii. Activity blocks 20px, cards 24px, the Lap panel's lower cor
 - **Behaviour:** tap labels the open Lap. In Activities, a key badge (ink, 22px, 6px radius) shows the Mac number shortcut.
 
 ### Lap panel
-Hatched Ledger Paper with 28px lower corners: date and logged total, lap title, lap timer, the 00–24 strip, then Split (outline) and "Same as last: <Activity>" (ink primary with an Activity-colour dot).
+Hatched Ledger Paper with 28px lower corners: date and logged total, lap title, lap timer, the 00–24 strip, then two equal buttons for the last Activity: "Still <Activity>" (ink primary with an Activity-colour dot) and "<Activity> again" (outline). Split lives only in the History edit sheet, the watch and the Mac popover.
 
 ### Last logged row
 Under the Lap panel on Today, while the latest tracked Record ended today: a Night Card row (16px radius) with an Activity-colour bar, overline "LAST LOGGED", and the name with its range and duration, or with its note once it has one. A pill on the right opens the note sheet for that Record: "Add note" (paper fill, ink text) or "Edit note" (Hairline outline). This keeps a one-off note one tap away after the undo bar is gone.

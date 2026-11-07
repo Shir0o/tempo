@@ -251,7 +251,7 @@ class SyncChange {
       'SyncChange(seq: $seq, kind: ${kind.wireName}, entityId: $entityId, atEpochMs: $atEpochMs)';
 }
 
-/// The nine kinds a client may propose. The Mac and the watch never write a
+/// The ten kinds a client may propose. The Mac and the watch never write a
 /// Record; they send a SyncIntent and the phone decides.
 enum SyncIntentKind {
   label('label'),
@@ -262,7 +262,8 @@ enum SyncIntentKind {
   clear('clear'),
   undo('undo'),
   merge('merge'),
-  splitRecord('split_record');
+  splitRecord('split_record'),
+  continueLast('continue_last');
 
   const SyncIntentKind(this.wireName);
 
@@ -322,6 +323,19 @@ class SyncIntent {
   }) => SyncIntent(
     intentId: intentId,
     kind: SyncIntentKind.split,
+    tappedAtEpochMs: tappedAtEpochMs,
+    tappedAtZoneId: tappedAtZoneId,
+    expectedLapStartEpochMs: expectedLapStartEpochMs,
+  );
+
+  factory SyncIntent.continueLast({
+    required String intentId,
+    required int tappedAtEpochMs,
+    required String tappedAtZoneId,
+    required int expectedLapStartEpochMs,
+  }) => SyncIntent(
+    intentId: intentId,
+    kind: SyncIntentKind.continueLast,
     tappedAtEpochMs: tappedAtEpochMs,
     tappedAtZoneId: tappedAtZoneId,
     expectedLapStartEpochMs: expectedLapStartEpochMs,

@@ -23,6 +23,11 @@ abstract class RecordCommands {
 
   Future<Record?> split();
 
+  /// Extends the most recent labelled Record over the open Lap, keeping its
+  /// note and tags, or labels the Lap as a new Record like it when the two
+  /// don't meet. See [DayRecorder.continueLast].
+  Future<Record?> continueLast();
+
   Future<Record?> relabel(String recordId, String? activityId);
 
   Future<Record?> annotate(
@@ -76,6 +81,9 @@ class PhoneRecordCommands implements RecordCommands {
 
   @override
   Future<Record?> split() => dayRecorder.split();
+
+  @override
+  Future<Record?> continueLast() => dayRecorder.continueLast();
 
   @override
   Future<Record?> relabel(String recordId, String? activityId) =>
@@ -176,6 +184,16 @@ class RemoteRecordCommands implements RecordCommands {
   @override
   Future<Record?> split() async => _queue(
     SyncIntent.split(
+      intentId: _generateIntentId(),
+      tappedAtEpochMs: _nowUtcMs(),
+      tappedAtZoneId: _zoneId(),
+      expectedLapStartEpochMs: await _expectedLapStart(),
+    ),
+  );
+
+  @override
+  Future<Record?> continueLast() async => _queue(
+    SyncIntent.continueLast(
       intentId: _generateIntentId(),
       tappedAtEpochMs: _nowUtcMs(),
       tappedAtZoneId: _zoneId(),

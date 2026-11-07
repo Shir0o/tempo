@@ -12,9 +12,9 @@ import '../data/models/models.dart';
 import '../ui/helpers/ui_helpers.dart';
 
 /// Keeps Android's ongoing Lap notification in step with the open Lap and
-/// carries out the label, Repeat, Split and Undo taps made on it.
+/// carries out the label, Still, Again and Undo taps made on it.
 ///
-/// After a label or Split from the notification it shows the Record just
+/// After a label or Still from the notification it shows the Record just
 /// written with an Undo action for the [DayRecorder.undoGraceWindow], then
 /// returns to the open Lap.
 class LapNotificationService {
@@ -85,7 +85,7 @@ class LapNotificationService {
   }
 
   /// Carries out a tap on the notification: `LABEL` with [activityId],
-  /// `SPLIT`, or `UNDO`.
+  /// `CONTINUE`, or `UNDO`.
   Future<void> handleAction(String action, {String? activityId}) async {
     Record? closed;
     _acting++;
@@ -96,8 +96,8 @@ class LapNotificationService {
             closed = await dayRecorder.label(activityId);
           }
           break;
-        case 'SPLIT':
-          closed = await dayRecorder.split();
+        case 'CONTINUE':
+          closed = await dayRecorder.continueLast();
           break;
         case 'UNDO':
           await dayRecorder.undoLast();

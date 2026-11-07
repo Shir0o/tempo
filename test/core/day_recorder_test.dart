@@ -251,6 +251,71 @@ void main() {
     expect(record.startedAtEpochMs, equals(1120000));
   });
 
+  group('continueLast', () {
+    test(
+      'extends the last Record over the Lap, keeping note and tags',
+      () async {
+        await recorder.initialize();
+        nowUtc += 60000;
+        final first = await recorder.label(
+          meals.id,
+          comment: 'John 1',
+          tags: [travelTag.id],
+        );
+
+        nowUtc += 120000;
+        final record = await recorder.continueLast();
+
+        expect(record!.id, equals(first.id));
+        expect(record.startedAtEpochMs, equals(1000000));
+        expect(record.endedAtEpochMs, equals(1180000));
+        expect(record.comment, equals('John 1'));
+        expect(record.tagIds, equals([travelTag.id]));
+        expect(recorder.lap!.startedAtEpochMs, equals(1180000));
+        final stored = await db.getRecordById(first.id);
+        expect(stored!.endedAtEpochMs, equals(1180000));
+      },
+    );
+
+    test('undo shrinks the Record back and restores the Lap', () async {
+      await recorder.initialize();
+      nowUtc += 60000;
+      final first = await recorder.label(meals.id, comment: 'John 1');
+
+      nowUtc += 120000;
+      await recorder.continueLast();
+      nowUtc += 1000;
+      expect(await recorder.undoLast(), isTrue);
+
+      final stored = await db.getRecordById(first.id);
+      expect(stored!.endedAtEpochMs, equals(1060000));
+      expect(recorder.lap!.startedAtEpochMs, equals(1060000));
+    });
+
+    test('after a Split it logs a new Record with the same note', () async {
+      await recorder.initialize();
+      nowUtc += 60000;
+      final first = await recorder.label(meals.id, comment: 'John 1');
+      nowUtc += 60000;
+      await recorder.split();
+
+      nowUtc += 60000;
+      final record = await recorder.continueLast();
+
+      expect(record!.id, isNot(equals(first.id)));
+      expect(record.activityId, equals(meals.id));
+      expect(record.comment, equals('John 1'));
+      expect(record.startedAtEpochMs, equals(1120000));
+      expect(record.endedAtEpochMs, equals(1180000));
+    });
+
+    test('returns null before anything is labelled', () async {
+      await recorder.initialize();
+      nowUtc += 60000;
+      expect(await recorder.continueLast(), isNull);
+    });
+  });
+
   test('undo inside the grace window restores the previous Lap', () async {
     await recorder.initialize();
     nowUtc += 90000;

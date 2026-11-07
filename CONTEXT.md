@@ -34,6 +34,10 @@ _Avoid_: Gap, hole, idle time
 Closing the open Lap at the current moment without labeling it, producing an Untracked Record and a new Lap.
 _Avoid_: Stop, pause, break
 
+**Still / Again**:
+The two ways to give the open Lap the last labeled Activity. **Still** grows that Record over the Lap, keeping its note and tags, when the two meet; across an Untracked span or a midnight it labels the Lap as a new Record with the same Activity, note and tags. **Again** labels the Lap as a new Record with that Activity and no note.
+_Avoid_: Repeat, same as last, merge
+
 **Edge**:
 The start or end instant of one Record. Correcting the past moves an Edge: only that Record changes, the time it gives up becomes an Untracked Record (joining an adjacent Untracked span or the open Untracked stretch when one is there), and it may grow only into time that is already Untracked. A Record that would cross local midnight is split there.
 _Avoid_: Boundary, cut, handle

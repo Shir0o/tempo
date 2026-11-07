@@ -722,6 +722,23 @@ class DayRecorder {
             appliedAtEpochMs: record.endedAtEpochMs,
           );
 
+        case SyncIntentKind.continueLast:
+          final record = await _continueLastLocked(
+            atEpochMs: intent.tappedAtEpochMs,
+            atZoneId: intent.tappedAtZoneId,
+            intentId: intent.intentId,
+          );
+          if (record == null) {
+            return await _rejectIntent(
+              intent,
+              IntentResult.reasonUnknownRecord,
+            );
+          }
+          return IntentResult.applied(
+            entityId: record.id,
+            appliedAtEpochMs: record.endedAtEpochMs,
+          );
+
         case SyncIntentKind.split:
           final record = await _closeLapLocked(
             atEpochMs: intent.tappedAtEpochMs,
@@ -897,6 +914,101 @@ class DayRecorder {
     if (previous.isEmpty) return null;
     return _closeLapLocked(activityId: previous.first.activityId);
   });
+
+  /// Extends the most recent labelled Record to now, keeping its Activity,
+  /// note and tags, and reopens the Lap at now: "still doing that".
+  ///
+  /// Only a Record that ends where the open Lap starts can be extended. When
+  /// something lies between them (an Untracked span, a local midnight), the
+  /// Lap is labelled as a new Record with the same Activity, note and tags
+  /// instead, the way a MidnightSplit continues a Record into the next Day.
+  /// Returns null when no labelled Record exists. [undoLast] shrinks the
+  /// Record back.
+  Future<Record?> continueLast({
+    int? atEpochMs,
+    String? atZoneId,
+    String? intentId,
+  }) => _synchronized(
+    () => _continueLastLocked(
+      atEpochMs: atEpochMs,
+      atZoneId: atZoneId,
+      intentId: intentId,
+    ),
+  );
+
+  Future<Record?> _continueLastLocked({
+    int? atEpochMs,
+    String? atZoneId,
+    String? intentId,
+  }) async {
+    await _ensureInitializedLocked();
+    final latest = await _db.getRecords(
+      trackedOnly: true,
+      limit: 1,
+      orderBy: 'ended_at_epoch_ms DESC, rowid DESC',
+    );
+    if (latest.isEmpty) return null;
+    final previous = latest.first;
+
+    final nowUtc = _nowUtcMs();
+    final requested = atEpochMs ?? nowUtc;
+    final tappedAt = requested > nowUtc ? nowUtc : requested;
+    await _applyMidnightSplitsLocked(untilEpochMs: tappedAt, zoneId: atZoneId);
+
+    final current = _lapNotifier.value!;
+    if (previous.endedAtEpochMs != current.startedAtEpochMs) {
+      return _closeLapLocked(
+        activityId: previous.activityId,
+        comment: previous.comment,
+        tags: previous.tagIds,
+        atEpochMs: atEpochMs,
+        atZoneId: atZoneId,
+        intentId: intentId,
+      );
+    }
+
+    final now = max(tappedAt, current.startedAtEpochMs);
+    final endTimezoneId = atZoneId ?? await _currentTimezoneId();
+    final extended = previous.copyWith(
+      endedAtEpochMs: now,
+      endTimezoneId: endTimezoneId,
+      updatedAtEpochMs: now,
+    );
+    final nextLap = Lap(
+      startedAtEpochMs: now,
+      startedTimezoneId: endTimezoneId,
+      revision: current.revision + 1,
+    );
+
+    await _db.db.transaction((txn) async {
+      await _updateRecordInTxn(txn, extended);
+      await _appendRecordUpsert(txn, extended, now);
+      await txn.insert(
+        'lap',
+        nextLap.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      await _appendLapSet(txn, nextLap, now, endTimezoneId: endTimezoneId);
+      if (intentId != null) {
+        await _markIntentInTxn(
+          txn,
+          intentId,
+          IntentResult.applied(entityId: extended.id, appliedAtEpochMs: now),
+        );
+      }
+    });
+
+    _lastOperation = _UndoSnapshot(
+      writtenRecords: const [],
+      previousRecords: [previous],
+      previousLap: current,
+      armedAtEpochMs: now,
+    );
+    _updateLap(nextLap);
+    await _notifyRecordCommitted(extended);
+    await _armMidnightTimer();
+    return extended;
+  }
 
   Future<Lap> _initializeLocked() async {
     var current = await _db.getLap();
