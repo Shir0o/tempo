@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.12.0](https://github.com/Shir0o/tempo/compare/v1.11.0...v1.12.0) (2026-11-06)
+
+
+### Features
+
+* **history:** Tags row with "+ New tag" in the record edit sheet ([#98](https://github.com/Shir0o/tempo/issues/98)) ([6855e53](https://github.com/Shir0o/tempo/commit/6855e53266da8012d310a854925d7ca4c9bdd41d))
+* **today:** add activity filter sheet with platform speech input ([#97](https://github.com/Shir0o/tempo/issues/97)) ([59f9434](https://github.com/Shir0o/tempo/commit/59f94348e99e3efd4f28b7e0c3707141a0f457d8))
+
 ## [1.11.0](https://github.com/Shir0o/tempo/compare/v1.10.1...v1.11.0) (2026-11-06)
 
 
