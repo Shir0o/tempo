@@ -1371,7 +1371,7 @@ class _SettingsViewState extends State<SettingsView> {
         children: [
           Text(
             'Tempo keeps a spreadsheet copy of your record in your Google '
-            'Drive, so other apps can read it. BNPB reads this file.',
+            'Drive, so other apps can read it.',
             style: TempoText.body.copyWith(
               color: TempoColors.ink,
               height: 1.45,
