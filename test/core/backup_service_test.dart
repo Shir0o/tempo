@@ -521,6 +521,9 @@ class _FakeSafStore implements SafDocumentStore {
   Future<bool> reopen(String treeUri) async => true;
 
   @override
+  Future<String?> displayName(String treeUri) async => 'Drive/Backups';
+
+  @override
   Future<void> createDirectory(
     String treeUri,
     String relativeDirectory,

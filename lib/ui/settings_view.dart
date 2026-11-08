@@ -91,6 +91,10 @@ class _SettingsViewState extends State<SettingsView> {
   String _destinationLocator = '';
   int _generations = 5;
   BackupDestination? _destination;
+
+  /// The folder as its provider names it (`Downloads/Tempo`), resolved after
+  /// the destination opens. Null until then, or when it cannot be resolved.
+  String? _destinationName;
   BackupGeneration? _lastGeneration;
   int _keptGenerations = 0;
   bool _destinationUnreachable = false;
@@ -540,6 +544,7 @@ class _SettingsViewState extends State<SettingsView> {
         _backupEnabled = enabled == 'true';
         _destinationLocator = locator;
         _destination = destination;
+        _destinationName = null;
         _destinationUnreachable = locator.isNotEmpty && destination == null;
         _generations = generations == null || generations <= 0
             ? service.defaultGenerations
@@ -547,9 +552,23 @@ class _SettingsViewState extends State<SettingsView> {
         _lastGeneration = last;
         _keptGenerations = kept;
       });
+      if (destination != null) {
+        unawaited(_resolveDestinationName(destination));
+      }
     } catch (_) {
       // Backup settings are optional; a read failure keeps the defaults.
     }
+  }
+
+  /// Asks the destination for a readable name. A SAF tree URI from a cloud
+  /// provider carries an opaque document id, so the name has to come from the
+  /// provider; a stale answer for a folder the user has since replaced is
+  /// dropped.
+  Future<void> _resolveDestinationName(BackupDestination destination) async {
+    final name = await destination.readableName();
+    if (!mounted || name == null) return;
+    if (_destinationLocator != destination.locator) return;
+    setState(() => _destinationName = name);
   }
 
   Future<void> _refreshLastGeneration() async {
@@ -595,8 +614,10 @@ class _SettingsViewState extends State<SettingsView> {
       setState(() {
         _destination = picked;
         _destinationLocator = picked.locator;
+        _destinationName = null;
         _destinationUnreachable = false;
       });
+      unawaited(_resolveDestinationName(picked));
       await _refreshLastGeneration();
       return true;
     } catch (e) {
@@ -1588,21 +1609,11 @@ class _SettingsViewState extends State<SettingsView> {
     );
   }
 
-  /// The folder's own name, which is all that fits on one row. A SAF locator is
-  /// a tree URI whose last segment decodes to `primary:backups`.
-  String _destinationLabel() {
-    final locator = _destinationLocator;
-    if (locator.startsWith('content://')) {
-      try {
-        final last = Uri.decodeComponent(locator.split('/').last);
-        final name = last.split(':').last;
-        if (name.isNotEmpty) return name;
-      } catch (_) {}
-      return 'Folder chosen';
-    }
-    final segments = locator.split('/').where((s) => s.isNotEmpty).toList();
-    return segments.isEmpty ? locator : segments.last;
-  }
+  /// The folder as a person would recognize it: the provider's own name for
+  /// it when known, otherwise a label read from the stored locator, which
+  /// never shows a raw tree URI.
+  String _destinationLabel() =>
+      _destinationName ?? readableLocatorLabel(_destinationLocator);
 
   String _formatBackupTime(int epochMs) {
     final at = DateTime.fromMillisecondsSinceEpoch(epochMs).toLocal();
@@ -1783,11 +1794,26 @@ class _RowValue extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      value,
-      style: TempoText.body.copyWith(
-        color: TempoColors.textMuted,
-        fontWeight: FontWeight.w600,
+    // A value never takes more than about half the row, so the row's title
+    // keeps its width and a long value (a folder path) ellipsizes instead of
+    // squeezing the title down to one letter per line.
+    return Padding(
+      padding: const EdgeInsets.only(left: 12),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.sizeOf(context).width * 0.45,
+        ),
+        child: Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          softWrap: false,
+          textAlign: TextAlign.end,
+          style: TempoText.body.copyWith(
+            color: TempoColors.textMuted,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       ),
     );
   }

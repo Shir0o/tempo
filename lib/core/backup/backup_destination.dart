@@ -77,6 +77,11 @@ abstract class BackupDestination {
   /// True while the destination can be written to.
   bool get isOpen;
 
+  /// A name a person can read, such as `Downloads/Tempo`. Null when the
+  /// destination cannot name itself better than [locator] does; callers then
+  /// fall back to [readableLocatorLabel].
+  Future<String?> readableName();
+
   /// Re-establishes access after a restart: a directory that still exists, or
   /// a SAF tree whose persisted permission is still granted.
   Future<bool> reopen();
@@ -127,6 +132,9 @@ class FilesystemBackupDestination implements BackupDestination {
 
   @override
   bool get isOpen => Directory(rootPath).existsSync();
+
+  @override
+  Future<String?> readableName() async => null;
 
   @override
   bool get isOwnStorage => _isOwnStorage(rootPath, ownStorageRoots);
@@ -306,6 +314,10 @@ abstract class SafDocumentStore {
   /// Re-checks that the persisted permission for [treeUri] still applies.
   Future<bool> reopen(String treeUri);
 
+  /// The tree's readable path as the provider names it, e.g.
+  /// `Downloads/Tempo` or `Drive/Backups`. Null when it cannot be resolved.
+  Future<String?> displayName(String treeUri);
+
   Future<void> createDirectory(String treeUri, String relativeDirectory);
 
   Future<void> writeFile(String treeUri, String relativePath, List<int> bytes);
@@ -344,6 +356,10 @@ class ChannelSafDocumentStore implements SafDocumentStore {
   @override
   Future<bool> reopen(String treeUri) async =>
       await _invoke<bool>('reopen', {'treeUri': treeUri}) ?? false;
+
+  @override
+  Future<String?> displayName(String treeUri) =>
+      _invoke<String>('displayName', {'treeUri': treeUri});
 
   @override
   Future<void> createDirectory(String treeUri, String relativeDirectory) async {
@@ -494,6 +510,17 @@ class SafBackupDestination implements BackupDestination {
   }
 
   @override
+  Future<String?> readableName() async {
+    try {
+      final name = (await store.displayName(treeUri))?.trim();
+      return name == null || name.isEmpty ? null : name;
+    } catch (_) {
+      // An older native side or a slow provider: the locator label stands in.
+      return null;
+    }
+  }
+
+  @override
   Future<void> close() async {
     _open = false;
   }
@@ -578,6 +605,66 @@ Future<BackupDestination?> openBackupDestination(String locator) async {
   }
   final destination = FilesystemBackupDestination(rootPath: locator);
   return await destination.reopen() ? destination : null;
+}
+
+/// A short label for a stored locator when the destination cannot name itself.
+///
+/// A filesystem path shows its last two segments (`Dropbox/Tempo`). A SAF tree
+/// URI shows the folder path its document id spells out
+/// (`primary:Download/Tempo` reads as `Download/Tempo`), but only when that id
+/// is a path at all: cloud providers use opaque ids such as
+/// `acc=1;doc=encoded=…`, which name nothing a person would recognize, so
+/// those read as the provider's folder instead.
+String readableLocatorLabel(String locator) {
+  if (locator.startsWith('content://')) {
+    String? documentId;
+    try {
+      final segments = Uri.parse(locator).pathSegments;
+      final tree = segments.indexOf('tree');
+      if (tree >= 0 && tree + 1 < segments.length) {
+        documentId = segments[tree + 1];
+      }
+    } catch (_) {}
+    if (documentId != null) {
+      final colon = documentId.indexOf(':');
+      final path = colon >= 0 ? documentId.substring(colon + 1) : documentId;
+      final looksLikePath =
+          colon >= 0 &&
+          path.isNotEmpty &&
+          !path.contains(';') &&
+          !path.contains('=');
+      if (looksLikePath) return _lastSegments(path, 2);
+    }
+    return _providerFolderLabel(safAuthorityFromTreeUri(locator));
+  }
+  return _lastSegments(locator, 2);
+}
+
+String _lastSegments(String path, int count) {
+  final segments = path
+      .replaceAll('\\', '/')
+      .split('/')
+      .where((s) => s.isNotEmpty)
+      .toList();
+  if (segments.isEmpty) return path;
+  final start = segments.length > count ? segments.length - count : 0;
+  return segments.sublist(start).join('/');
+}
+
+String _providerFolderLabel(String authority) {
+  const names = {
+    'com.google.android.apps.docs': 'Google Drive',
+    'com.google.android.apps.docs.storage': 'Google Drive',
+    'com.microsoft.skydrive': 'OneDrive',
+    'com.microsoft.skydrive.content.StorageAccessProvider': 'OneDrive',
+    'com.dropbox.android': 'Dropbox',
+    'com.dropbox.product.android.dbapp.document_provider.documents': 'Dropbox',
+    'com.box.android': 'Box',
+    'com.pcloud.pcloud': 'pCloud',
+    'com.mega.megasync': 'MEGA',
+  };
+  final name = names[authority];
+  return name == null ? 'Chosen folder' : '$name folder';
 }
 
 /// The provider authority carried by a SAF tree URI, e.g.
