@@ -113,6 +113,7 @@ class BackupDestinationChannel : FlutterPlugin, ActivityAware, MethodChannel.Met
         when (call.method) {
             "pickTree" -> pickTree(result)
             "reopen" -> onIo(result) { reopen(requireArg(call, "treeUri")) }
+            "displayName" -> onIo(result) { Tree(requireArg(call, "treeUri")).readablePath() }
             "createDirectory" -> onIo(result) {
                 Tree(requireArg(call, "treeUri"))
                     .ensureDirectory(requireArg(call, "relativeDirectory"))
@@ -257,6 +258,79 @@ class BackupDestinationChannel : FlutterPlugin, ActivityAware, MethodChannel.Met
 
         fun rootName(): String? =
             displayName(DocumentsContract.getTreeDocumentId(uri))
+
+        /**
+         * A path a person can read, such as `Downloads/Tempo` or
+         * `Drive/Backups`. Tree document ids are provider-private (Drive's is
+         * an encoded blob), so the names come from the provider itself: the
+         * document path from its root when the provider can report one,
+         * otherwise the root's title and the folder's own name.
+         */
+        fun readablePath(): String? {
+            val treeId = DocumentsContract.getTreeDocumentId(uri)
+            val folder = displayName(treeId) ?: return null
+            val names = documentPathNames(treeId)
+            val rootTitle = rootTitle(names?.first)
+            val parts = mutableListOf<String>()
+            if (rootTitle != null) parts.add(rootTitle)
+            val trail = names?.second.orEmpty()
+            if (trail.isNotEmpty()) {
+                // The first document on the path is the root's own folder,
+                // which the root title already names.
+                val skipFirst = rootTitle != null && trail.size > 1
+                parts.addAll(if (skipFirst) trail.drop(1) else trail)
+            }
+            if (parts.isEmpty() || parts.last() != folder) parts.add(folder)
+            return parts.distinct().joinToString("/")
+        }
+
+        /** The root id and the display names from the root down to the tree. */
+        private fun documentPathNames(treeId: String): Pair<String?, List<String>>? {
+            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return null
+            return try {
+                val path = DocumentsContract.findDocumentPath(resolver, documentUri(treeId))
+                    ?: return null
+                path.rootId to path.path.mapNotNull { displayName(it) }
+            } catch (e: Exception) {
+                // Many providers, Drive among them, do not implement it.
+                null
+            }
+        }
+
+        /**
+         * The provider root's title, such as `Downloads` or `Drive`. With no
+         * root id, it is used only when the provider has exactly one root, so
+         * a guess never names the wrong account or volume.
+         */
+        private fun rootTitle(rootId: String?): String? {
+            val authority = uri.authority ?: return null
+            val projection = arrayOf(
+                DocumentsContract.Root.COLUMN_ROOT_ID,
+                DocumentsContract.Root.COLUMN_TITLE,
+            )
+            val roots = mutableListOf<Pair<String?, String?>>()
+            try {
+                resolver.query(
+                    DocumentsContract.buildRootsUri(authority),
+                    projection,
+                    null,
+                    null,
+                    null,
+                )?.use { cursor ->
+                    while (cursor.moveToNext()) {
+                        roots.add(cursor.getString(0) to cursor.getString(1))
+                    }
+                }
+            } catch (e: Exception) {
+                return null
+            }
+            val match = if (rootId != null) {
+                roots.firstOrNull { it.first == rootId }
+            } else {
+                roots.singleOrNull()
+            }
+            return match?.second?.takeIf { it.isNotBlank() }
+        }
 
         fun ensureDirectory(relativeDirectory: String): String {
             var parentId = DocumentsContract.getTreeDocumentId(uri)
