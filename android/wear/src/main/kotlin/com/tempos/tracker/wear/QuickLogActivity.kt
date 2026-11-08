@@ -121,12 +121,12 @@ class QuickLogActivity : ComponentActivity() {
             }
             val activity = repository.activities.value.find { it.id == labelId }
                 ?: WearActivity(id = labelId, name = labelId)
-            val range = labeledRange(repository.lap.value)
+            val labeled = labeledSpan(repository.lap.value)
             intent?.removeExtra(EXTRA_LABEL_ACTIVITY_ID)
             repository.label(activity.id)
             window.decorView.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
             setContent {
-                LabelConfirmationScreen(activity, range) { finish() }
+                LabelConfirmationScreen(activity, labeled.range, labeled.overnight) { finish() }
             }
             return
         }
@@ -188,7 +188,12 @@ private const val TABULAR = "tnum"
  * they labelled and the range it covers while the watch face returns.
  */
 @Composable
-fun LabelConfirmationScreen(activity: WearActivity, range: String, onDone: () -> Unit) {
+fun LabelConfirmationScreen(
+    activity: WearActivity,
+    range: String,
+    overnight: String? = null,
+    onDone: () -> Unit
+) {
     LaunchedEffect(Unit) {
         delay(CONFIRMATION_FLASH_MS)
         onDone()
@@ -238,12 +243,23 @@ fun LabelConfirmationScreen(activity: WearActivity, range: String, onDone: () ->
                     style = TextStyle(fontFeatureSettings = TABULAR)
                 )
             }
+            if (overnight != null) {
+                Text(
+                    text = overnight,
+                    color = Ink,
+                    fontFamily = SpaceGrotesk,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center,
+                    style = TextStyle(fontFeatureSettings = TABULAR)
+                )
+            }
         }
     }
 }
 
 /** How long the label confirmation stays on screen before Action-and-Exit. */
-private const val CONFIRMATION_FLASH_MS = 300L
+private const val CONFIRMATION_FLASH_MS = 900L
 
 /** How long the list waits with no touch or scroll before Action-and-Exit. */
 private const val IDLE_TIMEOUT_MS = 10_000L
@@ -261,7 +277,7 @@ fun QuickLogScreen(
     onFinish: () -> Unit
 ) {
     var elapsedMs by remember { mutableLongStateOf(lapElapsedMs(lap)) }
-    var confirmed by remember { mutableStateOf<Pair<WearActivity, String>?>(null) }
+    var confirmed by remember { mutableStateOf<Pair<WearActivity, LabeledSpan>?>(null) }
 
     // Action-and-Exit still applies, but only after real inactivity: a touch, a
     // scroll or the rotating crown counts as use and restarts the countdown, so
@@ -301,9 +317,9 @@ fun QuickLogScreen(
     }
 
     val select: (WearActivity) -> Unit = { activity ->
-        val range = labeledRange(lap)
+        val labeled = labeledSpan(lap)
         onActivitySelected(activity)
-        confirmed = activity to range
+        confirmed = activity to labeled
     }
 
     Box(
@@ -323,9 +339,9 @@ fun QuickLogScreen(
         if (isAmbient) {
             LapHeader(lap = lap, elapsedMs = elapsedMs, elapsedColor = Fog)
         } else {
-            val others = activities.filter { candidate ->
-                slotActivities.none { it.id == candidate.id }
-            }
+            val others = activities
+                .filter { candidate -> slotActivities.none { it.id == candidate.id } }
+                .sortedBy { it.name.lowercase(Locale.US) }
 
             ScalingLazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -361,8 +377,8 @@ fun QuickLogScreen(
             }
 
             // Brief confirmation, then Action-and-Exit to the watch face.
-            confirmed?.let { (activity, range) ->
-                LabelConfirmationScreen(activity, range, onDone = onFinish)
+            confirmed?.let { (activity, labeled) ->
+                LabelConfirmationScreen(activity, labeled.range, labeled.overnight, onDone = onFinish)
             }
         }
     }
@@ -435,23 +451,69 @@ fun ActivityPill(
     }
 }
 
-/** "10:06–10:43": the open Lap's start in its own zone to now in the current zone. */
-private fun labeledRange(lap: LapState): String {
-    if (!lap.isOpen) return ""
-    val now = System.currentTimeMillis()
-    return "${clockTime(lap.startedAtEpochMs, lap.startedTimezoneId)}–${clockTime(now, "")}"
+/** The confirmation's time lines: the range, plus an overnight sum when it crosses 00:00. */
+private data class LabeledSpan(val range: String, val overnight: String? = null)
+
+/**
+ * "10:06–10:43": the open Lap's start in its own zone to now in the current
+ * zone. A Lap that crossed local midnight is written as two or more Records;
+ * [LabeledSpan.overnight] then carries each slice and their sum, so the whole
+ * label is readable in one glance.
+ */
+private fun labeledSpan(lap: LapState, now: Long = System.currentTimeMillis()): LabeledSpan {
+    if (!lap.isOpen) return LabeledSpan("")
+    val range = "${clockTime(lap.startedAtEpochMs, lap.startedTimezoneId)}–${clockTime(now, "")}"
+    return LabeledSpan(range, overnightSum(lap.startedAtEpochMs, now, lap.startedTimezoneId))
 }
 
-private fun clockTime(epochMs: Long, zoneId: String): String {
-    val zone = try {
+private fun overnightSum(startedAt: Long, now: Long, timezoneId: String): String? {
+    if (now <= startedAt) return null
+    val zone = zoneOf(timezoneId)
+    val parts = mutableListOf<Long>()
+    var cursor = startedAt
+    while (true) {
+        val midnight = Instant.ofEpochMilli(cursor)
+            .atZone(zone)
+            .toLocalDate()
+            .plusDays(1)
+            .atStartOfDay(zone)
+            .toInstant()
+            .toEpochMilli()
+        if (midnight >= now) break
+        parts.add(midnight - cursor)
+        cursor = midnight
+    }
+    if (parts.isEmpty()) return null
+    parts.add(now - cursor)
+    return parts.joinToString(" + ") { formatDuration(it) } +
+        " = " + formatDuration(now - startedAt)
+}
+
+private fun zoneOf(zoneId: String): ZoneId {
+    return try {
         if (zoneId.isEmpty()) ZoneId.systemDefault() else ZoneId.of(zoneId)
     } catch (_: Exception) {
         ZoneId.systemDefault()
     }
-    return CLOCK.format(Instant.ofEpochMilli(epochMs).atZone(zone))
+}
+
+private fun clockTime(epochMs: Long, zoneId: String): String {
+    return CLOCK.format(Instant.ofEpochMilli(epochMs).atZone(zoneOf(zoneId)))
 }
 
 private val CLOCK = DateTimeFormatter.ofPattern("HH:mm", Locale.US)
+
+private fun formatDuration(ms: Long): String {
+    val totalMinutes = ms.coerceAtLeast(0L) / 60_000
+    val hours = totalMinutes / 60
+    val minutes = totalMinutes % 60
+    return when {
+        hours > 0 && minutes > 0 -> "${hours}h ${minutes}m"
+        hours > 0 -> "${hours}h"
+        totalMinutes > 0 -> "${minutes}m"
+        else -> "${(ms / 1_000).coerceAtLeast(1L)}s"
+    }
+}
 
 private fun lapElapsedMs(lap: LapState): Long {
     if (!lap.isOpen) return 0L
