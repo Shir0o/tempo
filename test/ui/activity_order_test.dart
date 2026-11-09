@@ -52,6 +52,22 @@ void main() {
     expect(sections[2].activities.single.name, 'Gym');
   });
 
+  test('categories sorts A to Z inside each section, ignoring sortOrder', () {
+    final sections = activitySections(
+      activities: [
+        _activity('zebra', 'Zebra', categoryId: 'cat-work', sortOrder: 0),
+        _activity('alpha', 'Alpha', categoryId: 'cat-work', sortOrder: 9),
+        _activity('beta', 'Beta'),
+        _activity('apple', 'Apple'),
+      ],
+      categories: categories,
+      order: TodayOrder.categories,
+    );
+
+    expect(sections.first.activities.map((a) => a.name), ['Alpha', 'Zebra']);
+    expect(sections.last.activities.map((a) => a.name), ['Apple', 'Beta']);
+  });
+
   test(
     'categories hides empty categories and keeps one flat grid otherwise',
     () {
@@ -64,9 +80,9 @@ void main() {
       expect(sections.single.label, isNull);
       expect(sections.single.activities.map((a) => a.name), [
         'Email',
-        'Sleep',
-        'Reading',
         'Gym',
+        'Reading',
+        'Sleep',
       ]);
     },
   );

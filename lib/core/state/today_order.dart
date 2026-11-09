@@ -18,7 +18,7 @@ enum TodayOrder {
 
   /// One line explaining what the order does.
   String get description => switch (this) {
-    TodayOrder.categories => 'Grouped by category, in category order.',
+    TodayOrder.categories => 'Grouped by category, A to Z inside each.',
     TodayOrder.manual => 'In the order activities were created.',
     TodayOrder.alphabetical => 'A to Z.',
     TodayOrder.pinned => 'Pinned activities first, then the rest.',
