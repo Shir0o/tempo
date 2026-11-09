@@ -47,7 +47,7 @@ data class WatchAction(
     val actionId: String = UUID.randomUUID().toString(),
     /** Per-watch monotonic counter; the phone acknowledges the highest applied. */
     val actionSeq: Long = 0L,
-    val type: String, // "LABEL", "SPLIT" or "UNDO"
+    val type: String, // "LABEL", "SPLIT", "CONTINUE", "REPEAT" or "UNDO"
     val activityId: String? = null,
     val timestampEpochMs: Long = System.currentTimeMillis(),
     val timezoneId: String = ZoneId.systemDefault().id,
@@ -72,6 +72,14 @@ class WearLapRepository private constructor(private val context: Context) {
     private val _activities = MutableStateFlow(loadActivities())
     val activities: StateFlow<List<WearActivity>> = _activities.asStateFlow()
 
+    /**
+     * The Activity on the phone's most recent labelled Record, so the label
+     * screen can offer "Still <Activity>" and "<Activity> again". Null until
+     * the phone has pushed one.
+     */
+    private val _lastActivity = MutableStateFlow(loadLastActivity())
+    val lastActivity: StateFlow<WearActivity?> = _lastActivity.asStateFlow()
+
     /** The Lap as it was before the last [label], restored by [undo]. */
     @Volatile
     private var lapBeforeLabel: LapState? = null
@@ -91,6 +99,7 @@ class WearLapRepository private constructor(private val context: Context) {
         private const val PREF_LAP_REVISION = "lap_revision"
         private const val PREF_LAP_UPDATED_AT = "lap_updated_at"
         private const val PREF_ACTIVITIES_JSON = "activities_json"
+        private const val PREF_LAST_ACTIVITY_JSON = "last_activity_json"
         private const val PREF_TILE_ACTIVITY_IDS_JSON = "tile_activity_ids_json"
         private const val PREF_OFFLINE_QUEUE_JSON = "offline_queue_json"
         private const val PREF_ACTION_SEQ = "action_seq"
@@ -162,6 +171,37 @@ class WearLapRepository private constructor(private val context: Context) {
         WearActivity(id = "act_errands", name = "Errands", colorHex = "#C6F432", isPinned = true)
     )
 
+    private fun loadLastActivity(): WearActivity? {
+        val json = prefs.getString(PREF_LAST_ACTIVITY_JSON, null)
+        if (json.isNullOrEmpty()) return null
+        return try {
+            val obj = JSONObject(json)
+            WearActivity(
+                id = obj.getString("id"),
+                name = obj.getString("name"),
+                colorHex = obj.optString("colorHex", "#4CAF50")
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading last activity from prefs", e)
+            null
+        }
+    }
+
+    private fun saveLastActivity(activity: WearActivity?) {
+        val editor = prefs.edit()
+        if (activity == null) {
+            editor.remove(PREF_LAST_ACTIVITY_JSON).apply()
+        } else {
+            val obj = JSONObject().apply {
+                put("id", activity.id)
+                put("name", activity.name)
+                put("colorHex", activity.colorHex)
+            }
+            editor.putString(PREF_LAST_ACTIVITY_JSON, obj.toString()).apply()
+        }
+        _lastActivity.value = activity
+    }
+
     /**
      * Stores the Activity list and the tile's ranked slots. [tileActivityIds]
      * is ordered most-used first; an empty list falls back to the Activity
@@ -219,6 +259,37 @@ class WearLapRepository private constructor(private val context: Context) {
             actionSeq = nextActionSeq(),
             type = "LABEL",
             activityId = activityId,
+            timestampEpochMs = now,
+            timezoneId = ZoneId.systemDefault().id
+        )
+        lastLabelActionId = action.actionId
+        dispatchAction(action)
+        notifySurfaces()
+    }
+
+    /**
+     * Grows the last Record over the open Lap ("Still <Activity>"): the phone
+     * extends that Record and reopens the Lap at the tap instant.
+     */
+    fun continueLast() = closeLapWith("CONTINUE")
+
+    /** Labels the open Lap with the last Record's Activity again. */
+    fun labelLast() {
+        if (_lastActivity.value == null) return
+        closeLapWith("REPEAT")
+    }
+
+    /**
+     * Closes the Lap optimistically at [now] and sends [type]. The phone writes
+     * the actual Record; the UndoGraceWindow covers an accidental tap.
+     */
+    private fun closeLapWith(type: String) {
+        val now = System.currentTimeMillis()
+        lapBeforeLabel = _lap.value
+        openLapFrom(now)
+        val action = WatchAction(
+            actionSeq = nextActionSeq(),
+            type = type,
             timestampEpochMs = now,
             timezoneId = ZoneId.systemDefault().id
         )
@@ -313,6 +384,20 @@ class WearLapRepository private constructor(private val context: Context) {
         )
         _lap.value = state
         saveLap(state)
+
+        val lastActivityId = dataMap.getString("lastActivityId")
+        saveLastActivity(
+            if (lastActivityId.isNullOrEmpty()) {
+                null
+            } else {
+                WearActivity(
+                    id = lastActivityId,
+                    name = dataMap.getString("lastActivityName")?.ifEmpty { lastActivityId }
+                        ?: lastActivityId,
+                    colorHex = dataMap.getString("lastActivityColorHex") ?: "#4CAF50"
+                )
+            }
+        )
         notifySurfaces()
     }
 

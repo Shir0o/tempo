@@ -11,10 +11,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -75,6 +78,7 @@ import java.util.concurrent.atomic.AtomicLong
  * - Launched with [EXTRA_LABEL_ACTIVITY_ID] (tile slot): labels that Activity
  *   on launch and exits without drawing.
  * - Otherwise: shows the open Lap ("UNTRACKED · start") and its elapsed time,
+ *   then "Still <Activity>" and "<Activity> again" for the last Activity,
  *   then the three most-used Activities as pills, then the rest.
  * - Inactivity timeout: 10s without a touch or scroll auto-exits.
  */
@@ -144,15 +148,25 @@ class QuickLogActivity : ComponentActivity() {
             val isAmbient by remember { isAmbientState }
             val lap by repository.lap.collectAsState()
             val activities by repository.activities.collectAsState()
+            val lastActivity by repository.lastActivity.collectAsState()
 
             QuickLogScreen(
                 isAmbient = isAmbient,
                 lap = lap,
                 activities = activities,
                 slotActivities = repository.tileActivities(),
+                lastActivity = lastActivity,
                 onActivitySelected = { activity ->
                     window.decorView.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
                     repository.label(activity.id)
+                },
+                onStillSelected = {
+                    window.decorView.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                    repository.continueLast()
+                },
+                onAgainSelected = {
+                    window.decorView.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                    repository.labelLast()
                 },
                 onFinish = {
                     finish()
@@ -192,6 +206,7 @@ fun LabelConfirmationScreen(
     activity: WearActivity,
     range: String,
     overnight: String? = null,
+    verb: String? = null,
     onDone: () -> Unit
 ) {
     LaunchedEffect(Unit) {
@@ -222,6 +237,16 @@ fun LabelConfirmationScreen(
                 )
             }
             Spacer(modifier = Modifier.height(6.dp))
+            if (verb != null) {
+                Text(
+                    text = verb,
+                    color = Ink.copy(alpha = 0.6f),
+                    fontFamily = SpaceGrotesk,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.08.em
+                )
+            }
             Text(
                 text = activity.name,
                 color = Ink,
@@ -273,11 +298,14 @@ fun QuickLogScreen(
     lap: LapState,
     activities: List<WearActivity>,
     slotActivities: List<WearActivity>,
+    lastActivity: WearActivity?,
     onActivitySelected: (WearActivity) -> Unit,
+    onStillSelected: () -> Unit,
+    onAgainSelected: () -> Unit,
     onFinish: () -> Unit
 ) {
     var elapsedMs by remember { mutableLongStateOf(lapElapsedMs(lap)) }
-    var confirmed by remember { mutableStateOf<Pair<WearActivity, LabeledSpan>?>(null) }
+    var confirmed by remember { mutableStateOf<LabelConfirmation?>(null) }
 
     // Action-and-Exit still applies, but only after real inactivity: a touch, a
     // scroll or the rotating crown counts as use and restarts the countdown, so
@@ -319,7 +347,7 @@ fun QuickLogScreen(
     val select: (WearActivity) -> Unit = { activity ->
         val labeled = labeledSpan(lap)
         onActivitySelected(activity)
-        confirmed = activity to labeled
+        confirmed = LabelConfirmation(activity, labeled)
     }
 
     Box(
@@ -353,6 +381,28 @@ fun QuickLogScreen(
                     LapHeader(lap = lap, elapsedMs = elapsedMs, elapsedColor = Color.White)
                 }
 
+                // The phone's two repeat buttons, on top of the Activity pills:
+                // "Still <Activity>" grows the last Record, "<Activity> again"
+                // starts a new one.
+                val last = lastActivity
+                if (last != null) {
+                    item {
+                        RepeatActions(
+                            last = last,
+                            onStill = {
+                                val labeled = labeledSpan(lap)
+                                onStillSelected()
+                                confirmed = LabelConfirmation(last, labeled, "STILL")
+                            },
+                            onAgain = {
+                                val labeled = labeledSpan(lap)
+                                onAgainSelected()
+                                confirmed = LabelConfirmation(last, labeled, "AGAIN")
+                            }
+                        )
+                    }
+                }
+
                 // The three most-used Activities, the same slots as the tile.
                 items(slotActivities) { activity ->
                     ActivityPill(activity = activity, onClick = { select(activity) })
@@ -377,8 +427,14 @@ fun QuickLogScreen(
             }
 
             // Brief confirmation, then Action-and-Exit to the watch face.
-            confirmed?.let { (activity, labeled) ->
-                LabelConfirmationScreen(activity, labeled.range, labeled.overnight, onDone = onFinish)
+            confirmed?.let { confirmation ->
+                LabelConfirmationScreen(
+                    confirmation.activity,
+                    confirmation.labeled.range,
+                    confirmation.labeled.overnight,
+                    verb = confirmation.verb,
+                    onDone = onFinish
+                )
             }
         }
     }
@@ -411,6 +467,73 @@ private fun LapHeader(lap: LapState, elapsedMs: Long, elapsedColor: Color) {
             letterSpacing = (-0.04).em,
             style = TextStyle(fontFeatureSettings = TABULAR)
         )
+    }
+}
+
+/**
+ * The phone's two repeat buttons: "Still <Activity>" grows the last Record,
+ * "<Activity> again" starts a new one. Side by side to match the Today panel.
+ */
+@Composable
+private fun RepeatActions(
+    last: WearActivity,
+    onStill: () -> Unit,
+    onAgain: () -> Unit
+) {
+    val fill = remember(last.colorHex) {
+        try {
+            Color(android.graphics.Color.parseColor(last.colorHex))
+        } catch (_: Exception) {
+            Fog
+        }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(40.dp)
+                .clip(CircleShape)
+                .background(fill)
+                .clickable(onClick = onStill)
+                .padding(horizontal = 10.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "Still ${last.name}",
+                color = Ink,
+                fontFamily = SpaceGrotesk,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(40.dp)
+                .clip(CircleShape)
+                .border(1.dp, Fog, CircleShape)
+                .clickable(onClick = onAgain)
+                .padding(horizontal = 10.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "${last.name} again",
+                color = Color.White,
+                fontFamily = SpaceGrotesk,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 
@@ -453,6 +576,13 @@ fun ActivityPill(
 
 /** The confirmation's time lines: the range, plus an overnight sum when it crosses 00:00. */
 private data class LabeledSpan(val range: String, val overnight: String? = null)
+
+/** What the brief confirmation shows: the Activity, its span and the verb. */
+private data class LabelConfirmation(
+    val activity: WearActivity,
+    val labeled: LabeledSpan,
+    val verb: String? = null
+)
 
 /**
  * "10:06–10:43": the open Lap's start in its own zone to now in the current

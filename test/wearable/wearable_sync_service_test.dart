@@ -111,6 +111,7 @@ void main() {
 
     test('initialize performs initial sync with the open Lap', () async {
       syncService.initialize();
+      await pumpEventQueue();
 
       expect(methodCalls.length, 1);
       expect(methodCalls.first.method, 'syncLap');
@@ -120,11 +121,13 @@ void main() {
       expect(args['revision'], dayRecorder.lap!.revision);
       expect(args['appliedActionSeq'], 0);
       expect(args['rejectedActionIds'], isEmpty);
-      expect(args.keys, hasLength(6));
+      expect(args['lastActivityId'], isNull);
+      expect(args.keys, hasLength(9));
     });
 
     test('labeling dispatches a fresh Lap snapshot to the watch', () async {
       syncService.initialize();
+      await pumpEventQueue();
       methodCalls.clear();
 
       mockTime += 60000;
@@ -138,13 +141,17 @@ void main() {
       final args = lastCall.arguments as Map;
       expect(args['lapStartedAtEpochMs'], mockTime);
       expect(args['lapStartedTimezoneId'], 'America/Los_Angeles');
-      expect(args.keys, hasLength(6));
+      expect(args['lastActivityId'], 'act-coding');
+      expect(args['lastActivityName'], 'Coding');
+      expect(args['lastActivityColorHex'], '#2563EB');
+      expect(args.keys, hasLength(9));
     });
 
     test(
       'syncActivities dispatches serialized activity list to channel',
       () async {
         syncService.initialize();
+        await pumpEventQueue();
         methodCalls.clear();
 
         final activities = await db.getAllActivities();
@@ -191,6 +198,7 @@ void main() {
         }
 
         syncService.initialize();
+        await pumpEventQueue();
         methodCalls.clear();
 
         await syncService.syncActivities(await db.getAllActivities());
@@ -206,6 +214,7 @@ void main() {
 
     test('tile slots decay older labels instead of dropping them', () async {
       syncService.initialize();
+      await pumpEventQueue();
       methodCalls.clear();
 
       final oldStart = mockTime - Duration(days: 20).inMilliseconds;
@@ -286,6 +295,82 @@ void main() {
       expect(records.first.activityId, isNull);
       expect(records.first.endedAtEpochMs, equals(tappedAt));
       expect(dayRecorder.lap!.startedAtEpochMs, equals(tappedAt));
+    });
+
+    test(
+      'incoming REPEAT labels the Lap with the last Activity again',
+      () async {
+        syncService.initialize();
+        await pumpEventQueue();
+        mockTime += 60000;
+        await dayRecorder.label('act-coding');
+        await pumpEventQueue();
+        final firstEnd = mockTime;
+
+        mockTime += 60000;
+        await receiveWatchAction({
+          'action': 'REPEAT',
+          'timestampEpochMs': mockTime,
+          'zoneId': 'America/Los_Angeles',
+          'actionId': 'evt-repeat',
+          'actionSeq': 1,
+          'deviceId': 'watch-1',
+        });
+
+        final records = await db.getRecords();
+        expect(records, hasLength(2));
+        final repeated = records.first;
+        expect(repeated.activityId, 'act-coding');
+        expect(repeated.startedAtEpochMs, firstEnd);
+        expect(repeated.endedAtEpochMs, mockTime);
+        expect(dayRecorder.lap!.startedAtEpochMs, mockTime);
+      },
+    );
+
+    test('incoming CONTINUE grows the last Record over the Lap', () async {
+      syncService.initialize();
+      await pumpEventQueue();
+      mockTime += 60000;
+      await dayRecorder.label('act-workout');
+      await pumpEventQueue();
+
+      mockTime += 60000;
+      await receiveWatchAction({
+        'action': 'CONTINUE',
+        'timestampEpochMs': mockTime,
+        'zoneId': 'America/Los_Angeles',
+        'actionId': 'evt-still',
+        'actionSeq': 1,
+        'deviceId': 'watch-1',
+      });
+
+      final records = await db.getRecords();
+      expect(records, hasLength(1));
+      expect(records.single.activityId, 'act-workout');
+      expect(records.single.endedAtEpochMs, mockTime);
+      expect(dayRecorder.lap!.startedAtEpochMs, mockTime);
+    });
+
+    test('REPEAT with no earlier Record is rejected', () async {
+      syncService.initialize();
+      await pumpEventQueue();
+      mockTime += 60000;
+      methodCalls.clear();
+
+      await receiveWatchAction({
+        'action': 'REPEAT',
+        'timestampEpochMs': mockTime,
+        'zoneId': 'America/Los_Angeles',
+        'actionId': 'evt-nothing',
+        'actionSeq': 1,
+        'deviceId': 'watch-1',
+      });
+
+      expect(await db.getRecords(), isEmpty);
+      final ack =
+          methodCalls.lastWhere((call) => call.method == 'syncLap').arguments
+              as Map;
+      expect(ack['rejectedActionIds'], contains('evt-nothing'));
     });
 
     test(

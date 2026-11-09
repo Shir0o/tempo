@@ -245,7 +245,7 @@ Night Card, 16px radius: "Logged **Errands** 08:42–10:06" and a lime text butt
 Night background, no top border tint. Selected tab: a lime pill behind the icon, ink icon, white bold label. Unselected: Fog icon and label.
 
 ### Watch
-Label screen on Night: overline "UNTRACKED · 10:06", the elapsed time, then Activity pills in alphabetical order (after the tile's three slots). Confirmation: full lime face with a check, Activity name and range, the per-slice lengths and their sum when the label crossed midnight, then the app finishes. Tile: hatched paper with elapsed time and three Activity squares.
+Label screen on Night: overline "UNTRACKED · 10:06", the elapsed time, then the two repeat buttons for the last Activity — "Still <Activity>" (filled in its colour) and "<Activity> again" (outline) — above Activity pills in alphabetical order (after the tile's three slots). Confirmation: full lime face with a check, the verb (STILL / AGAIN) when the tap was a repeat, Activity name and range, the per-slice lengths and their sum when the label crossed midnight, then the app finishes. Tile: hatched paper with elapsed time and three Activity squares.
 
 ## Do's and Don'ts
 
