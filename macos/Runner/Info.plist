@@ -26,8 +26,6 @@
 	<array>
 		<string>_tempo._tcp</string>
 	</array>
-	<key>NSCameraUsageDescription</key>
-	<string>Tempo scans the pairing code on your phone so it can connect to it over your home network.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Tempo finds your phone on the local network to sync your day. Nothing leaves your home network.</string>
 	<key>NSHumanReadableCopyright</key>

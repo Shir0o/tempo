@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -18,6 +17,7 @@ import 'package:tempo/ui/settings_view.dart';
 class _RecordingSyncClient extends SyncClient {
   int applyCalls = 0;
   int pullCalls = 0;
+  final List<({String host, int port})> manualPeers = [];
 
   _RecordingSyncClient({
     required super.database,
@@ -31,6 +31,11 @@ class _RecordingSyncClient extends SyncClient {
   Future<bool> applyReplicationSetting() async {
     applyCalls++;
     return true;
+  }
+
+  @override
+  void setManualPeer({required String host, required int port}) {
+    manualPeers.add((host: host, port: port));
   }
 
   @override
@@ -92,12 +97,14 @@ class _FakeMobileScannerPlatform extends MobileScannerPlatform {
 class _Phone {
   final TempoDatabase database;
   final DayRecorder recorder;
+  final InMemoryPeerSecretStore secrets;
   final PeerPairing pairing;
   final SyncListener listener;
 
   const _Phone({
     required this.database,
     required this.recorder,
+    required this.secrets,
     required this.pairing,
     required this.listener,
   });
@@ -108,16 +115,6 @@ void main() {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfiNoIsolate;
     MobileScannerPlatform.instance = _FakeMobileScannerPlatform();
-    // The Mac asks its own native side for camera access before drawing the
-    // scanner; without an answer the page stays on its placeholder.
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(
-          const MethodChannel('tempo/camera_permission'),
-          (call) async => switch (call.method) {
-            'status' || 'request' => 'authorized',
-            _ => null,
-          },
-        );
   });
 
   Future<TempoDatabase> openStore() =>
@@ -130,10 +127,8 @@ void main() {
       autoSplitAtMidnight: false,
     );
     await recorder.initialize();
-    final pairing = PeerPairing(
-      database: database,
-      secrets: InMemoryPeerSecretStore(),
-    );
+    final secrets = InMemoryPeerSecretStore();
+    final pairing = PeerPairing(database: database, secrets: secrets);
     final listener = SyncListener(
       database: database,
       dayRecorder: recorder,
@@ -144,6 +139,7 @@ void main() {
     return _Phone(
       database: database,
       recorder: recorder,
+      secrets: secrets,
       pairing: pairing,
       listener: listener,
     );
@@ -188,7 +184,6 @@ void main() {
         syncListener: listener,
         syncClient: client,
         pairing: pairing,
-        lanAddressResolver: () async => '127.0.0.1',
       ),
     );
   }
@@ -232,42 +227,63 @@ void main() {
     expect(phone.listener.isRunning, isFalse);
   });
 
-  testWidgets('pairing from the phone starts the listener and shows a code', (
-    tester,
-  ) async {
-    final phone = await openPhone();
-    addTearDown(() => closePhone(phone));
+  testWidgets(
+    'pairing from the phone starts the listener and opens the scanner',
+    (tester) async {
+      final phone = await openPhone();
+      addTearDown(() => closePhone(phone));
 
-    await tester.pumpWidget(
-      settings(
-        database: phone.database,
-        listener: phone.listener,
-        pairing: phone.pairing,
-        recorder: phone.recorder,
-      ),
-    );
-    await tester.pumpAndSettle();
-    await openDevices(tester);
+      await tester.pumpWidget(
+        settings(
+          database: phone.database,
+          listener: phone.listener,
+          pairing: phone.pairing,
+          recorder: phone.recorder,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await openDevices(tester);
 
-    await tester.tap(find.text('Pair a device'));
-    await letListenerWork(tester);
+      await tester.tap(find.text('Pair a device'));
+      await letListenerWork(tester);
 
-    expect(phone.listener.isRunning, isTrue);
-    expect(find.text('Pair this Mac'), findsOneWidget);
-    expect(find.byType(QrImageView), findsOneWidget);
-    expect(find.text('127.0.0.1'), findsOneWidget);
-    expect(find.text('${phone.listener.boundPort}'), findsOneWidget);
-    expect(find.text('Done'), findsOneWidget);
+      expect(phone.listener.isRunning, isTrue);
+      expect(find.text('Pair this Mac'), findsOneWidget);
+      expect(find.byType(MobileScanner), findsOneWidget);
+      // The phone reads the code; it no longer shows one.
+      expect(find.byType(QrImageView), findsNothing);
 
-    await tester.drag(find.byType(ListView), const Offset(0, -300));
-    await tester.pumpAndSettle();
-    expect(find.text('Revoke all'), findsOneWidget);
+      await tester.tap(find.text('Type the details instead'));
+      await tester.pumpAndSettle();
+      expect(find.text('Store id'), findsOneWidget);
+      expect(find.text('Secret, shown under the code'), findsOneWidget);
 
-    // The server's idle timeout is a timer in the test's fake clock; close it
-    // before the body ends or the binding reports a pending timer.
-    await tester.runAsync(phone.listener.stop);
-    await tester.pumpAndSettle();
-  });
+      // Typing the Mac's details stores the secret for the store it names.
+      final secret = PairingInvite.generateSecret();
+      final fields = find.byType(TextField);
+      await tester.ensureVisible(fields.at(0));
+      await tester.enterText(fields.at(0), 'store-mac');
+      await tester.enterText(fields.at(1), secret);
+      final pairButton = find.widgetWithText(FilledButton, 'Pair this Mac');
+      await tester.ensureVisible(pairButton);
+      await tester.pumpAndSettle();
+      await tester.tap(pairButton);
+      await tester.pumpAndSettle();
+
+      expect(
+        await phone.secrets.read(PeerPairing.peerSecretKey('store-mac')),
+        secret,
+      );
+      // No peer row yet: the Mac has not dialled, so it has no address or id.
+      expect(await phone.database.getPeers(), isEmpty);
+      expect(find.text('Pair this Mac'), findsNothing);
+
+      // The server's idle timeout is a timer in the test's fake clock; close it
+      // before the body ends or the binding reports a pending timer.
+      await tester.runAsync(phone.listener.stop);
+      await tester.pumpAndSettle();
+    },
+  );
 
   testWidgets('replication switch on the Mac updates the client', (
     tester,
@@ -303,7 +319,7 @@ void main() {
     expect(client.applyCalls, 1);
   });
 
-  testWidgets('pairing on the Mac pulls as soon as the phone is adopted', (
+  testWidgets('pairing on the Mac shows a code and dials a typed address', (
     tester,
   ) async {
     final database = await openStore();
@@ -336,24 +352,32 @@ void main() {
     await tester.tap(pairRow);
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Type the details instead'));
-    await tester.pumpAndSettle();
+    expect(find.text('Pair your phone'), findsOneWidget);
+    expect(find.byType(QrImageView), findsOneWidget);
+    expect(find.text('Waiting for your phone\u2026'), findsOneWidget);
+    // Showing the code starts the client, so the phone is adopted the moment
+    // it scans instead of at the next backoff step.
+    expect(client.applyCalls, greaterThanOrEqualTo(1));
 
-    final storeId = (await database.getSyncSettings()).storeId;
+    final manualToggle = find.text('Type the phone\u2019s address instead');
+    await tester.ensureVisible(manualToggle);
+    await tester.pumpAndSettle();
+    await tester.tap(manualToggle);
+    await tester.pumpAndSettle();
     final fields = find.byType(TextField);
+    await tester.ensureVisible(fields.at(0));
     await tester.enterText(fields.at(0), '127.0.0.1');
     await tester.enterText(fields.at(1), '8727');
-    await tester.enterText(fields.at(2), PairingInvite.generateSecret());
-    await tester.enterText(fields.at(3), storeId);
-    await tester.pump();
-
-    final pairButton = find.text('Pair this Mac');
-    await tester.ensureVisible(pairButton);
+    final connect = find.text('Connect');
+    await tester.ensureVisible(connect);
     await tester.pumpAndSettle();
-    await tester.tap(pairButton);
+    await tester.tap(connect);
     await tester.pumpAndSettle();
 
-    expect(client.pullCalls, 1);
-    expect(await database.getPeers(), hasLength(1));
+    expect(client.manualPeers, [(host: '127.0.0.1', port: 8727)]);
+
+    // Leave the page so its poll timer is cancelled.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
   });
 }

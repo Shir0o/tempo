@@ -303,9 +303,14 @@ class SyncListener {
 
   Future<void> _handleSync(HttpRequest request) async {
     final body = await _readBody(request);
-    final deviceId =
-        request.headers.value(deviceHeader) ?? _deviceIdFromBody(body);
-    final authorization = await _authorize(request, deviceId, body);
+    final identity = _identityFromBody(body);
+    final deviceId = request.headers.value(deviceHeader) ?? identity.deviceId;
+    final authorization = await _authorize(
+      request,
+      deviceId,
+      identity.storeId,
+      body,
+    );
     if (!authorization.isAuthorized) {
       throw _HttpFailure(HttpStatus.unauthorized, _reason(authorization));
     }
@@ -350,8 +355,11 @@ class SyncListener {
   }
 
   Future<void> _handleLongPoll(HttpRequest request) async {
-    final deviceId = request.uri.queryParameters['device'] ?? '';
-    final authorization = await _authorize(request, deviceId, '');
+    final deviceId =
+        request.headers.value(deviceHeader) ??
+        request.uri.queryParameters['device'] ??
+        '';
+    final authorization = await _authorize(request, deviceId, '', '');
     if (!authorization.isAuthorized) {
       throw _HttpFailure(HttpStatus.unauthorized, _reason(authorization));
     }
@@ -428,6 +436,7 @@ class SyncListener {
   Future<PeerAuthorization> _authorize(
     HttpRequest request,
     String deviceId,
+    String peerStoreId,
     String body,
   ) async {
     final timestamp = int.tryParse(
@@ -444,6 +453,7 @@ class SyncListener {
     return pairing.authorize(
       deviceId: deviceId,
       ownStoreId: settings.storeId,
+      peerStoreId: peerStoreId,
       timestampEpochMs: timestamp,
       body: body,
       signature: signature,
@@ -514,16 +524,25 @@ class SyncListener {
   int _clampLimit(int limit) =>
       limit <= 0 ? maxPageSize : (limit > maxPageSize ? maxPageSize : limit);
 
-  String _deviceIdFromBody(String body) {
+  /// The identity a signed body declares. An unparsable body yields empty ids
+  /// and is then refused as unauthorized rather than crashing.
+  ({String deviceId, String storeId}) _identityFromBody(String body) {
     try {
       final decoded = jsonDecode(body);
-      if (decoded is Map && decoded['deviceId'] is String) {
-        return decoded['deviceId'] as String;
+      if (decoded is Map) {
+        return (
+          deviceId: decoded['deviceId'] is String
+              ? decoded['deviceId'] as String
+              : '',
+          storeId: decoded['storeId'] is String
+              ? decoded['storeId'] as String
+              : '',
+        );
       }
     } catch (_) {
-      // A malformed body is refused as unauthorized rather than crashing.
+      // Handled by the empty ids below.
     }
-    return '';
+    return (deviceId: '', storeId: '');
   }
 
   Future<void> _json(

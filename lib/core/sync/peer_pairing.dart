@@ -72,27 +72,33 @@ class PlatformPeerSecretStore implements PeerSecretStore {
   }
 }
 
-/// The QR payload the phone shows: `tempo://pair?h=&p=&s=&id=`.
+/// The pairing payload the Mac shows: `tempo://pair?s=&id=`, plus `h` and `p`
+/// when the device showing it is also the one that listens.
 ///
-/// The secret is 256 random bits, base64url without padding. The store id lets
-/// the Mac tell which phone answered, and the host and port are the fallback
-/// for networks that block mDNS.
+/// The secret is 256 random bits, base64url without padding. The store id names
+/// the device that showed the code. A Mac has no listener, so its code carries
+/// neither host nor port; a code that does carry them came from a phone, and
+/// the phone's scanner refuses it rather than pairing two phones by mistake.
 class PairingInvite {
   static const String scheme = 'tempo';
   static const String action = 'pair';
   static const int secretBytes = 32;
 
+  /// Empty when the device showing the code is not a listener.
   final String host;
   final int port;
   final String secret;
   final String storeId;
 
   const PairingInvite({
-    required this.host,
-    required this.port,
+    this.host = '',
+    this.port = 0,
     required this.secret,
     required this.storeId,
   });
+
+  /// Whether the code names a device a client can dial directly.
+  bool get hasEndpoint => host.isNotEmpty && port > 0;
 
   /// A new 256-bit secret, base64url without padding.
   static String generateSecret({Random? random}) {
@@ -111,11 +117,18 @@ class PairingInvite {
     }
   }
 
-  String encode() => Uri(
-    scheme: scheme,
-    host: action,
-    queryParameters: {'h': host, 'p': '$port', 's': secret, 'id': storeId},
-  ).toString();
+  String encode() {
+    final parameters = <String, String>{'s': secret, 'id': storeId};
+    if (hasEndpoint) {
+      parameters['h'] = host;
+      parameters['p'] = '$port';
+    }
+    return Uri(
+      scheme: scheme,
+      host: action,
+      queryParameters: parameters,
+    ).toString();
+  }
 
   factory PairingInvite.decode(String raw) {
     final uri = Uri.tryParse(raw.trim());
@@ -123,25 +136,31 @@ class PairingInvite {
       throw const FormatException('Not a Tempo pairing code.');
     }
     final params = uri.queryParameters;
-    final host = params['h'];
-    final port = int.tryParse(params['p'] ?? '');
     final secret = params['s'];
     final storeId = params['id'];
-    if (host == null ||
-        host.isEmpty ||
-        port == null ||
-        port <= 0 ||
-        port > 65535 ||
-        secret == null ||
-        storeId == null ||
-        storeId.isEmpty) {
+    if (secret == null || storeId == null || storeId.isEmpty) {
       throw const FormatException('A pairing code is missing a field.');
     }
     if (!isValidSecret(secret)) {
       throw const FormatException('A pairing code has an invalid secret.');
     }
+
+    final rawHost = params['h'];
+    final rawPort = params['p'];
+    final hasEndpoint = rawHost != null || rawPort != null;
+    if (!hasEndpoint) {
+      return PairingInvite(secret: secret, storeId: storeId);
+    }
+    final port = int.tryParse(rawPort ?? '');
+    if (rawHost == null ||
+        rawHost.isEmpty ||
+        port == null ||
+        port <= 0 ||
+        port > 65535) {
+      throw const FormatException('A pairing code has an invalid address.');
+    }
     return PairingInvite(
-      host: host,
+      host: rawHost,
       port: port,
       secret: secret,
       storeId: storeId,
@@ -186,13 +205,13 @@ class PeerAuthorization {
   bool get isUnknownPeer => failure == PeerAuthFailure.unknownPeer;
 }
 
-/// Generates and checks pairing secrets, sign requests, and remembers which
-/// client is paired.
+/// Generates and checks pairing secrets, signs requests, and remembers which
+/// device is paired.
 ///
-/// Secrets are keyed by the phone's store id in `peer:<storeId>` on the Mac.
-/// The phone keeps the secret it showed in `invite:<ownStoreId>` until a client
-/// proves it has it, then re-keys it under `peer:<clientDeviceId>` so pairing
-/// each client stays independent and "revoke all" can still clear everything.
+/// The Mac shows a code carrying a secret it generated; the phone scans it and
+/// keeps the secret under `peer:<macStoreId>`. The Mac keeps the same secret
+/// under `invite:<ownStoreId>` until a phone answers it, then re-keys it under
+/// the phone's store id so "revoke all" can still clear everything.
 class PeerPairing {
   /// A request further than this from the phone's clock is refused.
   static const Duration maxClockSkew = Duration(minutes: 5);
@@ -219,10 +238,11 @@ class PeerPairing {
   static String inviteSecretKey(String storeId) =>
       '$inviteSecretPrefix$storeId';
 
-  /// Creates the secret the phone shows and keeps it until a client uses it.
+  /// Creates the secret the Mac shows and keeps it until a phone proves it has
+  /// it. The Mac has no listener, so the code names no address.
   Future<PairingInvite> createInvite({
-    required String host,
-    required int port,
+    String host = '',
+    int port = 0,
     String? storeId,
   }) async {
     final resolvedStoreId = storeId ?? await _ownStoreId();
@@ -239,38 +259,66 @@ class PeerPairing {
     );
   }
 
-  /// Adopts a scanned code on the Mac: stores the phone's secret and records
-  /// the phone as a peer. The phone's device id is not in the code, so the peer
-  /// row is keyed by its store id until an exchange teaches the Mac more.
-  Future<void> pairFromInvite(
-    PairingInvite invite, {
-    String? peerDeviceId,
-    String? host,
-  }) async {
+  /// Adopts the Mac's code on the phone: stores the Mac's secret under the
+  /// store id the code names, so the Mac's first signed request is accepted.
+  ///
+  /// No peer row is written here: the code names no address or device id, and
+  /// the phone records the Mac when its first signed request arrives. A row
+  /// created now would be a second, empty entry for the same Mac.
+  Future<void> pairFromInvite(PairingInvite invite) async {
     await secrets.write(peerSecretKey(invite.storeId), invite.secret);
+  }
+
+  /// The secret for a paired store, on whichever side is dialling.
+  Future<String?> secretForPeerStore(String storeId) =>
+      secrets.read(peerSecretKey(storeId));
+
+  /// The secret the Mac is still waiting for a phone to adopt, if any.
+  Future<String?> pendingInviteSecret() async =>
+      secrets.read(inviteSecretKey(await _ownStoreId()));
+
+  /// Saves the phone this Mac just reached as a paired peer and drops the
+  /// invitation, so later exchanges dial the phone's address directly.
+  Future<void> adoptPeer({
+    required String storeId,
+    required String host,
+    required int port,
+  }) async {
+    if (storeId.isEmpty) return;
+    final ownStoreId = await _ownStoreId();
+    final secret =
+        await secrets.read(inviteSecretKey(ownStoreId)) ??
+        await secrets.read(peerSecretKey(storeId));
+    if (secret == null) return;
+    await secrets.write(peerSecretKey(storeId), secret);
+    await secrets.delete(inviteSecretKey(ownStoreId));
     await database.upsertPeer(
       SyncPeer(
-        peerDeviceId: peerDeviceId ?? invite.storeId,
-        storeId: invite.storeId,
-        host: host ?? invite.host,
-        port: invite.port,
+        peerDeviceId: storeId,
+        storeId: storeId,
+        host: host,
+        port: port,
         lastSeenEpochMs: _nowUtcMs(),
       ),
     );
   }
 
-  /// The secret for a phone store, on the Mac side.
-  Future<String?> secretForPeerStore(String storeId) =>
-      secrets.read(peerSecretKey(storeId));
-
-  /// The secret used to authorize a request on the phone side: the client's
-  /// own key once it has paired, otherwise the invitation still in force.
+  /// The secret used to authorize a request: the client's own key once it has
+  /// paired, the key of the store that signed, or the invitation still in
+  /// force on this side.
   Future<String?> secretForDevice(
     String deviceId, {
     required String ownStoreId,
-  }) async =>
-      await secrets.read(peerSecretKey(deviceId)) ??
-      await secrets.read(inviteSecretKey(ownStoreId));
+    String? peerStoreId,
+  }) async {
+    final direct = await secrets.read(peerSecretKey(deviceId));
+    if (direct != null) return direct;
+    if (peerStoreId != null && peerStoreId.isNotEmpty) {
+      final byStore = await secrets.read(peerSecretKey(peerStoreId));
+      if (byStore != null) return byStore;
+    }
+    return secrets.read(inviteSecretKey(ownStoreId));
+  }
 
   /// Checks one request's timestamp and HMAC, re-keying the invitation under
   /// the client's device id on its first successful use.
@@ -280,9 +328,14 @@ class PeerPairing {
     required int timestampEpochMs,
     required String body,
     required String signature,
+    String? peerStoreId,
     int? nowUtcMs,
   }) async {
-    final secret = await secretForDevice(deviceId, ownStoreId: ownStoreId);
+    final secret = await secretForDevice(
+      deviceId,
+      ownStoreId: ownStoreId,
+      peerStoreId: peerStoreId,
+    );
     if (secret == null) {
       return const PeerAuthorization.refused(PeerAuthFailure.unknownPeer);
     }

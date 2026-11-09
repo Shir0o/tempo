@@ -231,8 +231,8 @@ The Mac shows a pending intent as an outlined Record at its tapped time, a confi
 ### Transport and pairing
 
 - The phone runs the HTTP server on a fixed port and advertises `_tempo._tcp` over Bonjour. The Mac browses and dials.
-- Pairing: the **phone displays** the QR `tempo://pair?h=<host>&p=<port>&s=<secret>&id=<storeId>`; the **Mac scans** it. The fallback for networks that block mDNS is typing host, secret, and store id, shown as text on the phone.
-- Permissions: the phone needs multicast for advertising only and no camera. The Mac needs the camera usage string and the camera entitlement for scanning.
+- Pairing: the **Mac displays** the QR `tempo://pair?s=<secret>&id=<storeId>`; the **phone scans** it. The code carries no address, because the Mac has no listener. The Mac keeps the secret and finds the phone over mDNS; the first answered exchange adopts the phone and stores its address. On networks that block mDNS, the Mac's pairing page accepts the phone's host and port, typed beside the code. The store id and secret are also shown as text, so the phone can type them instead of scanning.
+- Permissions: the phone needs the camera to scan and multicast for advertising. The Mac needs neither: it renders the code and dials.
 - Requests are `POST /sync` with `{deviceId, storeId, logEpoch, appliedSeq, limit, intents}` and `HMAC-SHA256(secret, timestamp || body)`. Skew beyond five minutes is refused.
 - The Mac also holds `GET /changes?since=<seq>&limit=<n>` open for up to 25 seconds; the phone completes it as soon as a change exists. This is what makes the two-second goal reachable. The 30-second poll remains as a fallback when long-polling fails.
 - The response carries `{storeId, logEpoch, changes, intentResults, more}`.
@@ -448,22 +448,22 @@ Each stage is shippable and testable on its own. Paths are relative to the repos
 #### 12. `macos/Runner/Info.plist` (Modify)
 
 - **Type / Scope**: macOS configuration.
-- **Proposed Changes**: Add `NSBonjourServices` for `_tempo._tcp`, `NSLocalNetworkUsageDescription`, and `NSCameraUsageDescription` for pairing.
+- **Proposed Changes**: Add `NSBonjourServices` for `_tempo._tcp` and `NSLocalNetworkUsageDescription`. No camera usage string: the phone scans, the Mac displays.
 
 #### 13. `macos/Runner/DebugProfile.entitlements` and `Release.entitlements` (Modify)
 
 - **Type / Scope**: macOS sandbox.
-- **Proposed Changes**: Add `com.apple.security.files.bookmarks.app-scope` and `com.apple.security.device.camera`. Keep network-client, user-selected read-write, network-server, and the user-selected read-write entry already present.
+- **Proposed Changes**: Add `com.apple.security.files.bookmarks.app-scope` only. Keep network-client, user-selected read-write, network-server, and the user-selected read-write entry already present. No camera entitlement: the Mac never scans.
 
 #### 14. `macos/Runner/AppDelegate.swift` (Modify)
 
 - **Type / Scope**: Native host.
-- **Proposed Changes**: Add MethodChannels for destination picking and bookmark resolution. No QR rendering: the Mac scans with Flutter code and the phone displays.
+- **Proposed Changes**: Add MethodChannels for destination picking and bookmark resolution. No QR rendering channel and no camera channel: the Mac renders the code in Flutter and the phone scans it.
 
 #### 15. `android/app/src/main/AndroidManifest.xml` (Modify)
 
 - **Type / Scope**: Android configuration.
-- **Proposed Changes**: Add `CHANGE_WIFI_MULTICAST_STATE` and `ACCESS_NETWORK_STATE` for mDNS advertising. No camera permission: the phone displays the QR and never scans.
+- **Proposed Changes**: Add `CHANGE_WIFI_MULTICAST_STATE`, `ACCESS_NETWORK_STATE`, and `CAMERA` for mDNS advertising and the pairing scan.
 
 #### 16. `android/app/src/main/kotlin/com/tempos/tracker/BackupDestinationChannel.kt` (Create)
 
@@ -606,12 +606,12 @@ Each stage is shippable and testable on its own. Paths are relative to the repos
 #### 42. `lib/ui/dashboard_view.dart`, `lib/ui/history_view.dart`, `lib/desktop/ui/quick_popover_view.dart`, `lib/desktop/menu_bar_service.dart` (Modify) and `lib/desktop/pairing_view.dart` (Create)
 
 - **Type / Scope**: UI.
-- **Proposed Changes**: Route mutations through `RecordCommands`; render pending intents as outlined Records, rejected ones with their reason and a "place at now" action; add the pairing flow in `pairing_view.dart` (the phone displays, the Mac scans with `mobile_scanner`), the client list, cursors, counters, and disconnect. `lib/ui/settings_view.dart` gains the Sync section here, not in Stage 1.
+- **Proposed Changes**: Route mutations through `RecordCommands`; render pending intents as outlined Records, rejected ones with their reason and a "place at now" action; add the pairing flow in `pairing_view.dart` (the Mac displays with `qr_flutter`, the phone scans with `mobile_scanner`), the client list, cursors, counters, and disconnect. `lib/ui/settings_view.dart` gains the Sync section here, not in Stage 1.
 
 #### 43. `pubspec.yaml` (Modify)
 
 - **Type / Scope**: Dependencies.
-- **Proposed Changes**: Add `bonsoir` for mDNS, `qr_flutter` for the phone's display, and `mobile_scanner` for the Mac's scan. Pin resolved versions in `pubspec.lock`; state licences before landing. No other dependencies.
+- **Proposed Changes**: Add `bonsoir` for mDNS, `qr_flutter` for the Mac's display, and `mobile_scanner` for the phone's scan. Pin resolved versions in `pubspec.lock`; state licences before landing. No other dependencies.
 
 #### 44. `test/sync/replication_test.dart` (Create)
 

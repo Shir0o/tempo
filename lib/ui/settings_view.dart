@@ -46,10 +46,6 @@ class SettingsView extends StatefulWidget {
   /// offers "Pair a device" and the replication switch drives the listener.
   final SyncListener? syncListener;
 
-  /// Resolves the phone's LAN address for the pairing code. Overridable so a
-  /// test does not depend on the runner's network interfaces.
-  final Future<String?> Function()? lanAddressResolver;
-
   /// The Mac's pairing, for disconnecting a client and revoking all.
   final PeerPairing? pairing;
 
@@ -69,7 +65,6 @@ class SettingsView extends StatefulWidget {
     this.exportEngine,
     this.syncClient,
     this.syncListener,
-    this.lanAddressResolver,
     this.pairing,
     this.todayOrder,
     this.catalogRevision,
@@ -315,24 +310,22 @@ class _SettingsViewState extends State<SettingsView> {
     }
   }
 
-  /// The Mac's side: scans the phone's code and, once adopted, exchanges at
-  /// once so the replica starts filling instead of waiting for the loop.
+  /// The Mac's side: shows the code the phone scans and, once a phone answers,
+  /// exchanges at once so the replica starts filling.
   Future<void> _openPairing() async {
     final pairing = widget.pairing;
-    if (pairing == null) return;
+    final client = widget.syncClient;
+    if (pairing == null || client == null) return;
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => PairingView(
-          pairing: pairing,
-          onPaired: (_) => unawaited(_pullAfterPairing()),
-        ),
+        builder: (_) => MacPairingView(pairing: pairing, client: client),
       ),
     );
-    await _loadSyncDiagnostics();
+    await _pullAfterPairing();
   }
 
-  /// The phone's side: the listener must be bound before the code is drawn, so
-  /// the invite carries a port the Mac can dial.
+  /// The phone's side: the listener must be bound and advertised before the
+  /// Mac's code can be scanned, so the Mac finds this phone immediately.
   Future<void> _openPhonePairing() async {
     final listener = widget.syncListener;
     final pairing = widget.pairing;
@@ -340,95 +333,54 @@ class _SettingsViewState extends State<SettingsView> {
 
     setState(() => _isProcessing = true);
     try {
-      // The Mac can only reach this phone while the listener runs, so showing
-      // a code turns replication on instead of stopping the server as soon as
-      // the view closes.
+      // The Mac can only reach this phone while the listener runs, so pairing
+      // turns replication on instead of stopping the server after the scan.
       await widget.database.setSetting(
         SyncSettingKeys.replicateEnabled,
         'true',
       );
-      final port = listener.isRunning
-          ? listener.boundPort
-          : await listener.start();
-      final resolved = await (widget.lanAddressResolver ?? _lanAddressFor)();
-      final host = resolved != null && resolved.isNotEmpty
-          ? resolved
-          : (listener.host == SyncListener.defaultHost
-                ? '127.0.0.1'
-                : listener.host);
+      await listener.start();
       if (!mounted) return;
 
       await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => PairingInviteView(
-            pairing: pairing,
-            host: host,
-            port: port,
-            onRevokeAll: pairing.revokeAll,
-          ),
-        ),
+        MaterialPageRoute(builder: (_) => PhonePairingView(pairing: pairing)),
       );
       await _loadSyncDiagnostics();
     } catch (e) {
       // A port already in use, or a listener that cannot bind, is the usual
-      // reason no code can be shown; say which rather than staying silent.
+      // reason no code can be scanned; say which rather than staying silent.
       _setStatus('Replication is not running: $e');
     } finally {
       if (mounted) setState(() => _isProcessing = false);
     }
   }
 
-  /// The phone's LAN address, skipping the addresses a Mac cannot dial.
-  static Future<String?> _lanAddressFor() async {
-    try {
-      final interfaces = await NetworkInterface.list(
-        type: InternetAddressType.IPv4,
-        includeLoopback: false,
-        includeLinkLocal: false,
-      );
-      for (final interface in interfaces) {
-        for (final address in interface.addresses) {
-          if (!address.isLoopback && !address.isLinkLocal) {
-            return address.address;
-          }
-        }
-      }
-    } catch (_) {
-      // No interfaces readable; the caller falls back to the bind host.
-    }
-    return null;
-  }
-
+  /// Called when the pairing page closes: turns replication on, exchanges once
+  /// if a phone answered, and reloads the rows. Closing without a scan pairs
+  /// nothing and must not claim that it did.
   Future<void> _pullAfterPairing() async {
-    // Pairing exists only to sync, so adopting a code turns replication on.
-    // Leaving it off is what lets Settings say "paired" while the phone never
-    // hears from this Mac.
-    try {
-      await widget.database.setSetting(
-        SyncSettingKeys.replicateEnabled,
-        'true',
-      );
-    } catch (_) {
-      // The pull below still runs once; the switch reports the real state.
-    }
-
     final client = widget.syncClient;
-    if (client == null) {
-      await _loadSyncDiagnostics();
-      return;
-    }
-    await client.applyReplicationSetting();
+    if (client == null) return;
     try {
-      await client.pull();
-      _setStatus('Paired. The first exchange is done.');
-    } catch (e) {
-      // Pairing is stored even when the phone is not answering yet; the client
-      // keeps trying, so this is a waiting message rather than a failure.
-      _setStatus(
-        'Paired on this Mac. Waiting for the phone: $e. '
-        'Keep Tempo open there, and allow Tempo under System Settings → '
-        'Privacy & Security → Local Network.',
-      );
+      await client.enableReplication();
+    } catch (_) {
+      // The pull below still runs when a phone did answer; the switch reports
+      // the real state.
+    }
+    if ((await client.pairedPeerStores()).isNotEmpty) {
+      try {
+        await client.pull();
+        _setStatus('Paired. The first exchange is done.');
+      } catch (e) {
+        // Pairing is stored even when the phone is not answering yet; the
+        // client keeps trying, so this is a waiting message rather than a
+        // failure.
+        _setStatus(
+          'Paired on this Mac. Waiting for the phone: $e. '
+          'Keep Tempo open there, and allow Tempo under System Settings → '
+          'Privacy & Security → Local Network.',
+        );
+      }
     }
     await _loadSyncDiagnostics();
   }
@@ -1273,7 +1225,9 @@ class _SettingsViewState extends State<SettingsView> {
     final pairedRows = <Widget>[
       for (final peer in _peers)
         _SettingsRow(
-          title: peer.host,
+          title: peer.host.isEmpty
+              ? 'store ${_shortStoreId(peer.storeId)}'
+              : peer.host,
           subtitle:
               'store ${_shortStoreId(peer.storeId)} · last seen '
               '${_formatBackupTime(peer.lastSeenEpochMs)}',
@@ -1287,7 +1241,7 @@ class _SettingsViewState extends State<SettingsView> {
       if (isPhone)
         _SettingsRow(
           title: _peers.isEmpty ? 'Pair a device' : 'Pair another device',
-          subtitle: 'Show a code the Mac scans once',
+          subtitle: 'Scan the code Tempo shows on the Mac',
           onTap: widget.pairing == null || _isProcessing
               ? null
               : _openPhonePairing,
@@ -1297,14 +1251,18 @@ class _SettingsViewState extends State<SettingsView> {
           title: 'Pair a phone',
           subtitle: widget.pairing == null
               ? 'Not paired yet'
-              : 'Scan the code Tempo shows on the phone',
-          onTap: widget.pairing == null ? null : _openPairing,
+              : 'Show a code your phone scans once',
+          onTap: widget.pairing == null || widget.syncClient == null
+              ? null
+              : _openPairing,
         ),
       if (!isPhone && widget.pairing != null && _peers.isNotEmpty)
         _SettingsRow(
           title: 'Pair another phone',
-          subtitle: 'Scan the code Tempo shows on the phone',
-          onTap: _syncLoading ? null : _openPairing,
+          subtitle: 'Show a code your phone scans once',
+          onTap: _syncLoading || widget.syncClient == null
+              ? null
+              : _openPairing,
         ),
     ];
 
