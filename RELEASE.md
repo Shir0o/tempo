@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.17.0](https://github.com/Shir0o/tempo/compare/v1.16.0...v1.17.0) (2026-11-09)
+
+
+### Features
+
+* **activities:** add emoji tools and pinned suggestions ([#117](https://github.com/Shir0o/tempo/issues/117)) ([0e56eb6](https://github.com/Shir0o/tempo/commit/0e56eb66584349b26cc92501edcd4e2edf4593f7))
+
+
+### Bug Fixes
+
+* **sync:** make macOS pairing ask for the camera and actually connect ([#118](https://github.com/Shir0o/tempo/issues/118)) ([f8bd757](https://github.com/Shir0o/tempo/commit/f8bd7571cf2ad30e5db677faeec81e03808ac9fc))
+
 ## [1.16.0](https://github.com/Shir0o/tempo/compare/v1.15.1...v1.16.0) (2026-11-09)
 
 
