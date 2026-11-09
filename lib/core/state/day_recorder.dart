@@ -166,6 +166,143 @@ class DayRecorder {
         ),
       );
 
+  /// Labels the stretch of an already-closed Day that ends at [atEpochMs].
+  ///
+  /// A watch label is durable and may arrive after a MidnightSplit has moved
+  /// the open Lap past the instant it was tapped. That night still belongs to
+  /// the Day it was lived in, so this labels the contiguous stretch since the
+  /// last labelled Record (including untracked MidnightSplit halves) up to the
+  /// tap, and leaves the time after the tap Untracked. The open Lap is not
+  /// moved.
+  ///
+  /// Returns null when the instant is not inside a closed, unlabelled span, so
+  /// the caller refuses the action instead of overwriting an Activity the phone
+  /// already recorded.
+  Future<Record?> labelClosedSpan(
+    String activityId, {
+    required int atEpochMs,
+    String? atZoneId,
+    String comment = '',
+    List<String> tags = const [],
+    String? intentId,
+  }) => _synchronized(
+    () => _labelClosedSpanLocked(
+      activityId,
+      atEpochMs: atEpochMs,
+      atZoneId: atZoneId,
+      comment: comment,
+      tags: tags,
+      intentId: intentId,
+    ),
+  );
+
+  Future<Record?> _labelClosedSpanLocked(
+    String activityId, {
+    required int atEpochMs,
+    String? atZoneId,
+    String comment = '',
+    List<String> tags = const [],
+    String? intentId,
+  }) async {
+    await _ensureInitializedLocked();
+    final now = _nowUtcMs();
+    if (atEpochMs >= now) return null;
+
+    if (await _db.getActivityById(activityId) == null) {
+      throw ArgumentError('Activity with id "$activityId" does not exist.');
+    }
+
+    final target = await _closedSpanEndingAt(atEpochMs);
+    if (target == null ||
+        target.activityId != null ||
+        atEpochMs <= target.startedAtEpochMs ||
+        atEpochMs > target.endedAtEpochMs) {
+      return null;
+    }
+
+    final endTimezoneId = atZoneId ?? target.endTimezoneId;
+    final labelled = target
+        .copyWith(
+          endedAtEpochMs: atEpochMs,
+          endTimezoneId: endTimezoneId,
+          updatedAtEpochMs: now,
+        )
+        .withActivity(activityId);
+    final remainder = atEpochMs == target.endedAtEpochMs
+        ? null
+        : target.copyWith(
+            id: _generateId(),
+            startedAtEpochMs: atEpochMs,
+            timezoneId: endTimezoneId,
+            createdAtEpochMs: now,
+            updatedAtEpochMs: now,
+          );
+
+    // The earlier Days of the same unlabelled span join the label, exactly as
+    // a label on the open Lap absorbs its trailing MidnightSplit halves.
+    final absorbed = await _trailingMidnightSplits(target.startedAtEpochMs);
+    final effectiveTags = await _tagIdsWithPeople(tags, comment);
+    final labelledSpan = [
+      labelled.copyWith(
+        comment: comment,
+        tagIds: List.unmodifiable(effectiveTags),
+      ),
+      for (final record in absorbed)
+        record
+            .withActivity(activityId)
+            .copyWith(
+              comment: comment,
+              tagIds: List.unmodifiable(effectiveTags),
+              updatedAtEpochMs: now,
+            ),
+    ];
+
+    await _db.db.transaction((txn) async {
+      for (final record in labelledSpan) {
+        await _updateRecordInTxn(txn, record);
+        await _appendRecordUpsert(txn, record, now);
+      }
+      if (remainder != null) {
+        await _insertRecordInTxn(txn, remainder);
+        await _appendRecordUpsert(txn, remainder, now);
+      }
+      if (intentId != null) {
+        await _markIntentInTxn(
+          txn,
+          intentId,
+          IntentResult.applied(
+            entityId: labelled.id,
+            appliedAtEpochMs: atEpochMs,
+          ),
+        );
+      }
+    });
+
+    _lastOperation = _UndoSnapshot(
+      writtenRecords: remainder == null ? const <Record>[] : [remainder],
+      previousRecords: [target, ...absorbed],
+      previousLap: _lapNotifier.value!,
+      armedAtEpochMs: now,
+    );
+    for (final record in labelledSpan) {
+      await _notifyRecordCommitted(record);
+    }
+    if (remainder != null) {
+      await _notifyRecordCommitted(remainder);
+    }
+    await _requestExport();
+    await _armMidnightTimer();
+    return labelledSpan.first;
+  }
+
+  /// The closed Record covering the instant just before [epochMs]: the stretch
+  /// that would have been the open Lap. A Record that starts exactly at
+  /// [epochMs] is not it, so a boundary already there is not re-split.
+  Future<Record?> _closedSpanEndingAt(int epochMs) async {
+    final spans = await _recordsOverlapping(epochMs - 1, epochMs);
+    return spans.isEmpty ? null : spans.last;
+  }
+
   /// Labels an existing Record, including an Untracked one, with [activityId].
   /// Passing null turns a labelled Record back into an Untracked Record.
   Future<Record> relabel(String recordId, String? activityId) =>

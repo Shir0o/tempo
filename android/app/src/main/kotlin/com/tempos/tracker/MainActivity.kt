@@ -9,7 +9,6 @@ import android.util.Log
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
-import com.google.android.gms.wearable.DataMap
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.MessageClient
 import com.google.android.gms.wearable.MessageEvent
@@ -43,6 +42,7 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
         const val PATH_ACTIVITIES = "/tempo/activities"
         const val PATH_ACTIONS_PREFIX = "/tempo/actions/"
         const val PATH_ACTION_RPC = "/tempo/action"
+        const val PATH_PING = "/tempo/ping"
         private const val REQUEST_POST_NOTIFICATIONS = 1
 
         @Volatile
@@ -78,6 +78,15 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
             when (call.method) {
                 "syncLap" -> handleSyncLap(call, result)
                 "syncActivities" -> handleSyncActivities(call, result)
+                // Actions buffered while the Flutter engine was not running.
+                "drainPendingWatchActions" ->
+                    result.success(WatchActionInbox.drain(applicationContext))
+                // Ask every connected watch to re-send anything it still has
+                // queued, so labels taken with the phone closed land now.
+                "pingWatch" -> {
+                    pingWatch()
+                    result.success(true)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -265,19 +274,9 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
             if (event.type == DataEvent.TYPE_CHANGED) {
                 val path = event.dataItem.uri.path ?: continue
                 if (path.startsWith(PATH_ACTIONS_PREFIX)) {
-                    val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
-                    val action = dataMap.getString("action") ?: continue
-                    forwardActionToFlutter(
-                        mapOf(
-                            "action" to action,
-                            "activityId" to optionalString(dataMap, "activityId"),
-                            "timestampEpochMs" to dataMap.getLong("timestampEpochMs", System.currentTimeMillis()),
-                            "zoneId" to optionalString(dataMap, "zoneId"),
-                            "actionId" to optionalString(dataMap, "actionId"),
-                            "actionSeq" to dataMap.getLong("actionSeq", 0L),
-                            "deviceId" to optionalString(dataMap, "deviceId"),
-                            "undoesActionId" to optionalString(dataMap, "undoesActionId"),
-                            "comment" to optionalString(dataMap, "comment")
+                    dispatchWatchAction(
+                        WatchActionInbox.fromDataMap(
+                            DataMapItem.fromDataItem(event.dataItem).dataMap
                         )
                     )
                 }
@@ -289,32 +288,70 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
         if (messageEvent.path == PATH_ACTION_RPC) {
             try {
                 val json = JSONObject(String(messageEvent.data, Charsets.UTF_8))
-                forwardActionToFlutter(
-                    mapOf(
-                        "action" to json.getString("action"),
-                        "activityId" to json.optString("activityId").ifEmpty { null },
-                        "timestampEpochMs" to json.optLong("timestampEpochMs", System.currentTimeMillis()),
-                        "zoneId" to json.optString("zoneId").ifEmpty { null },
-                        "actionId" to json.optString("actionId").ifEmpty { null },
-                        "actionSeq" to json.optLong("actionSeq", 0L),
-                        "deviceId" to json.optString("deviceId").ifEmpty { null },
-                        "undoesActionId" to json.optString("undoesActionId").ifEmpty { null },
-                        "comment" to json.optString("comment").ifEmpty { null }
-                    )
-                )
+                dispatchWatchAction(WatchActionInbox.fromMessage(json))
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to parse RPC message action", e)
             }
         }
     }
 
-    private fun optionalString(dataMap: DataMap, key: String): String? =
-        if (dataMap.containsKey(key)) dataMap.getString(key) else null
-
-    private fun forwardActionToFlutter(payload: Map<String, Any?>) {
+    /**
+     * Hands [payload] to the Dart side, keeping a durable copy until Dart
+     * confirms it applied the action. Returns false when this Activity has no
+     * engine yet, so the caller can leave the action in the inbox.
+     */
+    fun dispatchWatchAction(payload: Map<String, Any?>): Boolean {
+        if (payload["action"] == null) return false
+        val actionId = payload["actionId"] as? String
+        // Durable before anything else: an action the engine cannot take yet
+        // must still survive until Dart can drain it.
+        WatchActionInbox.append(applicationContext, payload)
+        val channel = methodChannel ?: return false
         runOnUiThread {
-            Log.d(TAG, "Forwarding watch action to Flutter: ${payload["action"]}")
-            methodChannel?.invokeMethod("onWatchActionReceived", payload)
+            channel.invokeMethod(
+                "onWatchActionReceived",
+                payload,
+                object : MethodChannel.Result {
+                    override fun success(result: Any?) {
+                        WatchActionInbox.remove(applicationContext, actionId)
+                    }
+
+                    override fun error(
+                        errorCode: String,
+                        errorMessage: String?,
+                        errorDetails: Any?
+                    ) {
+                        Log.w(
+                            TAG,
+                            "Watch action $actionId not applied: $errorCode $errorMessage"
+                        )
+                    }
+
+                    override fun notImplemented() {
+                        // The Dart handler is not registered yet; it will drain
+                        // the inbox once it is.
+                    }
+                }
+            )
+        }
+        return true
+    }
+
+    /** Asks every connected node to flush its pending watch actions. */
+    private fun pingWatch() {
+        scope.launch {
+            try {
+                val nodes = Wearable.getNodeClient(this@MainActivity)
+                    .connectedNodes
+                    .await()
+                for (node in nodes) {
+                    Wearable.getMessageClient(this@MainActivity)
+                        .sendMessage(node.id, PATH_PING, ByteArray(0))
+                        .await()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Watch ping skipped: ${e.message}")
+            }
         }
     }
 }
