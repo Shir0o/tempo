@@ -253,6 +253,7 @@ class PeerPairing {
         peerDeviceId: peerDeviceId ?? invite.storeId,
         storeId: invite.storeId,
         host: host ?? invite.host,
+        port: invite.port,
         lastSeenEpochMs: _nowUtcMs(),
       ),
     );

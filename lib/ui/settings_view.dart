@@ -117,6 +117,7 @@ class _SettingsViewState extends State<SettingsView> {
     _loadExportSettings();
     _loadBackupSettings();
     _loadSyncDiagnostics();
+    widget.syncListener?.peersRevision.addListener(_onPeersChanged);
     widget.todayOrder?.addListener(_onTodayOrderChanged);
   }
 
@@ -128,6 +129,7 @@ class _SettingsViewState extends State<SettingsView> {
 
   @override
   void dispose() {
+    widget.syncListener?.peersRevision.removeListener(_onPeersChanged);
     widget.todayOrder?.removeListener(_onTodayOrderChanged);
     _revision.dispose();
     super.dispose();
@@ -146,6 +148,12 @@ class _SettingsViewState extends State<SettingsView> {
 
   void _onTodayOrderChanged() {
     if (mounted) setState(() {});
+  }
+
+  /// A Mac paired while this page was open: re-read the peers so it appears
+  /// without leaving Settings and coming back.
+  void _onPeersChanged() {
+    if (mounted) unawaited(_loadSyncDiagnostics());
   }
 
   /// Tells the Today page that its catalog changed elsewhere.
@@ -332,6 +340,13 @@ class _SettingsViewState extends State<SettingsView> {
 
     setState(() => _isProcessing = true);
     try {
+      // The Mac can only reach this phone while the listener runs, so showing
+      // a code turns replication on instead of stopping the server as soon as
+      // the view closes.
+      await widget.database.setSetting(
+        SyncSettingKeys.replicateEnabled,
+        'true',
+      );
       final port = listener.isRunning
           ? listener.boundPort
           : await listener.start();
@@ -385,18 +400,35 @@ class _SettingsViewState extends State<SettingsView> {
   }
 
   Future<void> _pullAfterPairing() async {
+    // Pairing exists only to sync, so adopting a code turns replication on.
+    // Leaving it off is what lets Settings say "paired" while the phone never
+    // hears from this Mac.
+    try {
+      await widget.database.setSetting(
+        SyncSettingKeys.replicateEnabled,
+        'true',
+      );
+    } catch (_) {
+      // The pull below still runs once; the switch reports the real state.
+    }
+
     final client = widget.syncClient;
     if (client == null) {
       await _loadSyncDiagnostics();
       return;
     }
+    await client.applyReplicationSetting();
     try {
       await client.pull();
       _setStatus('Paired. The first exchange is done.');
     } catch (e) {
-      // Pairing succeeded even when the phone is not answering yet; the client
+      // Pairing is stored even when the phone is not answering yet; the client
       // keeps trying, so this is a waiting message rather than a failure.
-      _setStatus('Paired. Waiting for the phone: $e');
+      _setStatus(
+        'Paired on this Mac. Waiting for the phone: $e. '
+        'Keep Tempo open there, and allow Tempo under System Settings → '
+        'Privacy & Security → Local Network.',
+      );
     }
     await _loadSyncDiagnostics();
   }

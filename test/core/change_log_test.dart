@@ -205,7 +205,7 @@ void main() {
       final db = await TempoDatabase.open(path: dbPath);
       addTearDown(db.close);
 
-      expect(TempoDatabase.databaseVersion, 11);
+      expect(TempoDatabase.databaseVersion, 12);
       final changes = await db.changesAfter(0);
       expect(changes, hasLength(5));
       expect(await db.highestChangeSeq(), 5);

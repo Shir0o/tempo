@@ -679,15 +679,21 @@ class ProcessedIntent {
 /// A paired client's identity and address. Pairing secrets live in platform
 /// secure storage, never here.
 class SyncPeer {
+  /// The port a phone's replication listener binds, and the one a pairing row
+  /// falls back to when it carries none.
+  static const int defaultPort = 8727;
+
   final String peerDeviceId;
   final String storeId;
   final String host;
+  final int port;
   final int lastSeenEpochMs;
 
   const SyncPeer({
     required this.peerDeviceId,
     required this.storeId,
     required this.host,
+    this.port = defaultPort,
     required this.lastSeenEpochMs,
   });
 
@@ -695,6 +701,7 @@ class SyncPeer {
     'peer_device_id': peerDeviceId,
     'store_id': storeId,
     'host': host,
+    'port': port,
     'last_seen_epoch_ms': lastSeenEpochMs,
   };
 
@@ -702,12 +709,14 @@ class SyncPeer {
     peerDeviceId: map['peer_device_id'] as String,
     storeId: map['store_id'] as String,
     host: map['host'] as String,
+    port: map['port'] as int? ?? defaultPort,
     lastSeenEpochMs: map['last_seen_epoch_ms'] as int,
   );
 
   @override
   String toString() =>
-      'SyncPeer(peerDeviceId: $peerDeviceId, storeId: $storeId, host: $host)';
+      'SyncPeer(peerDeviceId: $peerDeviceId, storeId: $storeId, '
+      'host: $host:$port)';
 }
 
 /// The eight settings seeded at v10, read and written as one record.

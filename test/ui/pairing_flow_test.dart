@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -107,6 +108,16 @@ void main() {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfiNoIsolate;
     MobileScannerPlatform.instance = _FakeMobileScannerPlatform();
+    // The Mac asks its own native side for camera access before drawing the
+    // scanner; without an answer the page stays on its placeholder.
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('tempo/camera_permission'),
+          (call) async => switch (call.method) {
+            'status' || 'request' => 'authorized',
+            _ => null,
+          },
+        );
   });
 
   Future<TempoDatabase> openStore() =>

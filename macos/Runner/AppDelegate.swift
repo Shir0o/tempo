@@ -1,4 +1,5 @@
 import Cocoa
+import AVFoundation
 import FlutterMacOS
 import Carbon
 import Security
@@ -10,6 +11,7 @@ class AppDelegate: FlutterAppDelegate {
   private var deepLinkChannel: FlutterMethodChannel?
   private var backupDestinationChannel: FlutterMethodChannel?
   private var pairingSecretsChannel: FlutterMethodChannel?
+  private var cameraChannel: FlutterMethodChannel?
   private var pendingDeepLink: String?
   private var hotKeyRef: EventHotKeyRef?
   private var currentDisplayMode: String = "full"
@@ -191,6 +193,37 @@ class AppDelegate: FlutterAppDelegate {
     }
     self.pairingSecretsChannel = pairingChannel
 
+    // The camera is never granted by default: a sandboxed Mac app must ask
+    // with AVCaptureDevice.requestAccess before it touches the device.
+    // mobile_scanner's macOS start opens the capture session without asking,
+    // so the prompt is owned here, before the scanner is drawn.
+    let camera = FlutterMethodChannel(
+      name: "tempo/camera_permission",
+      binaryMessenger: messenger
+    )
+    camera.setMethodCallHandler { (call, result) in
+      switch call.method {
+      case "status":
+        result(AppDelegate.cameraAuthorization())
+      case "request":
+        AVCaptureDevice.requestAccess(for: .video) { _ in
+          DispatchQueue.main.async {
+            result(AppDelegate.cameraAuthorization())
+          }
+        }
+      case "openSettings":
+        if let url = URL(
+          string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera"
+        ) {
+          NSWorkspace.shared.open(url)
+        }
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    self.cameraChannel = camera
+
     if let pending = pendingDeepLink {
       linkChannel.invokeMethod("onDeepLinkReceived", arguments: ["url": pending])
       pendingDeepLink = nil
@@ -260,6 +293,25 @@ class AppDelegate: FlutterAppDelegate {
     } catch {
       NSLog("Tempo: could not resolve the backup destination bookmark: \(error)")
       return nil
+    }
+  }
+
+  // MARK: - Camera authorization
+
+  /// How macOS currently sees this app's camera access, in the words the Dart
+  /// side understands.
+  private static func cameraAuthorization() -> String {
+    switch AVCaptureDevice.authorizationStatus(for: .video) {
+    case .authorized:
+      return "authorized"
+    case .denied:
+      return "denied"
+    case .restricted:
+      return "restricted"
+    case .notDetermined:
+      return "notDetermined"
+    @unknown default:
+      return "denied"
     }
   }
 

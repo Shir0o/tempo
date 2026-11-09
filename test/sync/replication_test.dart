@@ -250,7 +250,9 @@ void main() {
 
     expect(result.changesApplied, greaterThan(0));
     expect(result.replayed, isFalse);
-    expect(discovery.lookups, greaterThan(0));
+    // The Mac dials the address the code carried: mDNS is the fallback for a
+    // device that has never paired, not the way a paired one is found.
+    expect(discovery.lookups, 0);
     final replica = await macDb.getRecordById(record.id);
     expect(replica, equals(record));
     expect(replica!.comment, 'w/ Sam');

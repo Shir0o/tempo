@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../core/sync/peer_pairing.dart';
 import '../ui/theme/tempo_theme.dart';
+import 'camera_permission.dart';
 
 /// Pairing runs one way: the phone shows a code, the Mac scans it.
 ///
@@ -30,6 +33,10 @@ class PairingView extends StatefulWidget {
 }
 
 class _PairingViewState extends State<PairingView> {
+  /// The part of the preview a code must be inside to be read: a centred
+  /// square, so a code held at the edge of the frame does not pair by accident.
+  static const Rect _scanWindow = Rect.fromLTWH(0.14, 0.14, 0.72, 0.72);
+
   final TextEditingController _hostController = TextEditingController();
   final TextEditingController _portController = TextEditingController();
   final TextEditingController _secretController = TextEditingController();
@@ -38,6 +45,26 @@ class _PairingViewState extends State<PairingView> {
   bool _working = false;
   bool _showManualEntry = false;
   String? _error;
+
+  /// Null until macOS has answered whether Tempo may use the camera. The
+  /// scanner is only built once it has, so the system prompt is the first
+  /// thing the user sees rather than a failed capture session.
+  CameraPermission? _camera;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_prepareCamera());
+  }
+
+  Future<void> _prepareCamera() async {
+    var permission = await CameraAccess.status();
+    if (permission == CameraPermission.notDetermined) {
+      permission = await CameraAccess.request();
+    }
+    if (!mounted) return;
+    setState(() => _camera = permission);
+  }
 
   @override
   void dispose() {
@@ -146,7 +173,7 @@ class _PairingViewState extends State<PairingView> {
             ),
           ),
           const SizedBox(height: 16),
-          _buildScanner(),
+          _buildCameraSection(),
           if (error != null) ...[
             const SizedBox(height: 12),
             _buildError(error),
@@ -173,25 +200,74 @@ class _PairingViewState extends State<PairingView> {
     );
   }
 
+  Widget _buildCameraSection() {
+    final camera = _camera;
+    if (camera == null) {
+      return Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
+          child: AspectRatio(
+            aspectRatio: 1,
+            child: _scannerFrame(
+              // Deliberately still: while macOS is deciding, an animated
+              // spinner keeps the page from ever settling in a test, and the
+              // wait is only the length of the system prompt.
+              const Center(
+                child: Icon(
+                  Icons.qr_code_scanner_rounded,
+                  color: TempoColors.textMuted,
+                  size: 34,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    if (camera == CameraPermission.authorized) return _buildScanner();
+    return _buildCameraBlocked();
+  }
+
+  /// A code-reading window, not the camera at page width: a 320px square is
+  /// the size a QR is actually held at, and the scan window inside it means a
+  /// code at the edge of the frame does not pair by accident.
   Widget _buildScanner() {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(TempoRadii.card),
-      child: SizedBox(
-        height: 260,
-        child: MobileScanner(
-          onDetect: _onDetect,
-          errorBuilder: (context, error) => ColoredBox(
-            color: TempoColors.surface,
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Text(
-                  'The camera is not available. Type the details the phone '
-                  'shows instead.',
-                  textAlign: TextAlign.center,
-                  style: TempoText.label.copyWith(
-                    color: TempoColors.textMuted,
-                    height: 1.4,
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 320),
+        child: AspectRatio(
+          aspectRatio: 1,
+          child: _scannerFrame(
+            MobileScanner(
+              onDetect: _onDetect,
+              fit: BoxFit.cover,
+              scanWindow: _scanWindow,
+              placeholderBuilder: (_) => const ColoredBox(
+                color: TempoColors.surface,
+                child: Center(
+                  child: CircularProgressIndicator(color: TempoColors.accent),
+                ),
+              ),
+              overlayBuilder: (context, constraints) => IgnorePointer(
+                child: CustomPaint(
+                  painter: const _ScanFramePainter(_scanWindow),
+                  child: const SizedBox.expand(),
+                ),
+              ),
+              errorBuilder: (context, error) => ColoredBox(
+                color: TempoColors.surface,
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Text(
+                      'The camera is not available. Type the details the '
+                      'phone shows instead.',
+                      textAlign: TextAlign.center,
+                      style: TempoText.label.copyWith(
+                        color: TempoColors.textMuted,
+                        height: 1.4,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -199,6 +275,80 @@ class _PairingViewState extends State<PairingView> {
           ),
         ),
       ),
+    );
+  }
+
+  /// The state before a scan is possible: macOS has refused, or the app has
+  /// never been allowed. Saying where to change it is the whole recovery.
+  Widget _buildCameraBlocked() {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 320),
+        child: _scannerFrame(
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(
+                  Icons.videocam_off_rounded,
+                  color: TempoColors.textMuted,
+                  size: 28,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Camera access is off',
+                  textAlign: TextAlign.center,
+                  style: TempoText.label.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Tempo needs the camera to read the code on your phone. '
+                  'Allow Tempo under System Settings \u2192 Privacy & Security '
+                  '\u2192 Camera.',
+                  textAlign: TextAlign.center,
+                  style: TempoText.label.copyWith(
+                    color: TempoColors.textMuted,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    TextButton(
+                      onPressed: CameraAccess.openSettings,
+                      style: TextButton.styleFrom(
+                        foregroundColor: TempoColors.accent,
+                        minimumSize: const Size(0, 44),
+                      ),
+                      child: const Text('Open Settings'),
+                    ),
+                    TextButton(
+                      onPressed: _prepareCamera,
+                      style: TextButton.styleFrom(
+                        foregroundColor: TempoColors.accent,
+                        minimumSize: const Size(0, 44),
+                      ),
+                      child: const Text('Try again'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _scannerFrame(Widget child) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(TempoRadii.card),
+      child: ColoredBox(color: TempoColors.surface, child: child),
     );
   }
 
@@ -218,11 +368,11 @@ class _PairingViewState extends State<PairingView> {
         const SizedBox(height: 8),
         _buildField(
           _portController,
-          'Port, e.g. 8756',
+          'Port, e.g. 8727',
           keyboardType: TextInputType.number,
         ),
         const SizedBox(height: 8),
-        _buildField(_secretController, 'Secret'),
+        _buildField(_secretController, 'Secret, shown under the code'),
         const SizedBox(height: 8),
         _buildField(_storeController, 'Store id'),
         const SizedBox(height: 14),
@@ -298,6 +448,56 @@ class _PairingViewState extends State<PairingView> {
       ),
     );
   }
+}
+
+/// Dims everything outside the scan window and draws the four corner brackets
+/// a code scanner is read through.
+class _ScanFramePainter extends CustomPainter {
+  static const double _bracketLength = 24;
+  static const double _bracketStroke = 3;
+
+  final Rect scanWindow;
+
+  const _ScanFramePainter(this.scanWindow);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final window = Rect.fromLTRB(
+      scanWindow.left * size.width,
+      scanWindow.top * size.height,
+      scanWindow.right * size.width,
+      scanWindow.bottom * size.height,
+    );
+
+    final outside = Path()
+      ..addRect(Offset.zero & size)
+      ..addRect(window)
+      ..fillType = PathFillType.evenOdd;
+    canvas.drawPath(
+      outside,
+      Paint()..color = Colors.black.withValues(alpha: 0.45),
+    );
+
+    final bracket = Paint()
+      ..color = Colors.white
+      ..strokeWidth = _bracketStroke
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+
+    void corner(Offset at, double dx, double dy) {
+      canvas.drawLine(at, at.translate(dx * _bracketLength, 0), bracket);
+      canvas.drawLine(at, at.translate(0, dy * _bracketLength), bracket);
+    }
+
+    corner(window.topLeft, 1, 1);
+    corner(window.topRight, -1, 1);
+    corner(window.bottomLeft, 1, -1);
+    corner(window.bottomRight, -1, -1);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ScanFramePainter oldDelegate) =>
+      oldDelegate.scanWindow != scanWindow;
 }
 
 /// The phone's side of pairing: the code to scan, and the same values as text
@@ -473,6 +673,7 @@ class _PairingInviteViewState extends State<PairingInviteView> {
             _buildValue('Host', invite.host),
             _buildValue('Port', '${invite.port}'),
             _buildValue('Store id', invite.storeId),
+            _buildValue('Secret', invite.secret),
           ],
           if (widget.onRevokeAll != null) ...[
             const SizedBox(height: 20),
