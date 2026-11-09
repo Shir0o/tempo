@@ -579,6 +579,13 @@ Future<void> _backfillChange(DatabaseExecutor db, SyncChange change) async {
 /// find the port and a network that blocks mDNS could pair but never connect.
 /// Existing rows adopt the phone's fixed listener port.
 Future<void> migrateV11ToV12(DatabaseExecutor db) async {
+  // A store that never reached v10 has no peer table yet; there is nothing to
+  // widen, and the next createSchema brings the column with it.
+  final tables = await db.rawQuery(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sync_peers'",
+  );
+  if (tables.isEmpty) return;
+
   final peerColumns = await db.rawQuery('PRAGMA table_info(sync_peers)');
   final hasPort = peerColumns.any((row) => row['name'] == 'port');
   if (!hasPort) {
