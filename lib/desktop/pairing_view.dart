@@ -362,8 +362,9 @@ class PhonePairingView extends StatefulWidget {
 }
 
 class _PhonePairingViewState extends State<PhonePairingView> {
-  /// The part of the preview a code must be inside to be read: a centred
-  /// square, so a code held at the edge of the frame does not pair by accident.
+  /// The part of the preview a code must be inside to be read, as a fraction
+  /// of the preview's width and height: a centred square, so a code held at
+  /// the edge of the frame does not pair by accident.
   static const Rect _scanWindow = Rect.fromLTWH(0.14, 0.14, 0.72, 0.72);
 
   final TextEditingController _storeController = TextEditingController();
@@ -498,40 +499,55 @@ class _PhonePairingViewState extends State<PhonePairingView> {
         constraints: const BoxConstraints(maxWidth: 320),
         child: AspectRatio(
           aspectRatio: 1,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(TempoRadii.card),
-            child: ColoredBox(
-              color: TempoColors.surface,
-              child: MobileScanner(
-                onDetect: _onDetect,
-                fit: BoxFit.cover,
-                scanWindow: _scanWindow,
-                placeholderBuilder: (_) => const Center(
-                  child: CircularProgressIndicator(color: TempoColors.accent),
-                ),
-                overlayBuilder: (context, constraints) => IgnorePointer(
-                  child: CustomPaint(
-                    painter: const _ScanFramePainter(_scanWindow),
-                    child: const SizedBox.expand(),
-                  ),
-                ),
-                errorBuilder: (context, error) => Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Text(
-                      'Tempo needs the camera to read the code on your Mac. '
-                      'Allow Camera for Tempo in your phone\u2019s settings, '
-                      'or type the details below.',
-                      textAlign: TextAlign.center,
-                      style: TempoText.label.copyWith(
-                        color: TempoColors.textMuted,
-                        height: 1.4,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final preview = constraints.biggest;
+              // MobileScanner reads scanWindow in layout pixels, not as a
+              // fraction, so convert the shared fraction to this preview.
+              final scanWindow = Rect.fromLTWH(
+                _scanWindow.left * preview.width,
+                _scanWindow.top * preview.height,
+                _scanWindow.width * preview.width,
+                _scanWindow.height * preview.height,
+              );
+              return ClipRRect(
+                borderRadius: BorderRadius.circular(TempoRadii.card),
+                child: ColoredBox(
+                  color: TempoColors.surface,
+                  child: MobileScanner(
+                    onDetect: _onDetect,
+                    fit: BoxFit.cover,
+                    scanWindow: scanWindow,
+                    placeholderBuilder: (_) => const Center(
+                      child: CircularProgressIndicator(
+                        color: TempoColors.accent,
+                      ),
+                    ),
+                    overlayBuilder: (context, constraints) => IgnorePointer(
+                      child: CustomPaint(
+                        painter: const _ScanFramePainter(_scanWindow),
+                        child: const SizedBox.expand(),
+                      ),
+                    ),
+                    errorBuilder: (context, error) => Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Text(
+                          'Tempo needs the camera to read the code on your Mac. '
+                          'Allow Camera for Tempo in your phone\u2019s settings, '
+                          'or type the details below.',
+                          textAlign: TextAlign.center,
+                          style: TempoText.label.copyWith(
+                            color: TempoColors.textMuted,
+                            height: 1.4,
+                          ),
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
         ),
       ),
