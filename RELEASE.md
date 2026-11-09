@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.1](https://github.com/Shir0o/tempo/compare/v1.17.0...v1.17.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **sync:** show the pairing code on the Mac and scan from the phone ([#120](https://github.com/Shir0o/tempo/issues/120)) ([48b57c4](https://github.com/Shir0o/tempo/commit/48b57c4e821eec0243e58f95384ce865f624876e))
+
 ## [1.17.0](https://github.com/Shir0o/tempo/compare/v1.16.0...v1.17.0) (2026-11-09)
 
 
