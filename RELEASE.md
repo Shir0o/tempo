@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.17.2](https://github.com/Shir0o/tempo/compare/v1.17.1...v1.17.2) (2026-11-09)
+
+
+### Bug Fixes
+
+* **macos:** sign local builds with a stable identity ([#126](https://github.com/Shir0o/tempo/issues/126)) ([8651a73](https://github.com/Shir0o/tempo/commit/8651a73983f4bf54bcb3cdac6627a83f7e7677ed))
+* **sync:** read the whole pairing code on the phone ([#122](https://github.com/Shir0o/tempo/issues/122)) ([759ba10](https://github.com/Shir0o/tempo/commit/759ba101ea95508eaa48475f87c331d47ef52435))
+* **wear:** sync labels taken before the midnight split ([#124](https://github.com/Shir0o/tempo/issues/124)) ([843e406](https://github.com/Shir0o/tempo/commit/843e406e088a5875a2b272d709a03a61a7a55666))
+
 ## [1.17.1](https://github.com/Shir0o/tempo/compare/v1.17.0...v1.17.1) (2026-11-09)
 
 
