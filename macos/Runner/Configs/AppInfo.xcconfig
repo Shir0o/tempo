@@ -12,3 +12,7 @@ PRODUCT_BUNDLE_IDENTIFIER = com.tempos.tracker
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 com.shir0o. All rights reserved.
+
+// Optional, git-ignored signing overrides for local development.
+// See LocalSigning.xcconfig.example.
+#include? "LocalSigning.xcconfig"

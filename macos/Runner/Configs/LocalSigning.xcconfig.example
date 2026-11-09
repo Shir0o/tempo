@@ -1,0 +1,18 @@
+// Copy this file to LocalSigning.xcconfig to sign local macOS builds with your
+// own Apple Development certificate. The copy is git-ignored.
+//
+// Signing with a stable identity stops macOS from asking for file-access,
+// network, and other permissions again on every rebuild, which happens when the
+// app is signed ad-hoc. Leaving this file out keeps the default ad-hoc signing
+// used by CI, so do not commit your copy.
+//
+// Your Team ID is the OU field of your signing certificate, not the value in
+// the certificate's display name. Find it with:
+//
+//   security find-certificate -c "Apple Development" -p \
+//     | openssl x509 -noout -subject
+//
+// Uncomment both lines in your copy and fill in the Team ID.
+
+// DEVELOPMENT_TEAM = ABCDE12345
+// CODE_SIGN_IDENTITY = Apple Development

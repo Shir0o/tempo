@@ -50,3 +50,6 @@ app.*.map.json
 
 # Copied from assets/fonts by store-listing/render.sh
 store-listing/src/SpaceGrotesk.ttf
+
+# macOS local signing overrides (copy LocalSigning.xcconfig.example)
+/macos/Runner/Configs/LocalSigning.xcconfig
