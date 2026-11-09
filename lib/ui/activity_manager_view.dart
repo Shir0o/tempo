@@ -414,8 +414,10 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                                   : 'Archive',
                               filled: false,
                               onTap: () async {
-                                await _toggleArchive(existing);
-                                if (ctx.mounted) Navigator.of(ctx).pop();
+                                final changed = await _toggleArchive(existing);
+                                if (changed && ctx.mounted) {
+                                  Navigator.of(ctx).pop();
+                                }
                               },
                             ),
                           ),
@@ -494,13 +496,154 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
     return null;
   }
 
-  Future<void> _toggleArchive(Activity activity) async {
-    final updated = activity.copyWith(
-      isArchived: !activity.isArchived,
-      updatedAtEpochMs: DateTime.now().toUtc().millisecondsSinceEpoch,
+  /// Archives an Activity, offering to move its Records to another Activity
+  /// first. Returns whether the archive state actually changed.
+  Future<bool> _toggleArchive(Activity activity) async {
+    if (activity.isArchived) {
+      final updated = activity.copyWith(
+        isArchived: false,
+        updatedAtEpochMs: DateTime.now().toUtc().millisecondsSinceEpoch,
+      );
+      await widget.database.updateActivity(updated);
+      await _loadActivities();
+      return true;
+    }
+
+    final hasRecords = (await widget.database.getRecords(
+      activityId: activity.id,
+      limit: 1,
+    )).isNotEmpty;
+    if (hasRecords) {
+      final targets = _activities
+          .where((a) => !a.isArchived && a.id != activity.id)
+          .toList();
+      final choice = await _chooseArchiveAction(activity, targets);
+      if (choice == null) return false;
+      await widget.database.archiveActivity(
+        activity,
+        mergeIntoActivityId: choice.mergeInto?.id,
+      );
+    } else {
+      await widget.database.archiveActivity(activity);
+    }
+    await _loadActivities();
+    return true;
+  }
+
+  /// Lets the user keep an archived Activity's history by moving all of its
+  /// Records into another Activity, or archive it as it is.
+  Future<_ArchiveChoice?> _chooseArchiveAction(
+    Activity activity,
+    List<Activity> targets,
+  ) {
+    return showModalBottomSheet<_ArchiveChoice>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: TempoColors.panel,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Archive ${activity.name}?',
+                style: TempoText.screenTitle.copyWith(
+                  color: TempoColors.ink,
+                  fontSize: 24,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                targets.isEmpty
+                    ? 'This activity has records. They stay attached to it '
+                          'while it is archived.'
+                    : 'Keep its records by moving them to another activity '
+                          'first. The records keep their times, notes and tags.',
+                style: TempoText.body.copyWith(color: TempoColors.inkMuted),
+              ),
+              if (targets.isNotEmpty) ...[
+                const SizedBox(height: 18),
+                Text(
+                  'MERGE RECORDS INTO',
+                  style: TempoText.overline.copyWith(
+                    color: TempoColors.inkMuted,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(context).size.height * 0.4,
+                  ),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: targets.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final target = targets[index];
+                      return Material(
+                        color: TempoColors.paper,
+                        borderRadius: BorderRadius.circular(TempoRadii.row),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(TempoRadii.row),
+                          onTap: () =>
+                              Navigator.of(sheetContext)
+                                  .pop(_ArchiveChoice(target)),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 12,
+                            ),
+                            child: Row(
+                              children: [
+                                ActivityIcon.parts(
+                                  iconName: target.iconName,
+                                  color: UiHelpers.parseHexColor(
+                                    target.colorHex,
+                                  ),
+                                  size: 34,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    target.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TempoText.body.copyWith(
+                                      color: TempoColors.ink,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                const Icon(
+                                  Icons.chevron_right_rounded,
+                                  color: TempoColors.inkMuted,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              _SheetPill(
+                label: targets.isEmpty
+                    ? 'Archive activity'
+                    : 'Archive without merging',
+                filled: false,
+                onTap: () =>
+                    Navigator.of(sheetContext).pop(const _ArchiveChoice(null)),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
-    await widget.database.updateActivity(updated);
-    _loadActivities();
   }
 
   List<Activity> _activitiesNeedingIcon() => _activities
@@ -557,6 +700,71 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
     for (final a in activities)
       if (!a.isArchived) ?ActivityIcon.emojiOf(a.iconName),
   };
+
+  /// Groups of active Activities wearing the same emoji, in list order.
+  static List<List<Activity>> _duplicateEmojiGroups(
+    Iterable<Activity> activities,
+  ) {
+    final byEmoji = <String, List<Activity>>{};
+    for (final activity in activities) {
+      final emoji = ActivityIcon.emojiOf(activity.iconName);
+      if (emoji != null) (byEmoji[emoji] ??= []).add(activity);
+    }
+    return [
+      for (final group in byEmoji.values)
+        if (group.length > 1) group,
+    ];
+  }
+
+  /// Gives every active Activity its own emoji. The first Activity in each
+  /// duplicate group keeps the shared emoji; later ones move to an unused
+  /// alternate, then to any unused emoji in the vocabulary.
+  Future<void> _deduplicateEmoji() async {
+    final active = _activities.where((a) => !a.isArchived).toList();
+    final groups = _duplicateEmojiGroups(active);
+    if (groups.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Every activity already has its own emoji.'),
+        ),
+      );
+      return;
+    }
+
+    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+    final taken = _wornEmoji(active);
+    final updates = <Activity, String>{};
+    final unresolved = <Activity>[];
+    for (final group in groups) {
+      final shared = ActivityIcon.emojiOf(group.first.iconName)!;
+      for (final activity in group.skip(1)) {
+        final emoji = ActivityEmoji.distinctUnused(shared, taken);
+        if (emoji == null) {
+          unresolved.add(activity);
+          continue;
+        }
+        updates[activity] = emoji;
+        taken.add(emoji);
+      }
+    }
+
+    for (final entry in updates.entries) {
+      await widget.database.updateActivity(
+        entry.key.copyWith(iconName: entry.value, updatedAtEpochMs: now),
+      );
+    }
+    await _loadActivities();
+    if (!mounted) return;
+
+    final updated = updates.length;
+    final message = unresolved.isEmpty
+        ? updated == 1
+              ? '1 activity given a different emoji.'
+              : '$updated activities given different emoji.'
+        : '$updated updated; ${unresolved.length} still share an emoji.';
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
 
   /// A guessed emoji for an Activity with no exact match, steered away from
   /// the ones other Activities wear.
@@ -883,56 +1091,49 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
     );
   }
 
-  Widget? _buildEmojiRow(List<Activity> active) {
+  Widget _buildEmojiTools(List<Activity> active) {
     final pending = active
         .where((a) => ActivityEmoji.needsIcon(a.iconName))
         .toList();
-    if (pending.isEmpty) return null;
     final unresolved = pending
         .where((a) => ActivityEmoji.emojiForName(a.name) == null)
         .length;
+    final duplicateGroups = _duplicateEmojiGroups(active);
+    final duplicateCount = duplicateGroups.fold<int>(
+      0,
+      (count, group) => count + group.length - 1,
+    );
+    final autoDetail = pending.isEmpty
+        ? 'All have an icon'
+        : unresolved > 0
+        ? '$unresolved need an icon'
+        : '${pending.length} to assign';
+    final dedupeDetail = duplicateCount == 0
+        ? 'All unique'
+        : duplicateCount == 1
+        ? '1 to change'
+        : '$duplicateCount to change';
+
     return Material(
       color: TempoColors.surface,
       borderRadius: BorderRadius.circular(TempoRadii.row),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(TempoRadii.row),
-        onTap: _autoAssignEmoji,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          child: Row(
-            children: [
-              const Icon(
-                Icons.emoji_emotions_outlined,
-                color: TempoColors.textMuted,
-                size: 18,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Auto-assign emoji',
-                  style: TempoText.body.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              if (unresolved > 0) ...[
-                Text(
-                  '$unresolved need an icon',
-                  style: TempoText.label.copyWith(
-                    color: TempoColors.textMuted,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(width: 6),
-              ],
-              const Icon(
-                Icons.chevron_right_rounded,
-                color: TempoColors.textMuted,
-              ),
-            ],
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          _EmojiToolRow(
+            icon: Icons.emoji_emotions_outlined,
+            label: 'Auto-assign emoji',
+            detail: autoDetail,
+            onTap: _autoAssignEmoji,
           ),
-        ),
+          const Divider(height: 1, color: TempoColors.line),
+          _EmojiToolRow(
+            icon: Icons.auto_fix_high_rounded,
+            label: 'De-duplicate emoji',
+            detail: dedupeDetail,
+            onTap: _deduplicateEmoji,
+          ),
+        ],
       ),
     );
   }
@@ -942,7 +1143,7 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
     final active = _activities.where((a) => !a.isArchived).toList();
     final archived = _activities.where((a) => a.isArchived).toList();
     final pinnedIds = active.where((a) => a.isPinned).map((a) => a.id).toList();
-    final emojiRow = _buildEmojiRow(active);
+    final emojiTools = _buildEmojiTools(active);
 
     return Scaffold(
       backgroundColor: TempoColors.background,
@@ -962,10 +1163,8 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                       color: TempoColors.textMuted,
                     ),
                   ),
-                  if (emojiRow != null) ...[
-                    const SizedBox(height: 14),
-                    emojiRow,
-                  ],
+                  const SizedBox(height: 14),
+                  emojiTools,
                   const SizedBox(height: 18),
                   GridView.count(
                     crossAxisCount: 3,
@@ -1092,6 +1291,67 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
                 _showArchived
                     ? Icons.keyboard_arrow_up_rounded
                     : Icons.keyboard_arrow_down_rounded,
+                color: TempoColors.textMuted,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ArchiveChoice {
+  final Activity? mergeInto;
+
+  const _ArchiveChoice(this.mergeInto);
+}
+
+class _EmojiToolRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String detail;
+  final VoidCallback onTap;
+
+  const _EmojiToolRow({
+    required this.icon,
+    required this.label,
+    required this.detail,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: '$label, $detail',
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Icon(icon, color: TempoColors.textMuted, size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TempoText.body.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Text(
+                detail,
+                style: TempoText.label.copyWith(
+                  color: TempoColors.textMuted,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(width: 6),
+              const Icon(
+                Icons.chevron_right_rounded,
                 color: TempoColors.textMuted,
               ),
             ],

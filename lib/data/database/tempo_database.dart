@@ -310,6 +310,101 @@ CREATE TABLE IF NOT EXISTS settings (
     });
   }
 
+  /// Archives [activity], optionally moving all of its Records to another
+  /// Activity first. The records keep every other field and all of their tag
+  /// ids. Every row write and its sync change commit in one transaction.
+  ///
+  /// Returns the number of Records moved to [mergeIntoActivityId].
+  Future<int> archiveActivity(
+    Activity activity, {
+    String? mergeIntoActivityId,
+    int? updatedAtEpochMs,
+  }) async {
+    final archivedAt =
+        updatedAtEpochMs ?? DateTime.now().toUtc().millisecondsSinceEpoch;
+    if (mergeIntoActivityId == activity.id) {
+      throw ArgumentError.value(
+        mergeIntoActivityId,
+        'mergeIntoActivityId',
+        'must differ from the Activity being archived',
+      );
+    }
+
+    return _db.transaction((txn) async {
+      var movedRecords = 0;
+      if (mergeIntoActivityId != null) {
+        final targets = await txn.query(
+          'activities',
+          columns: ['id'],
+          where: 'id = ?',
+          whereArgs: [mergeIntoActivityId],
+          limit: 1,
+        );
+        if (targets.isEmpty) {
+          throw ArgumentError.value(
+            mergeIntoActivityId,
+            'mergeIntoActivityId',
+            'Activity not found',
+          );
+        }
+
+        final recordRows = await txn.query(
+          'records',
+          where: 'activity_id = ?',
+          whereArgs: [activity.id],
+        );
+        movedRecords = recordRows.length;
+
+        for (final row in recordRows) {
+          final tagRows = await txn.query(
+            'record_tags',
+            columns: ['tag_id'],
+            where: 'record_id = ?',
+            whereArgs: [row['id'] as String],
+          );
+          final moved =
+              Record.fromMap(
+                row,
+                tagIds: [for (final tag in tagRows) tag['tag_id'] as String],
+              ).copyWith(
+                activityId: mergeIntoActivityId,
+                updatedAtEpochMs: archivedAt,
+              );
+          await appendChange(
+            SyncChange.recordUpsert(moved, atEpochMs: archivedAt),
+            executor: txn,
+          );
+        }
+
+        await txn.update(
+          'records',
+          {
+            'activity_id': mergeIntoActivityId,
+            'updated_at_epoch_ms': archivedAt,
+          },
+          where: 'activity_id = ?',
+          whereArgs: [activity.id],
+        );
+      }
+
+      final archived = activity.copyWith(
+        isArchived: true,
+        updatedAtEpochMs: archivedAt,
+      );
+      await txn.update(
+        'activities',
+        archived.toMap(),
+        where: 'id = ?',
+        whereArgs: [archived.id],
+      );
+      await appendChange(
+        SyncChange.activityUpsert(archived, atEpochMs: archivedAt),
+        executor: txn,
+      );
+      return movedRecords;
+    });
+  }
+
   /// An Activity in a Category always wears the Category's colour, so one
   /// category reads as one colour everywhere. Uncategorised Activities keep
   /// the colour chosen for them.
