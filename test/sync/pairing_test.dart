@@ -56,6 +56,19 @@ void main() {
       expect(decoded, equals(invite));
     });
 
+    test('a code from a device with no listener carries no address', () {
+      final invite = PairingInvite(
+        secret: PairingInvite.generateSecret(random: Random(9)),
+        storeId: 'store-mac',
+      );
+      final encoded = invite.encode();
+
+      expect(encoded, isNot(contains('h=')));
+      expect(encoded, isNot(contains('p=')));
+      expect(invite.hasEndpoint, isFalse);
+      expect(PairingInvite.decode(encoded), equals(invite));
+    });
+
     test('a secret is 256 bits and survives encoding', () {
       final secret = PairingInvite.generateSecret(random: Random(7));
       final bytes = base64Url.decode(base64Url.normalize(secret));
@@ -147,12 +160,16 @@ void main() {
 
   group('Authorization', () {
     late TempoDatabase phoneDb;
+    late TempoDatabase macDb;
     late InMemoryPeerSecretStore phoneSecrets;
     late PeerPairing phonePairing;
+    late PeerPairing macPairing;
+    late PairingInvite invite;
     late String storeId;
 
     setUp(() async {
       phoneDb = await openStore('phone');
+      macDb = await openStore('mac');
       phoneSecrets = InMemoryPeerSecretStore();
       storeId = (await phoneDb.getSyncSettings()).storeId;
       phonePairing = PeerPairing(
@@ -160,21 +177,32 @@ void main() {
         secrets: phoneSecrets,
         nowUtcMs: () => now,
       );
+      macPairing = PeerPairing(
+        database: macDb,
+        secrets: InMemoryPeerSecretStore(),
+        nowUtcMs: () => now,
+      );
+      // The Mac shows the code; the phone scans it.
+      invite = await macPairing.createInvite();
+      await phonePairing.pairFromInvite(invite);
     });
 
     tearDown(() async {
       await phoneDb.close();
+      await macDb.close();
     });
 
     Future<PeerAuthorization> authorize({
       required String secret,
       String deviceId = 'mac-device',
+      String? peerStoreId,
       int atMillis = now,
       String body = '{"deviceId":"mac-device"}',
       String? signature,
     }) => phonePairing.authorize(
       deviceId: deviceId,
       ownStoreId: storeId,
+      peerStoreId: peerStoreId ?? invite.storeId,
       timestampEpochMs: atMillis,
       body: body,
       signature:
@@ -187,16 +215,11 @@ void main() {
     );
 
     test('a signed request from the paired secret is accepted', () async {
-      final invite = await phonePairing.createInvite(
-        host: '127.0.0.1',
-        port: 8727,
-      );
-
       final authorization = await authorize(secret: invite.secret);
 
       expect(authorization.isAuthorized, isTrue);
       expect(authorization.secret, invite.secret);
-      // The first use moves the invitation to the client's own key.
+      // The first use moves the secret to the client's own device key.
       expect(
         await phoneSecrets.read(PeerPairing.peerSecretKey('mac-device')),
         invite.secret,
@@ -204,10 +227,6 @@ void main() {
     });
 
     test('a wrong secret is refused', () async {
-      final invite = await phonePairing.createInvite(
-        host: '127.0.0.1',
-        port: 8727,
-      );
       final authorization = await authorize(
         secret: invite.secret,
         signature: PeerPairing.signatureFor(
@@ -222,11 +241,6 @@ void main() {
     });
 
     test('a timestamp beyond five minutes of skew is refused', () async {
-      final invite = await phonePairing.createInvite(
-        host: '127.0.0.1',
-        port: 8727,
-      );
-
       final stale = await authorize(
         secret: invite.secret,
         atMillis: now - const Duration(minutes: 5, seconds: 1).inMilliseconds,
@@ -246,10 +260,11 @@ void main() {
     });
 
     test('a request from a device that never paired is refused', () async {
-      // No invitation is in force, so there is no secret to check against.
+      // No code was scanned, so there is no secret to check against.
       final authorization = await authorize(
         secret: PairingInvite.generateSecret(),
         deviceId: 'stranger',
+        peerStoreId: 'stranger-store',
       );
 
       expect(authorization.failure, PeerAuthFailure.unknownPeer);
@@ -257,10 +272,6 @@ void main() {
     });
 
     test('a tampered body is refused', () async {
-      final invite = await phonePairing.createInvite(
-        host: '127.0.0.1',
-        port: 8727,
-      );
       final signature = PeerPairing.signatureFor(
         secret: invite.secret,
         timestampEpochMs: now,
@@ -277,7 +288,7 @@ void main() {
     });
   });
 
-  group('Paired clients', () {
+  group('Paired devices', () {
     late TempoDatabase phoneDb;
     late TempoDatabase macDb;
     late InMemoryPeerSecretStore phoneSecrets;
@@ -285,6 +296,7 @@ void main() {
     late PeerPairing phonePairing;
     late PeerPairing macPairing;
     late PairingInvite invite;
+    late String phoneStoreId;
 
     setUp(() async {
       phoneDb = await openStore('phone');
@@ -301,15 +313,9 @@ void main() {
         secrets: macSecrets,
         nowUtcMs: () => now,
       );
-      invite = await phonePairing.createInvite(
-        host: '192.168.1.24',
-        port: 8727,
-      );
-      await macPairing.pairFromInvite(
-        invite,
-        peerDeviceId: 'phone-device',
-        host: '192.168.1.24',
-      );
+      invite = await macPairing.createInvite();
+      await phonePairing.pairFromInvite(invite);
+      phoneStoreId = (await phoneDb.getSyncSettings()).storeId;
     });
 
     tearDown(() async {
@@ -317,83 +323,100 @@ void main() {
       await macDb.close();
     });
 
-    test(
-      'pairing keeps the secret on the Mac and the phone as a peer',
-      () async {
-        expect(
-          await macPairing.secretForPeerStore(invite.storeId),
-          invite.secret,
-        );
-        expect(
-          await phoneSecrets.read(PeerPairing.inviteSecretKey(invite.storeId)),
-          invite.secret,
-        );
-        // The secret is never in the database, only the peer's identity.
-        final row = await macDb.getPeer('phone-device');
-        expect(row!.storeId, invite.storeId);
-        expect(row.host, '192.168.1.24');
-      },
-    );
+    test('the phone keeps the code\'s secret for the store it names', () async {
+      expect(await macPairing.pendingInviteSecret(), invite.secret);
+      expect(
+        await phoneSecrets.read(PeerPairing.peerSecretKey(invite.storeId)),
+        invite.secret,
+      );
+      // No peer row yet: the code names no address or device id, so the phone
+      // records the Mac when its first signed request arrives.
+      expect(await phoneDb.getPeers(), isEmpty);
+    });
 
-    test('revoke all invalidates every stored secret and peer', () async {
-      // Two clients, so this is not just one row.
-      final secondInvite = await phonePairing.createInvite(
+    test('the first answered exchange adopts the phone', () async {
+      await macPairing.adoptPeer(
+        storeId: phoneStoreId,
         host: '192.168.1.24',
         port: 8727,
       );
-      await macPairing.pairFromInvite(
-        secondInvite,
-        peerDeviceId: 'other-mac',
-        host: '192.168.1.25',
+
+      expect(await macPairing.secretForPeerStore(phoneStoreId), invite.secret);
+      // The invitation is spent, so the code on screen no longer pairs.
+      expect(await macPairing.pendingInviteSecret(), isNull);
+      // The secret is never in the database, only the peer's identity.
+      final row = await macDb.getPeer(phoneStoreId);
+      expect(row!.storeId, phoneStoreId);
+      expect(row.host, '192.168.1.24');
+      expect(row.port, 8727);
+    });
+
+    test('revoke all invalidates every stored secret and peer', () async {
+      // Two Macs, so this is not just one key.
+      final otherMacDb = await openStore('mac-two');
+      final otherMac = PeerPairing(
+        database: otherMacDb,
+        secrets: InMemoryPeerSecretStore(),
+        nowUtcMs: () => now,
       );
-      expect(await macDb.getPeers(), hasLength(2));
+      final secondInvite = await otherMac.createInvite();
+      await phonePairing.pairFromInvite(secondInvite);
+      expect(
+        await phoneSecrets.read(
+          PeerPairing.peerSecretKey(secondInvite.storeId),
+        ),
+        secondInvite.secret,
+      );
 
       await phonePairing.revokeAll();
       await macPairing.revokeAll();
 
-      expect(await macPairing.secretForPeerStore(invite.storeId), isNull);
+      expect(await macPairing.pendingInviteSecret(), isNull);
       expect(
-        await macSecrets.read(PeerPairing.peerSecretKey('other-mac')),
+        await phoneSecrets.read(PeerPairing.peerSecretKey(invite.storeId)),
         isNull,
       );
       expect(
-        await phoneSecrets.read(PeerPairing.inviteSecretKey(invite.storeId)),
+        await phoneSecrets.read(
+          PeerPairing.peerSecretKey(secondInvite.storeId),
+        ),
         isNull,
       );
       expect(await phoneDb.getPeers(), isEmpty);
       expect(await macDb.getPeers(), isEmpty);
+      await otherMacDb.close();
     });
 
     test('disconnect deletes the stored secret and the peer row', () async {
-      await macPairing.forget('phone-device', peerStoreId: invite.storeId);
+      await phonePairing.forget(invite.storeId);
 
-      expect(await macPairing.secretForPeerStore(invite.storeId), isNull);
-      expect(await macDb.getPeer('phone-device'), isNull);
-
-      // The phone still holds the invitation until it revokes it.
       expect(
-        await phoneSecrets.read(PeerPairing.inviteSecretKey(invite.storeId)),
-        invite.secret,
+        await phoneSecrets.read(PeerPairing.peerSecretKey(invite.storeId)),
+        isNull,
       );
-      await phonePairing.forget('never-paired');
-      expect(await phoneDb.getPeers(), isEmpty);
+      expect(await phoneDb.getPeer(invite.storeId), isNull);
+
+      // The Mac still holds its code until the phone answers it.
+      expect(await macPairing.pendingInviteSecret(), invite.secret);
+      await macPairing.forget(phoneStoreId);
+      expect(await macDb.getPeers(), isEmpty);
+      expect(await macPairing.pendingInviteSecret(), invite.secret);
     });
 
     test('a restore rotates the secret, so clients must pair again', () async {
       await phonePairing.rotateOnRestore();
 
       expect(
-        await phoneSecrets.read(PeerPairing.inviteSecretKey(invite.storeId)),
+        await phoneSecrets.read(PeerPairing.peerSecretKey(invite.storeId)),
         isNull,
       );
       expect(await phoneDb.getPeers(), isEmpty);
 
-      final rotated = await phonePairing.createInvite(
-        host: '192.168.1.24',
-        port: 8727,
-      );
+      // A new code replaces the old one, and carries a fresh secret.
+      final rotated = await macPairing.createInvite();
       expect(rotated.secret, isNot(invite.secret));
       expect(rotated.storeId, invite.storeId);
+      expect(await macPairing.pendingInviteSecret(), rotated.secret);
     });
   });
 

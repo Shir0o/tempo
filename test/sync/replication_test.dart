@@ -156,16 +156,15 @@ void main() {
     );
     final port = await listener.start();
 
-    final invite = await phonePairing.createInvite(
-      host: '127.0.0.1',
-      port: port,
-    );
-    await macPairing.pairFromInvite(invite, host: '127.0.0.1');
+    // The Mac shows the pairing code; the phone scans it. The Mac then finds
+    // the phone over discovery and adopts it on the first answered exchange.
+    final invite = await macPairing.createInvite();
+    await phonePairing.pairFromInvite(invite);
     discovery = FakePeerDiscovery(
       peer: DiscoveredPeer(
         host: '127.0.0.1',
         port: port,
-        storeId: invite.storeId,
+        storeId: (await phoneDb.getSyncSettings()).storeId,
       ),
     );
 
@@ -250,9 +249,12 @@ void main() {
 
     expect(result.changesApplied, greaterThan(0));
     expect(result.replayed, isFalse);
-    // The Mac dials the address the code carried: mDNS is the fallback for a
-    // device that has never paired, not the way a paired one is found.
-    expect(discovery.lookups, 0);
+    // The code carries no address, so the first exchange finds the phone over
+    // discovery; adoption then dials that address directly.
+    expect(discovery.lookups, 1);
+    final peer = (await macDb.getPeers()).single;
+    expect(peer.host, '127.0.0.1');
+    expect(peer.storeId, (await phoneDb.getSyncSettings()).storeId);
     final replica = await macDb.getRecordById(record.id);
     expect(replica, equals(record));
     expect(replica!.comment, 'w/ Sam');

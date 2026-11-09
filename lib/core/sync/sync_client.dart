@@ -108,6 +108,7 @@ class SyncClient {
   int _changesApplied = 0;
   bool _running = false;
   bool _longPollWorks = true;
+  DiscoveredPeer? _manualPeer;
   Future<void>? _lock;
 
   SyncClient({
@@ -189,6 +190,7 @@ class SyncClient {
         );
       }
       final exchange = _decodeResponse(response.body);
+      await _adopt(session, exchange.storeId);
       final accepted = await _accept(session, exchange, allowReset: true);
       if (accepted.replayed) {
         final result = await _pullPages(session);
@@ -243,15 +245,43 @@ class SyncClient {
     _running = false;
   }
 
-  /// Exchanges now, without waiting for the loop: a label made on the Mac is
-  /// queued and its result comes back on the same pull.
-  void notifyIntentQueued() {
+  /// Exchanges now, without waiting for the loop's backoff: a label made on the
+  /// Mac is queued and its result comes back on the same pull.
+  void notifyIntentQueued() => retryNow();
+
+  /// Tries an exchange at once, whether or not the loop is between attempts.
+  ///
+  /// Settings rings this while a pairing code is on screen, so the exchange
+  /// that adopts the phone happens as soon as it scans, not at the next
+  /// backoff step.
+  void retryNow() {
     if (!_running) {
       start();
       return;
     }
     unawaited(pull().then<void>((_) {}, onError: (Object _) {}));
   }
+
+  /// Turns replication on and starts the loop. Showing a pairing code does
+  /// this, so the Mac is already looking for the phone when it scans.
+  Future<void> enableReplication() async {
+    await database.setSetting(SyncSettingKeys.replicateEnabled, 'true');
+    await applyReplicationSetting();
+  }
+
+  /// Dials [host] and [port] instead of waiting for mDNS, using the secret in
+  /// the pairing code on screen. The row is written only once an exchange
+  /// succeeds, so a mistyped address does not pair anything.
+  void setManualPeer({required String host, required int port}) {
+    _manualPeer = DiscoveredPeer(host: host, port: port, storeId: '');
+  }
+
+  /// The store ids of the phones this Mac has adopted. Settings compares the
+  /// set before and after showing a code, so a phone paired earlier is not
+  /// mistaken for the one that just scanned.
+  Future<Set<String>> pairedPeerStores() async => {
+    for (final peer in await database.getPeers()) peer.storeId,
+  };
 
   Future<SyncClientStats> stats() async {
     // Settings reloads this after a pairing or a Settings change, which is the
@@ -474,7 +504,20 @@ class SyncClient {
         'the phone refused the exchange (${response.statusCode}).',
       );
     }
-    return _decodeResponse(response.body);
+    final exchange = _decodeResponse(response.body);
+    await _adopt(session, exchange.storeId);
+    return exchange;
+  }
+
+  /// Saves the phone that just answered, the first time an invitation pairs a
+  /// session. After this the address comes from `sync_peers`, not discovery.
+  Future<void> _adopt(_PeerSession session, String storeId) async {
+    if (!session.pending) return;
+    final peer = session.peer;
+    await pairing.adoptPeer(storeId: storeId, host: peer.host, port: peer.port);
+    session.pending = false;
+    // A typed address has done its job; a later pairing starts from discovery.
+    if (identical(peer, _manualPeer)) _manualPeer = null;
   }
 
   SyncResponse _decodeResponse(String body) {
@@ -488,12 +531,20 @@ class SyncClient {
   }
 
   Future<_PeerSession> _dial() async {
-    // The code the Mac scanned carries the phone's address. Dialling it is
-    // what makes pairing work on a network that blocks mDNS, or where Local
-    // Network access was refused; discovery stays the fallback for a Mac that
-    // has never paired.
     final paired = await _pairedSession();
     if (paired != null) return paired;
+
+    // The Mac shows the pairing code; the phone scans it. The code names no
+    // address, so the Mac finds the phone over mDNS, or at an address typed
+    // while the code was on screen, and signs with the invitation secret.
+    final manual = _manualPeer;
+    if (manual != null) {
+      final secret = await pairing.pendingInviteSecret();
+      if (secret == null) {
+        throw const SyncClientException('this Mac has no pairing code to use.');
+      }
+      return _PeerSession(peer: manual, secret: secret, pending: true);
+    }
 
     try {
       await discovery.start();
@@ -504,19 +555,20 @@ class SyncClient {
     if (peer == null) {
       throw const SyncWaitingException();
     }
-    final secret = await pairing.secretForPeerStore(peer.storeId);
+    final stored = await pairing.secretForPeerStore(peer.storeId);
+    final secret = stored ?? await pairing.pendingInviteSecret();
     if (secret == null) {
       throw SyncClientException(
         'this Mac is not paired with the phone at ${peer.host}.',
       );
     }
-    return _PeerSession(peer: peer, secret: secret);
+    return _PeerSession(peer: peer, secret: secret, pending: stored == null);
   }
 
   /// The phone this Mac paired with, as its row in `sync_peers` remembers it.
   ///
-  /// The row carries the host and port from the pairing code, so a network
-  /// that blocks mDNS can still connect.
+  /// The row carries the address discovery found, so a network that blocks
+  /// mDNS connects directly once the first exchange has happened.
   Future<_PeerSession?> _pairedSession() async {
     for (final peer in await database.getPeers()) {
       if (peer.host.isEmpty || peer.storeId.isEmpty) continue;
@@ -577,5 +629,13 @@ class _PeerSession {
   final DiscoveredPeer peer;
   final String secret;
 
-  const _PeerSession({required this.peer, required this.secret});
+  /// True when the secret is the Mac's invitation, not a paired store's: the
+  /// first successful answer adopts the phone and clears this.
+  bool pending;
+
+  _PeerSession({
+    required this.peer,
+    required this.secret,
+    this.pending = false,
+  });
 }
