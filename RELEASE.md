@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.1](https://github.com/Shir0o/tempo/compare/v1.15.0...v1.15.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **wear:** sort activities A–Z and make label confirmation readable ([#113](https://github.com/Shir0o/tempo/issues/113)) ([0d87d34](https://github.com/Shir0o/tempo/commit/0d87d34f01c8f092f45fe00019d81e0a19e9e7b1))
+
 ## [1.15.0](https://github.com/Shir0o/tempo/compare/v1.14.0...v1.15.0) (2026-11-07)
 
 
