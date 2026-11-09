@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/Shir0o/tempo/compare/v1.15.1...v1.16.0) (2026-11-09)
+
+
+### Features
+
+* **wear:** repeat the last activity from the label screen ([#115](https://github.com/Shir0o/tempo/issues/115)) ([e535388](https://github.com/Shir0o/tempo/commit/e5353881bb2a6964227e4a85e1bed2d5d46aad35))
+
 ## [1.15.1](https://github.com/Shir0o/tempo/compare/v1.15.0...v1.15.1) (2026-11-08)
 
 
