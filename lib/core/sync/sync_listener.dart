@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
+
 import '../../data/database/tempo_database.dart';
 import '../../data/models/sync_change.dart';
 import '../state/day_recorder.dart';
@@ -154,7 +156,7 @@ class SyncResponse {
 /// client may still run it; every unpaired request is refused with 401.
 class SyncListener {
   static const String defaultHost = '0.0.0.0';
-  static const int defaultPort = 8727;
+  static const int defaultPort = SyncPeer.defaultPort;
 
   /// A request larger than this is refused rather than buffered.
   static const int maxBodyBytes = 4 * 1024 * 1024;
@@ -187,6 +189,10 @@ class SyncListener {
   HttpServer? _server;
   int _boundPort = 0;
   final List<Completer<void>> _waiters = [];
+
+  /// Bumped when a client appears in `sync_peers` for the first time, so an
+  /// open Settings page can show a device that paired while it was watching.
+  final ValueNotifier<int> peersRevision = ValueNotifier<int>(0);
 
   SyncListener({
     required this.database,
@@ -475,6 +481,9 @@ class SyncListener {
         lastSeenEpochMs: pairing.nowUtcMs(),
       ),
     );
+    // Announce a new client once; a held request that repeats on every poll
+    // must not turn an open Settings page into a reload loop.
+    if (existing == null) peersRevision.value++;
   }
 
   Future<String> _readBody(HttpRequest request) async {

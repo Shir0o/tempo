@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS sync_peers (
     peer_device_id TEXT PRIMARY KEY,
     store_id TEXT NOT NULL,
     host TEXT NOT NULL,
+    port INTEGER NOT NULL DEFAULT 8727,
     last_seen_epoch_ms INTEGER NOT NULL
 );
 ''';
@@ -570,4 +571,19 @@ WHERE id = (
 
 Future<void> _backfillChange(DatabaseExecutor db, SyncChange change) async {
   await db.insert('changes', change.toChangeRow());
+}
+
+/// Version 12: a paired peer keeps the port the pairing code carried.
+///
+/// Pairing used to remember only the host, so the Mac fell back to mDNS to
+/// find the port and a network that blocks mDNS could pair but never connect.
+/// Existing rows adopt the phone's fixed listener port.
+Future<void> migrateV11ToV12(DatabaseExecutor db) async {
+  final peerColumns = await db.rawQuery('PRAGMA table_info(sync_peers)');
+  final hasPort = peerColumns.any((row) => row['name'] == 'port');
+  if (!hasPort) {
+    await db.execute(
+      'ALTER TABLE sync_peers ADD COLUMN port INTEGER NOT NULL DEFAULT 8727',
+    );
+  }
 }

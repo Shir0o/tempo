@@ -81,9 +81,6 @@ class SyncClientStats {
 /// long-poll open so a label on the phone lands without a poll interval, and
 /// falls back to a [pollInterval] when long-polling does not answer.
 class SyncClient {
-  /// How many consecutive failures are retried before the loop gives up.
-  static const int maxAttempts = 5;
-
   final TempoDatabase database;
   final PeerPairing pairing;
   final ReplicaApplier applier;
@@ -304,11 +301,10 @@ class SyncClient {
       } catch (error) {
         if (!_running) return;
         failures++;
-        if (failures >= maxAttempts) {
-          status.value = SyncClientStatus.failed;
-          _running = false;
-          return;
-        }
+        // A phone that is closed, asleep, or off the network is not a
+        // permanent failure. Keep retrying at the capped backoff instead of
+        // stopping, so the Mac reconnects when the phone comes back rather
+        // than staying "paired" and silent until the app is restarted.
         await Future<void>.delayed(backoffForAttempt(failures));
         continue;
       }
@@ -492,6 +488,13 @@ class SyncClient {
   }
 
   Future<_PeerSession> _dial() async {
+    // The code the Mac scanned carries the phone's address. Dialling it is
+    // what makes pairing work on a network that blocks mDNS, or where Local
+    // Network access was refused; discovery stays the fallback for a Mac that
+    // has never paired.
+    final paired = await _pairedSession();
+    if (paired != null) return paired;
+
     try {
       await discovery.start();
     } on DiscoveryUnavailableException catch (e) {
@@ -508,6 +511,27 @@ class SyncClient {
       );
     }
     return _PeerSession(peer: peer, secret: secret);
+  }
+
+  /// The phone this Mac paired with, as its row in `sync_peers` remembers it.
+  ///
+  /// The row carries the host and port from the pairing code, so a network
+  /// that blocks mDNS can still connect.
+  Future<_PeerSession?> _pairedSession() async {
+    for (final peer in await database.getPeers()) {
+      if (peer.host.isEmpty || peer.storeId.isEmpty) continue;
+      final secret = await pairing.secretForPeerStore(peer.storeId);
+      if (secret == null) continue;
+      return _PeerSession(
+        peer: DiscoveredPeer(
+          host: peer.host,
+          port: peer.port,
+          storeId: peer.storeId,
+        ),
+        secret: secret,
+      );
+    }
+    return null;
   }
 
   Future<String> _deviceId() async =>

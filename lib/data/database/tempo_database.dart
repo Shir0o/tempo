@@ -30,7 +30,7 @@ class TempoDatabase {
 
   Database get db => _db;
 
-  static const int databaseVersion = 11;
+  static const int databaseVersion = 12;
   static const String databaseFileName = 'tempo.db';
 
   // --- DDL Constants (schema v6) ---
@@ -199,6 +199,9 @@ CREATE TABLE IF NOT EXISTS settings (
           }
           if (oldVersion < 11) {
             await migrateV10ToV11(db);
+          }
+          if (oldVersion < 12) {
+            await migrateV11ToV12(db);
           }
         },
       ),
