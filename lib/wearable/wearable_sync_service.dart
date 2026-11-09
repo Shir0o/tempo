@@ -7,6 +7,7 @@ import '../core/state/suggestion_loader.dart';
 import '../core/time/timezone_id.dart';
 import '../data/database/tempo_database.dart';
 import '../data/models/activity.dart';
+import '../data/models/record.dart';
 import '../data/models/sync_change.dart';
 
 /// Represents an action received from the Wear OS companion watch.
@@ -152,12 +153,47 @@ class WearableSyncService {
   Stream<WatchAction> get incomingWatchActions => _watchActionController.stream;
 
   /// Initializes listeners and registers the platform method call handler.
-  void initialize() {
+  ///
+  /// Actions the phone's native listener buffered while this engine was not
+  /// running are replayed first, then the watch is asked to flush anything it
+  /// still has queued. Both use the same serialized action path as a live tap,
+  /// so the per-watch watermark drops anything already applied.
+  Future<void> initialize() async {
     channel.setMethodCallHandler(_handleNativeMethodCall);
     dayRecorder.lapListenable.addListener(_onLapChanged);
 
     // Initial sync of current state
-    _onLapChanged();
+    await _onLapChanged();
+    await _replayPendingWatchActions();
+    await _pingWatch();
+  }
+
+  Future<void> _replayPendingWatchActions() async {
+    if (_isDisposed) return;
+    try {
+      final pending = await channel.invokeMethod<List<dynamic>>(
+        'drainPendingWatchActions',
+      );
+      if (pending == null || pending.isEmpty) return;
+      for (final entry in pending) {
+        if (entry is Map) {
+          await _ingestWatchAction(WatchAction.fromMap(entry));
+        }
+      }
+    } catch (_) {
+      // An older phone build has no inbox; the watch queue retries.
+    }
+  }
+
+  /// Asks every connected watch to re-send its unacknowledged actions. This is
+  /// what turns a label taken while the phone app was closed into a Record.
+  Future<void> _pingWatch() async {
+    if (_isDisposed) return;
+    try {
+      await channel.invokeMethod<void>('pingWatch');
+    } catch (_) {
+      // The watch is unreachable; it flushes on the next peer connection.
+    }
   }
 
   /// Synchronizes the list of available activities, and the tile's ranked
@@ -282,18 +318,23 @@ class WearableSyncService {
     if (call.method == 'onWatchActionReceived') {
       final args = call.arguments;
       if (args is Map) {
-        final action = WatchAction.fromMap(args);
-        _watchActionController.add(action);
-        final result = await _serialized(() => _executeWatchAction(action));
-        return {
-          'status': result.status,
-          'reason': result.reason,
-          'actionId': result.actionId,
-          'actionSeq': result.actionSeq,
-        };
+        return _ingestWatchAction(WatchAction.fromMap(args));
       }
     }
     return null;
+  }
+
+  /// Applies one watch action and returns the acknowledgement shape the native
+  /// side reads before it drops its durable copy.
+  Future<Map<String, dynamic>> _ingestWatchAction(WatchAction action) async {
+    _watchActionController.add(action);
+    final result = await _serialized(() => _executeWatchAction(action));
+    return {
+      'status': result.status,
+      'reason': result.reason,
+      'actionId': result.actionId,
+      'actionSeq': result.actionSeq,
+    };
   }
 
   /// Applies [action] at the instant it was tapped, or refuses it with a
@@ -326,8 +367,14 @@ class WearableSyncService {
       );
     }
 
+    // A frame of reference mismatch is a clock problem; lateness is not. A
+    // watch action is durable and may legitimately arrive hours after it was
+    // tapped (the phone was in another room, or off). Only a tap stamped in
+    // the future can be wrong, so only that is refused here. A tap that is
+    // older than the open Lap belongs to time already closed, and the Lap
+    // start check below refuses it for the right reason.
     const maxClockSkewMs = 10 * 60 * 1000;
-    if ((action.timestampEpochMs - _nowUtcMs()).abs() > maxClockSkewMs) {
+    if (action.timestampEpochMs - _nowUtcMs() > maxClockSkewMs) {
       return await _reject(action, IntentResult.reasonClockSkew);
     }
 
@@ -339,6 +386,30 @@ class WearableSyncService {
     // reason.
     await dayRecorder.initialize();
     final lap = dayRecorder.lap;
+
+    // A MidnightSplit moves the open Lap to 00:00, but a tap before midnight
+    // is still durable time in the Day it was lived in. Label the closed
+    // stretch up to the tap instead of throwing the night away. "Still" and
+    // "again" carry no Activity, so they resolve against the last tracked
+    // Record, exactly as their live paths do.
+    if (type != 'UNDO' &&
+        lap != null &&
+        lap.startedAtEpochMs > action.timestampEpochMs) {
+      final late = await _lateActionLabel(action, type);
+      if (late != null) {
+        final record = await dayRecorder.labelClosedSpan(
+          late.id,
+          atEpochMs: action.timestampEpochMs,
+          atZoneId: action.zoneId,
+          comment: late.comment,
+          tags: late.tags,
+          intentId: action.actionId,
+        );
+        if (record != null) return await _applied(action, entityId: record.id);
+      }
+      return await _reject(action, IntentResult.reasonLapMoved);
+    }
+
     if (type != 'UNDO' &&
         lap != null &&
         lap.startedAtEpochMs >= action.timestampEpochMs) {
@@ -457,6 +528,58 @@ class WearableSyncService {
       status: IntentResult.rejectedStatus,
       reason: reason,
     );
+  }
+
+  /// The Activity, note and tags a tap made before the open Lap started should
+  /// apply. A plain LABEL carries its own Activity; "Still" and "again" carry
+  /// none and resolve against the most recent tracked Record, the same source
+  /// their live paths use.
+  Future<({String id, String comment, List<String> tags})?> _lateActionLabel(
+    WatchAction action,
+    String type,
+  ) async {
+    switch (type) {
+      case 'LABEL':
+        final activityId = action.activityId;
+        if (activityId == null ||
+            activityId.isEmpty ||
+            !await _activityExists(activityId)) {
+          return null;
+        }
+        return (
+          id: activityId,
+          comment: action.comment ?? '',
+          tags: const <String>[],
+        );
+      case 'REPEAT':
+      case 'CONTINUE':
+        final last = await _lastTrackedRecord();
+        final activityId = last?.activityId;
+        if (last == null || activityId == null) return null;
+        return (
+          id: activityId,
+          comment: type == 'CONTINUE' ? last.comment : '',
+          tags: type == 'CONTINUE' ? last.tagIds : const <String>[],
+        );
+    }
+    return null;
+  }
+
+  /// The most recent labelled Record, with the note and tags "Still" carries
+  /// forward.
+  Future<Record?> _lastTrackedRecord() async {
+    final db = database;
+    if (db == null) return null;
+    try {
+      final records = await db.getRecords(
+        trackedOnly: true,
+        limit: 1,
+        orderBy: 'ended_at_epoch_ms DESC, rowid DESC',
+      );
+      return records.isEmpty ? null : records.first;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<bool> _activityExists(String activityId) async {

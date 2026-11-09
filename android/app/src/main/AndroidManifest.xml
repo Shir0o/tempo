@@ -61,6 +61,28 @@
             android:name=".LapNotificationReceiver"
             android:exported="false" />
 
+        <!-- Watch labels arrive as DataItems/messages. Play Services starts this
+             service even when the Flutter UI is not running, so a label taken
+             with the phone in a pocket is buffered instead of dropped. -->
+        <service
+            android:name=".WearableActionService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:pathPrefix="/tempo/actions" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:path="/tempo/action" />
+            </intent-filter>
+        </service>
+
         <!-- Quick Settings notification pull-down shade tile -->
         <service
             android:name=".TempoQuickSettingsTileService"

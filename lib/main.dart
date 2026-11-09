@@ -113,7 +113,9 @@ Future<void> main() async {
         dayRecorder: dayRecorder,
         database: database,
       );
-      wearableSyncService.initialize();
+      // Start listening before the first frame, but do not hold the UI on the
+      // startup replay of watch actions and the watch flush.
+      unawaited(wearableSyncService.initialize());
       // Sync initial activities to DataClient
       database.getAllActivities().then(wearableSyncService.syncActivities);
       // Keep the ongoing Lap notification current and handle its taps
