@@ -903,8 +903,13 @@ class DayRecorder {
   }
 
   /// Labels the open Lap with the Activity of the most recent labelled Record.
-  /// Returns null when no labelled Record exists.
-  Future<Record?> sameAsLast() => _synchronized(() async {
+  /// Returns null when no labelled Record exists. [atEpochMs] is the instant
+  /// the user tapped; [intentId] makes a re-delivered tap idempotent.
+  Future<Record?> sameAsLast({
+    int? atEpochMs,
+    String? atZoneId,
+    String? intentId,
+  }) => _synchronized(() async {
     await _ensureInitializedLocked();
     final previous = await _db.getRecords(
       trackedOnly: true,
@@ -912,7 +917,12 @@ class DayRecorder {
       orderBy: 'ended_at_epoch_ms DESC, rowid DESC',
     );
     if (previous.isEmpty) return null;
-    return _closeLapLocked(activityId: previous.first.activityId);
+    return _closeLapLocked(
+      activityId: previous.first.activityId,
+      atEpochMs: atEpochMs,
+      atZoneId: atZoneId,
+      intentId: intentId,
+    );
   });
 
   /// Extends the most recent labelled Record to now, keeping its Activity,

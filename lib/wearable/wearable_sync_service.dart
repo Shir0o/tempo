@@ -11,7 +11,9 @@ import '../data/models/sync_change.dart';
 
 /// Represents an action received from the Wear OS companion watch.
 class WatchAction {
-  /// "LABEL" labels the open Lap; "SPLIT" closes it as an Untracked Record.
+  /// "LABEL" labels the open Lap; "SPLIT" closes it as an Untracked Record;
+  /// "CONTINUE" grows the last Record ("Still"); "REPEAT" labels the Lap with
+  /// the last Record's Activity again; "UNDO" reverses the last label.
   final String type;
   final String? activityId;
 
@@ -225,15 +227,18 @@ class WearableSyncService {
   Future<void> _onLapChanged() async {
     if (_isDisposed) return;
 
-    final lap = dayRecorder.lap;
-    final now = _nowUtcMs();
     final rejectedActionIds = List<String>.from(_rejectedActionIds);
     final deviceId = _watchDeviceId;
 
     try {
+      final lastActivity = await _lastActivity();
       final appliedActionSeq = deviceId == null || deviceId.isEmpty
           ? 0
           : await _readWatermark(deviceId);
+      // Read the Lap after every await so the snapshot sent is the current one,
+      // not the one from when this listener first fired.
+      final lap = dayRecorder.lap;
+      final now = _nowUtcMs();
       await channel.invokeMethod('syncLap', {
         'lapStartedAtEpochMs': lap?.startedAtEpochMs ?? 0,
         'lapStartedTimezoneId': lap?.startedTimezoneId ?? '',
@@ -241,12 +246,34 @@ class WearableSyncService {
         'updatedAtEpochMs': now,
         'appliedActionSeq': appliedActionSeq,
         'rejectedActionIds': rejectedActionIds,
+        'lastActivityId': lastActivity?.id,
+        'lastActivityName': lastActivity?.name,
+        'lastActivityColorHex': lastActivity?.colorHex,
       });
       if (rejectedActionIds.isNotEmpty) {
         _rejectedActionIds.removeWhere(rejectedActionIds.contains);
       }
     } catch (_) {
       // Platform channel or watch unreachable; offline buffer will sync upon reconnection
+    }
+  }
+
+  /// The Activity on the most recent labelled Record, so the watch can offer
+  /// "Still `Activity`" and "`Activity` again" beside its Activity pills.
+  Future<Activity?> _lastActivity() async {
+    final db = database;
+    if (db == null) return null;
+    try {
+      final last = await db.getRecords(
+        trackedOnly: true,
+        limit: 1,
+        orderBy: 'ended_at_epoch_ms DESC, rowid DESC',
+      );
+      final activityId = last.isEmpty ? null : last.first.activityId;
+      if (activityId == null) return null;
+      return await db.getActivityById(activityId);
+    } catch (_) {
+      return null;
     }
   }
 
@@ -278,7 +305,11 @@ class WearableSyncService {
     }
 
     final type = action.type.toUpperCase();
-    if (type != 'LABEL' && type != 'SPLIT' && type != 'UNDO') {
+    if (type != 'LABEL' &&
+        type != 'SPLIT' &&
+        type != 'UNDO' &&
+        type != 'CONTINUE' &&
+        type != 'REPEAT') {
       return _reject(action, 'unknown-action');
     }
 
@@ -339,6 +370,24 @@ class WearableSyncService {
             atZoneId: action.zoneId,
             intentId: action.actionId,
           );
+          return await _applied(action, entityId: record.id);
+
+        case 'CONTINUE':
+          final record = await dayRecorder.continueLast(
+            atEpochMs: action.timestampEpochMs,
+            atZoneId: action.zoneId,
+            intentId: action.actionId,
+          );
+          if (record == null) return await _reject(action, 'nothing-to-repeat');
+          return await _applied(action, entityId: record.id);
+
+        case 'REPEAT':
+          final record = await dayRecorder.sameAsLast(
+            atEpochMs: action.timestampEpochMs,
+            atZoneId: action.zoneId,
+            intentId: action.actionId,
+          );
+          if (record == null) return await _reject(action, 'nothing-to-repeat');
           return await _applied(action, entityId: record.id);
 
         case 'UNDO':

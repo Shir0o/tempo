@@ -179,6 +179,11 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
         // The highest watch action the phone applied, and the ones it refused.
         val appliedActionSeq = (args["appliedActionSeq"] as? Number)?.toLong() ?: 0L
         val rejectedActionIds = (args["rejectedActionIds"] as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+        // The Activity on the latest Record, so the watch can offer repeat
+        // buttons next to its Activity pills.
+        val lastActivityId = args["lastActivityId"] as? String ?: ""
+        val lastActivityName = args["lastActivityName"] as? String ?: ""
+        val lastActivityColorHex = args["lastActivityColorHex"] as? String ?: ""
 
         // Update Quick Settings Tile
         try {
@@ -196,6 +201,9 @@ class MainActivity : FlutterActivity(), DataClient.OnDataChangedListener, Messag
                     dataMap.putLong("updatedAtEpochMs", updatedAt)
                     dataMap.putLong("appliedActionSeq", appliedActionSeq)
                     dataMap.putStringArrayList("rejectedActionIds", ArrayList(rejectedActionIds))
+                    dataMap.putString("lastActivityId", lastActivityId)
+                    dataMap.putString("lastActivityName", lastActivityName)
+                    dataMap.putString("lastActivityColorHex", lastActivityColorHex)
                 }.asPutDataRequest().setUrgent()
 
                 Wearable.getDataClient(this@MainActivity).putDataItem(putRequest).await()
