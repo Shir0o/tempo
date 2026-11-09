@@ -18,8 +18,8 @@ class ActivitySection {
 }
 
 /// Arranges Today's activity blocks for [order]. Category sections stay in the
-/// categories' own order; activities inside a section follow creation order,
-/// and uncategorised activities fall into a final "Other" section.
+/// categories' own order; activities inside a section are listed A–Z, and
+/// uncategorised activities fall into a final "Other" section.
 List<ActivitySection> activitySections({
   required List<Activity> activities,
   required List<Category> categories,
@@ -51,7 +51,7 @@ List<ActivitySection> activitySections({
       for (final category in categories) {
         final group = byCategory.remove(category.id);
         if (group == null || group.isEmpty) continue;
-        group.sort(byCreation);
+        group.sort(byName);
         sections.add(
           ActivitySection(
             label: category.name,
@@ -66,7 +66,7 @@ List<ActivitySection> activitySections({
         uncategorised.addAll(group);
       }
       if (uncategorised.isNotEmpty) {
-        uncategorised.sort(byCreation);
+        uncategorised.sort(byName);
         sections.add(
           ActivitySection(
             // A lone "Other" heading over the whole grid says nothing.
