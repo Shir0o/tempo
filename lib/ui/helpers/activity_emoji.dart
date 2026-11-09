@@ -310,6 +310,21 @@ class ActivityEmoji {
     return emoji;
   }
 
+  /// [emoji] if it is not in [taken], otherwise its first unused alternate,
+  /// otherwise the first unused emoji in [vocabulary], or null when every
+  /// vocabulary emoji is taken.
+  static String? distinctUnused(String emoji, Iterable<String> taken) {
+    final used = taken.toSet();
+    if (!used.contains(emoji)) return emoji;
+    for (final alternate in alternates[emoji] ?? const <String>[]) {
+      if (!used.contains(alternate)) return alternate;
+    }
+    for (final candidate in vocabulary) {
+      if (!used.contains(candidate)) return candidate;
+    }
+    return null;
+  }
+
   /// Scans content tokens right to left (head noun first) for the closest
   /// known single word.
   static String? _nearMatch(String name) {

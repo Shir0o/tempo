@@ -338,6 +338,178 @@ void main() {
     });
   });
 
+  group('Activity archive', () {
+    final now = 1730000000000;
+
+    Activity activity(String id) => Activity(
+      id: id,
+      name: 'Activity $id',
+      createdAtEpochMs: now,
+      updatedAtEpochMs: now,
+    );
+
+    Record record(
+      String id,
+      String activityId, {
+      String comment = '',
+      List<String> tagIds = const [],
+    }) => Record(
+      id: id,
+      activityId: activityId,
+      startedAtEpochMs: now - 3600000,
+      endedAtEpochMs: now,
+      comment: comment,
+      timezoneId: 'America/Los_Angeles',
+      endTimezoneId: 'America/New_York',
+      isMidnightSplit: true,
+      createdAtEpochMs: now,
+      updatedAtEpochMs: now,
+      tagIds: tagIds,
+    );
+
+    test(
+      'moves tagged records to the target and archives the source',
+      () async {
+        await db.insertActivity(activity('act-source'));
+        await db.insertActivity(activity('act-target'));
+        await db.insertTag(
+          Tag(
+            id: 'tag-one',
+            name: 'One',
+            createdAtEpochMs: now,
+            updatedAtEpochMs: now,
+          ),
+        );
+        await db.insertTag(
+          Tag(
+            id: 'tag-two',
+            name: 'Two',
+            createdAtEpochMs: now,
+            updatedAtEpochMs: now,
+          ),
+        );
+        await db.insertRecord(
+          record(
+            'rec-moved',
+            'act-source',
+            comment: 'Keep this note',
+            tagIds: ['tag-one', 'tag-two'],
+          ),
+        );
+        await db.insertRecord(
+          record(
+            'rec-already-target',
+            'act-target',
+            comment: 'Target history',
+            tagIds: ['tag-two'],
+          ),
+        );
+        final before = await db.highestChangeSeq();
+        final archivedAt = now + 100;
+
+        final moved = await db.archiveActivity(
+          activity('act-source'),
+          mergeIntoActivityId: 'act-target',
+          updatedAtEpochMs: archivedAt,
+        );
+
+        expect(moved, 1);
+        final source = await db.getActivityById('act-source');
+        expect(source!.isArchived, isTrue);
+        expect(source.updatedAtEpochMs, archivedAt);
+        final target = await db.getActivityById('act-target');
+        expect(target!.isArchived, isFalse);
+        expect(target.updatedAtEpochMs, now);
+
+        final movedRecord = await db.getRecordById('rec-moved');
+        expect(movedRecord!.activityId, 'act-target');
+        expect(movedRecord.comment, 'Keep this note');
+        expect(movedRecord.startedAtEpochMs, now - 3600000);
+        expect(movedRecord.endedAtEpochMs, now);
+        expect(movedRecord.timezoneId, 'America/Los_Angeles');
+        expect(movedRecord.endTimezoneId, 'America/New_York');
+        expect(movedRecord.isMidnightSplit, isTrue);
+        expect(movedRecord.tagIds, containsAll(['tag-one', 'tag-two']));
+        expect(movedRecord.updatedAtEpochMs, archivedAt);
+
+        final untouched = await db.getRecordById('rec-already-target');
+        expect(untouched!.activityId, 'act-target');
+        expect(untouched.updatedAtEpochMs, now);
+        expect(untouched.tagIds, equals(['tag-two']));
+
+        final changes = await db.changesAfter(before);
+        expect(changes, hasLength(2));
+        final recordChange = changes.singleWhere(
+          (change) => change.kind == SyncChangeKind.recordUpsert,
+        );
+        expect(recordChange.entityId, 'rec-moved');
+        expect(recordChange.atEpochMs, archivedAt);
+        expect(recordChange.record!.activityId, 'act-target');
+        expect(recordChange.record!.comment, 'Keep this note');
+        expect(
+          recordChange.record!.tagIds,
+          containsAll(['tag-one', 'tag-two']),
+        );
+        final activityChange = changes.singleWhere(
+          (change) => change.kind == SyncChangeKind.activityUpsert,
+        );
+        expect(activityChange.entityId, 'act-source');
+        expect(activityChange.atEpochMs, archivedAt);
+        expect(activityChange.activity!.isArchived, isTrue);
+      },
+    );
+
+    test('archives without moving records when no target is given', () async {
+      await db.insertActivity(activity('act-source'));
+      await db.insertRecord(record('rec-kept', 'act-source'));
+      final before = await db.highestChangeSeq();
+      final archivedAt = now + 200;
+
+      final moved = await db.archiveActivity(
+        activity('act-source'),
+        updatedAtEpochMs: archivedAt,
+      );
+
+      expect(moved, 0);
+      expect((await db.getActivityById('act-source'))!.isArchived, isTrue);
+      final kept = await db.getRecordById('rec-kept');
+      expect(kept!.activityId, 'act-source');
+      expect(kept.updatedAtEpochMs, now);
+
+      final changes = await db.changesAfter(before);
+      expect(changes, hasLength(1));
+      expect(changes.single.kind, SyncChangeKind.activityUpsert);
+      expect(changes.single.entityId, 'act-source');
+      expect(changes.single.activity!.isArchived, isTrue);
+      expect(changes.single.atEpochMs, archivedAt);
+    });
+
+    test('rejects same or unknown targets without writing', () async {
+      await db.insertActivity(activity('act-source'));
+      await db.insertRecord(record('rec-kept', 'act-source'));
+      final before = await db.highestChangeSeq();
+
+      await expectLater(
+        db.archiveActivity(
+          activity('act-source'),
+          mergeIntoActivityId: 'act-source',
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+      await expectLater(
+        db.archiveActivity(
+          activity('act-source'),
+          mergeIntoActivityId: 'act-missing',
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+
+      expect((await db.getActivityById('act-source'))!.isArchived, isFalse);
+      expect((await db.getRecordById('rec-kept'))!.activityId, 'act-source');
+      expect(await db.highestChangeSeq(), before);
+    });
+  });
+
   group('Tags CRUD & Tombstones', () {
     test('inserts, reads, updates, and deletes tags with tombstones', () async {
       final now = DateTime.now().toUtc().millisecondsSinceEpoch;

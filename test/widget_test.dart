@@ -53,9 +53,13 @@ void main() {
     expect(find.text('History'), findsOneWidget);
     expect(find.text('Settings'), findsOneWidget);
 
-    // Verify the open Lap and the pinned activity are rendered
+    // Verify the open Lap, the pinned Activity block, and its suggestion chip.
     expect(find.text('Untracked'), findsOneWidget);
-    expect(find.text('Coding'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('suggested-chip-act-test-1')),
+      findsOneWidget,
+    );
+    expect(find.text('Coding'), findsWidgets);
 
     await tester.pumpWidget(const SizedBox.shrink());
     dayRecorder.dispose();

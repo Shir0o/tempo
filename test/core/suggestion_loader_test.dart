@@ -17,8 +17,18 @@ void main() {
     final now = DateTime.utc(2026, 11, 5, 18).millisecondsSinceEpoch;
     late TempoDatabase db;
 
-    Activity activity(String id) =>
-        Activity(id: id, name: id, createdAtEpochMs: 0, updatedAtEpochMs: 0);
+    Activity activity(
+      String id, {
+      bool isPinned = false,
+      bool isArchived = false,
+    }) => Activity(
+      id: id,
+      name: id,
+      isPinned: isPinned,
+      isArchived: isArchived,
+      createdAtEpochMs: 0,
+      updatedAtEpochMs: 0,
+    );
 
     Future<void> insertRecord(String id, String? activityId, int startMs) =>
         db.insertRecord(
@@ -102,6 +112,42 @@ void main() {
       );
 
       expect(ranked.first.id, 'recent');
+    });
+
+    test('shows pinned activities at cold start', () async {
+      final ranked = await loadSuggestions(
+        database: db,
+        candidates: [
+          activity('gym'),
+          activity('pinned', isPinned: true),
+          activity('archived-pinned', isPinned: true, isArchived: true),
+        ],
+        nowEpochMs: now,
+        timezoneId: zone,
+        limit: 4,
+      );
+
+      expect(ranked.map((activity) => activity.id), ['pinned']);
+    });
+
+    test('always gives a pinned activity a suggestion slot', () async {
+      const hour = 3600000;
+      await insertRecord('r1', 'gym', now - 2 * hour);
+      await insertRecord('r2', 'recent', now - hour);
+
+      final ranked = await loadSuggestions(
+        database: db,
+        candidates: [
+          activity('gym'),
+          activity('recent'),
+          activity('pinned', isPinned: true),
+        ],
+        nowEpochMs: now,
+        timezoneId: zone,
+        limit: 2,
+      );
+
+      expect(ranked.map((activity) => activity.id), ['pinned', 'recent']);
     });
   });
 }

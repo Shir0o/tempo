@@ -122,4 +122,30 @@ void main() {
       }
     });
   });
+
+  group('distinctUnused', () {
+    test('keeps a free base emoji', () {
+      expect(ActivityEmoji.distinctUnused('😴', ['📖']), '😴');
+    });
+
+    test('uses the first unused alternate', () {
+      expect(ActivityEmoji.distinctUnused('😴', ['😴', '💤']), '🛌');
+    });
+
+    test('falls back to the first free vocabulary emoji', () {
+      final taken = ['😴', '💤', '🛌'];
+      final expected = ActivityEmoji.vocabulary.firstWhere(
+        (emoji) => !taken.contains(emoji),
+      );
+
+      expect(ActivityEmoji.distinctUnused('😴', taken), expected);
+    });
+
+    test('returns null when every vocabulary emoji is taken', () {
+      expect(
+        ActivityEmoji.distinctUnused('😴', ActivityEmoji.vocabulary),
+        isNull,
+      );
+    });
+  });
 }
