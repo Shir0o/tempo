@@ -173,7 +173,7 @@ void main() {
     );
 
     test(
-      'tile slots are the three most useful Activities in the history window',
+      'tile slots put a pinned Activity first, then the most useful history',
       () async {
         await db.insertActivity(
           const Activity(
@@ -205,9 +205,9 @@ void main() {
 
         final args = methodCalls.single.arguments as Map;
         expect(args['tileActivityIds'], [
+          'act-coding',
           'act-workout',
           'act-reading',
-          'act-coding',
         ]);
       },
     );
