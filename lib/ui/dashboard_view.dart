@@ -74,7 +74,6 @@ class DashboardView extends StatefulWidget {
 }
 
 const Color _ink = TempoColors.ink;
-const Color _inkMuted = TempoColors.inkMuted;
 const Color _inkFaint = TempoColors.inkFaint;
 const Color _panel = TempoColors.panel;
 const Color _track = TempoColors.track;
@@ -719,12 +718,16 @@ class _DashboardViewState extends State<DashboardView>
                 ),
                 Align(
                   alignment: Alignment.centerLeft,
-                  child: Text(
-                    'since $since',
-                    style: const TextStyle(
-                      fontFamily: _fontFamily,
-                      color: _inkMuted,
-                      fontSize: 13,
+                  child: DecoratedBox(
+                    decoration: const BoxDecoration(color: _panel),
+                    child: Text(
+                      'since $since',
+                      style: const TextStyle(
+                        fontFamily: _fontFamily,
+                        color: _ink,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ),
