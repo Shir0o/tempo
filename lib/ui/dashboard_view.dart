@@ -74,7 +74,6 @@ class DashboardView extends StatefulWidget {
 }
 
 const Color _ink = TempoColors.ink;
-const Color _inkMuted = TempoColors.inkMuted;
 const Color _inkFaint = TempoColors.inkFaint;
 const Color _panel = TempoColors.panel;
 const Color _track = TempoColors.track;
@@ -699,38 +698,55 @@ class _DashboardViewState extends State<DashboardView>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _buildPanelHeader(now),
+                DecoratedBox(
+                  decoration: const BoxDecoration(color: _panel),
+                  child: _buildPanelHeader(now),
+                ),
                 const SizedBox(height: 18),
-                const Text(
-                  'Untracked',
-                  style: TextStyle(
-                    fontFamily: _fontFamily,
-                    color: _ink,
-                    fontSize: 26,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.6,
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Untracked',
+                    style: TextStyle(
+                      fontFamily: _fontFamily,
+                      color: _ink,
+                      fontSize: 26,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -0.6,
+                    ),
                   ),
                 ),
-                Text(
-                  'since $since',
-                  style: const TextStyle(
-                    fontFamily: _fontFamily,
-                    color: _inkMuted,
-                    fontSize: 13,
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: DecoratedBox(
+                    decoration: const BoxDecoration(color: _panel),
+                    child: Text(
+                      'since $since',
+                      style: const TextStyle(
+                        fontFamily: _fontFamily,
+                        color: _ink,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 2),
-                Text(
-                  UiHelpers.formatMonospaceDuration(elapsedMs),
-                  maxLines: 1,
-                  style: const TextStyle(
-                    fontFamily: _fontFamily,
-                    color: _ink,
-                    fontSize: 58,
-                    fontWeight: FontWeight.w500,
-                    letterSpacing: -2,
-                    height: 1.05,
-                    fontFeatures: [FontFeature.tabularFigures()],
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    UiHelpers.formatMonospaceDuration(elapsedMs),
+                    maxLines: 1,
+                    style: const TextStyle(
+                      fontFamily: _fontFamily,
+                      color: _ink,
+                      fontSize: 58,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: -2,
+                      height: 1.05,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
                   ),
                 ),
                 const SizedBox(height: 14),
@@ -764,13 +780,17 @@ class _DashboardViewState extends State<DashboardView>
                 ),
               ),
               const SizedBox(height: 2),
-              Text(
-                '${UiHelpers.formatDurationHuman(_loggedTodayMs)} logged',
-                style: const TextStyle(
-                  fontFamily: _fontFamily,
-                  color: _inkMuted,
-                  fontSize: 12,
-                  fontFeatures: [FontFeature.tabularFigures()],
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '${UiHelpers.formatDurationHuman(_loggedTodayMs)} logged',
+                  style: const TextStyle(
+                    fontFamily: _fontFamily,
+                    color: _ink,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
                 ),
               ),
             ],
@@ -1129,7 +1149,7 @@ class _DashboardViewState extends State<DashboardView>
         scaler.scale(12) * _chipLineHeight +
         2;
     final activityRowHeight = math.max(
-      48.0,
+      60.0,
       12 + 16 + scaler.scale(12.5) * _chipLineHeight + 4,
     );
 
@@ -1203,24 +1223,27 @@ class _DashboardViewState extends State<DashboardView>
           key: ValueKey('suggested-chip-${activity.id}'),
           borderRadius: BorderRadius.circular(18),
           onTap: () => _labelActivity(activity),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ActivityIcon(activity, size: 18),
-                const SizedBox(width: 8),
-                Text(
-                  activity.name,
-                  style: const TextStyle(
-                    fontFamily: _fontFamily,
-                    color: Colors.white,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                    height: _chipLineHeight,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ActivityIcon(activity, size: 18),
+                  const SizedBox(width: 8),
+                  Text(
+                    activity.name,
+                    style: const TextStyle(
+                      fontFamily: _fontFamily,
+                      color: Colors.white,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      height: _chipLineHeight,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
