@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.18.0](https://github.com/Shir0o/tempo/compare/v1.17.2...v1.18.0) (2026-11-10)
+
+
+### Features
+
+* **today:** sort activities A–Z within each category ([#127](https://github.com/Shir0o/tempo/issues/127)) ([07ec3df](https://github.com/Shir0o/tempo/commit/07ec3df2b08e8415801d7fec7ac50c5b1c134193))
+
+
+### Bug Fixes
+
+* **ui:** meet tap target and text contrast guidelines on dashboard ([#129](https://github.com/Shir0o/tempo/issues/129)) ([306d34e](https://github.com/Shir0o/tempo/commit/306d34e655b2baf3f0c3caa51e4303ad3e03c681))
+
 ## [1.17.2](https://github.com/Shir0o/tempo/compare/v1.17.1...v1.17.2) (2026-11-09)
 
 
