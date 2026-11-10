@@ -781,7 +781,8 @@ class _DashboardViewState extends State<DashboardView>
                   style: const TextStyle(
                     fontFamily: _fontFamily,
                     color: _ink,
-                    fontSize: 12,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
                     fontFeatures: [FontFeature.tabularFigures()],
                   ),
                 ),
