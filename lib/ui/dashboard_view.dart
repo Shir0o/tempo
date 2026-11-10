@@ -704,14 +704,17 @@ class _DashboardViewState extends State<DashboardView>
                   child: _buildPanelHeader(now),
                 ),
                 const SizedBox(height: 18),
-                const Text(
-                  'Untracked',
-                  style: TextStyle(
-                    fontFamily: _fontFamily,
-                    color: _ink,
-                    fontSize: 26,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.6,
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Untracked',
+                    style: TextStyle(
+                      fontFamily: _fontFamily,
+                      color: _ink,
+                      fontSize: 26,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -0.6,
+                    ),
                   ),
                 ),
                 Align(
