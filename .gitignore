@@ -53,3 +53,7 @@ store-listing/src/SpaceGrotesk.ttf
 
 # macOS local signing overrides (copy LocalSigning.xcconfig.example)
 /macos/Runner/Configs/LocalSigning.xcconfig
+
+# Golden test captures (local only)
+/test/goldens/
+

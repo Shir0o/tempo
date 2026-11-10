@@ -9,7 +9,7 @@ class TempoColors {
 
   /// Near-black ink: text on light panels, the open Lap in the strip.
   static const Color ink = Color(0xFF121210);
-  static const Color inkMuted = Color(0x8A121210);
+  static const Color inkMuted = Color(0xCC121210);
   static const Color inkFaint = Color(0x5C121210);
 
   /// Light paper: Lap panel, day cards, bottom sheets.
