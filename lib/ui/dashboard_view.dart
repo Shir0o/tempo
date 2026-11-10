@@ -771,13 +771,16 @@ class _DashboardViewState extends State<DashboardView>
                 ),
               ),
               const SizedBox(height: 2),
-              Text(
-                '${UiHelpers.formatDurationHuman(_loggedTodayMs)} logged',
-                style: const TextStyle(
-                  fontFamily: _fontFamily,
-                  color: _inkMuted,
-                  fontSize: 12,
-                  fontFeatures: [FontFeature.tabularFigures()],
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '${UiHelpers.formatDurationHuman(_loggedTodayMs)} logged',
+                  style: const TextStyle(
+                    fontFamily: _fontFamily,
+                    color: _ink,
+                    fontSize: 12,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
                 ),
               ),
             ],
