@@ -699,7 +699,10 @@ class _DashboardViewState extends State<DashboardView>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _buildPanelHeader(now),
+                DecoratedBox(
+                  decoration: const BoxDecoration(color: _panel),
+                  child: _buildPanelHeader(now),
+                ),
                 const SizedBox(height: 18),
                 const Text(
                   'Untracked',
