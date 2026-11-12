@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../core/speech/speech_input.dart';
 import '../../core/state/activity_filter_controller.dart';

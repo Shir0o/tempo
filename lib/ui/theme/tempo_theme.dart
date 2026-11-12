@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// Design D (Color Blocks) tokens shared by every Flutter surface.
 /// DESIGN.md at the repo root is the normative description of these values.
