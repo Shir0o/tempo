@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.1](https://github.com/Shir0o/tempo/compare/v1.18.0...v1.18.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **ui:** prevent action button label truncation under large text scaling ([#130](https://github.com/Shir0o/tempo/issues/130)) ([4117343](https://github.com/Shir0o/tempo/commit/41173437ea1837e85ab81f9b77cd49fcbb91e92f))
+
 ## [1.18.0](https://github.com/Shir0o/tempo/compare/v1.17.2...v1.18.0) (2026-11-10)
 
 
