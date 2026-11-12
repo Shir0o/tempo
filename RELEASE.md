@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.2](https://github.com/Shir0o/tempo/compare/v1.18.1...v1.18.2) (2026-11-12)
+
+
+### Bug Fixes
+
+* **ci:** migrate to material_ui and pin Flutter 3.50.0 ([#132](https://github.com/Shir0o/tempo/issues/132)) ([c41909d](https://github.com/Shir0o/tempo/commit/c41909dd3b9718a85a526e2b2e1318e2133dc736))
+
 ## [1.18.1](https://github.com/Shir0o/tempo/compare/v1.18.0...v1.18.1) (2026-11-12)
 
 
