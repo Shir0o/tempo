@@ -902,64 +902,75 @@ class _DashboardViewState extends State<DashboardView>
 
     // Both repeat the last Activity: "Still" grows its Record, "again" starts a
     // new one.
-    return Row(
-      children: [
-        Expanded(
-          child: FilledButton(
-            onPressed: last == null ? null : _continueLast,
-            style: FilledButton.styleFrom(
-              minimumSize: const Size(0, 52),
-              backgroundColor: _ink,
-              foregroundColor: _panel,
-              disabledBackgroundColor: const Color(0x33121210),
-              disabledForegroundColor: _inkFaint,
-              shape: shape,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              textStyle: textStyle,
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: lastColor,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    last == null ? 'Still' : 'Still ${last.name}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
+    final still = FilledButton(
+      onPressed: last == null ? null : _continueLast,
+      style: FilledButton.styleFrom(
+        minimumSize: const Size(0, 52),
+        backgroundColor: _ink,
+        foregroundColor: _panel,
+        disabledBackgroundColor: const Color(0x33121210),
+        disabledForegroundColor: _inkFaint,
+        shape: shape,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        textStyle: textStyle,
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(color: lastColor, shape: BoxShape.circle),
           ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: OutlinedButton(
-            onPressed: last == null ? null : _labelSameAsLast,
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(0, 52),
-              foregroundColor: _ink,
-              side: const BorderSide(color: _ink, width: 1.2),
-              shape: shape,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              textStyle: textStyle,
-            ),
+          const SizedBox(width: 8),
+          Flexible(
             child: Text(
-              last == null ? 'Again' : '${last.name} again',
-              maxLines: 1,
+              last == null ? 'Still' : 'Still ${last.name}',
+              maxLines: 2,
+              textAlign: TextAlign.center,
               overflow: TextOverflow.ellipsis,
             ),
           ),
-        ),
-      ],
+        ],
+      ),
+    );
+
+    final again = OutlinedButton(
+      onPressed: last == null ? null : _labelSameAsLast,
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(0, 52),
+        foregroundColor: _ink,
+        side: const BorderSide(color: _ink, width: 1.2),
+        shape: shape,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        textStyle: textStyle,
+      ),
+      child: Text(
+        last == null ? 'Again' : '${last.name} again',
+        maxLines: 2,
+        textAlign: TextAlign.center,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+
+    final enlarged = MediaQuery.textScalerOf(context).scale(14) > 14 * 1.3;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= 320 && !enlarged) {
+          return Row(
+            children: [
+              Expanded(child: still),
+              const SizedBox(width: 10),
+              Expanded(child: again),
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [still, const SizedBox(height: 10), again],
+        );
+      },
     );
   }
 
