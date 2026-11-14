@@ -86,6 +86,9 @@ void main() {
       const day = 86400000;
       await insertRecord('old', 'old', now - 61 * day);
       await insertRecord('recent', 'recent', now - 3600000);
+      // Untracked last, so Recent is evidence rather than the Activity just
+      // logged, which Still and Again already offer.
+      await insertRecord('gap', null, now - 1800000);
 
       final ranked = await loadSuggestions(
         database: db,
@@ -102,6 +105,7 @@ void main() {
       const hour = 3600000;
       await insertRecord('future', 'gym', now + hour);
       await insertRecord('past', 'recent', now - hour);
+      await insertRecord('gap', null, now - hour ~/ 2);
 
       final ranked = await loadSuggestions(
         database: db,
@@ -134,6 +138,7 @@ void main() {
       const hour = 3600000;
       await insertRecord('r1', 'gym', now - 2 * hour);
       await insertRecord('r2', 'recent', now - hour);
+      await insertRecord('gap', null, now - hour ~/ 2);
 
       final ranked = await loadSuggestions(
         database: db,
@@ -148,6 +153,56 @@ void main() {
       );
 
       expect(ranked.map((activity) => activity.id), ['pinned', 'recent']);
+    });
+
+    test('ranks for the target moment, not now', () async {
+      const hour = 3600000;
+      const day = 24 * hour;
+      // Gym starts at 08:00 and Commute at 18:00 on each of the last days,
+      // each followed by Untracked time so no sequence links them.
+      for (var daysAgo = 1; daysAgo <= 3; daysAgo++) {
+        final evening = now - daysAgo * day;
+        await insertRecord('g$daysAgo', 'gym', evening - 10 * hour);
+        await insertRecord('gu$daysAgo', null, evening - 9 * hour);
+        await insertRecord('c$daysAgo', 'commute', evening);
+        await insertRecord('cu$daysAgo', null, evening + hour);
+      }
+
+      final atNow = await loadSuggestions(
+        database: db,
+        candidates: [activity('gym'), activity('commute')],
+        nowEpochMs: now,
+        timezoneId: zone,
+        limit: 2,
+      );
+      final atLapStart = await loadSuggestions(
+        database: db,
+        candidates: [activity('gym'), activity('commute')],
+        nowEpochMs: now,
+        targetEpochMs: now - 10 * hour,
+        timezoneId: zone,
+        limit: 2,
+      );
+
+      expect(atNow.first.id, 'commute');
+      expect(atLapStart.first.id, 'gym');
+    });
+
+    test('can leave pinned activities out of the learned picks', () async {
+      const hour = 3600000;
+      await insertRecord('r1', 'gym', now - 2 * hour);
+      await insertRecord('r2', 'recent', now - hour);
+
+      final ranked = await loadRankedSuggestions(
+        database: db,
+        candidates: [activity('recent'), activity('gym', isPinned: true)],
+        nowEpochMs: now,
+        timezoneId: zone,
+        limit: 4,
+        excludePinned: true,
+      );
+
+      expect(ranked.map((s) => s.activity.id), ['recent']);
     });
   });
 }

@@ -106,12 +106,15 @@ void main() {
     test('posts the open Lap with six chips, most used first', () async {
       await service.publish();
 
+      // b was logged last, so Repeat offers it and its chip goes last among
+      // the learned ones; c is the most used of the rest.
+
       final state = posted.single;
       expect(state['lapStartedAtEpochMs'], lapStart);
       expect(state['since'], '14:05');
       expect(state.containsKey('lastLabel'), isFalse);
       final ids = [for (final a in state['activities'] as List) a['id']];
-      expect(ids, ['b', 'c', 'a', 'd', 'e', 'f']);
+      expect(ids, ['c', 'a', 'b', 'd', 'e', 'f']);
       expect(state['lastActivity'], {'id': 'b', 'name': 'Activity b'});
     });
 
