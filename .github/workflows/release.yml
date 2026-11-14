@@ -62,7 +62,7 @@ jobs:
           cache: true
 
       - name: Setup Ruby + Bundler for fastlane
-        uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1
+        uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1
         with:
           ruby-version: '3.2'
           bundler-cache: false
@@ -163,7 +163,7 @@ jobs:
 
       - name: Attach AAB and APK to GitHub Release
         if: steps.check-existing.outputs.skip_attach != 'true'
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
         with:
           tag_name: ${{ github.ref_name }}
           generate_release_notes: false
@@ -373,7 +373,7 @@ jobs:
 
       - name: Attach macOS artifacts to GitHub Release
         if: steps.check-existing.outputs.skip_attach != 'true'
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
         with:
           tag_name: ${{ github.ref_name }}
           generate_release_notes: false
