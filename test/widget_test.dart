@@ -56,7 +56,7 @@ void main() {
     // Verify the open Lap, the pinned Activity block, and its suggestion chip.
     expect(find.text('Untracked'), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('suggested-chip-act-test-1')),
+      find.byKey(const ValueKey('pinned-chip-act-test-1')),
       findsOneWidget,
     );
     expect(find.text('Coding'), findsWidgets);
