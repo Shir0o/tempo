@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.0](https://github.com/Shir0o/tempo/compare/v1.18.2...v1.19.0) (2026-11-14)
+
+
+### Features
+
+* **suggestions:** blend sequence with weekday and time, show pins apart ([#137](https://github.com/Shir0o/tempo/issues/137)) ([51792d3](https://github.com/Shir0o/tempo/commit/51792d36e32d687a798cabb003242ad7a5121dcf))
+
 ## [1.18.2](https://github.com/Shir0o/tempo/compare/v1.18.1...v1.18.2) (2026-11-12)
 
 
