@@ -416,15 +416,17 @@ void main() {
         );
       }
 
+      // Outcomes start three hours after the target's time of day, so only
+      // the sequence decides; the time signal is tested on its own.
       for (final daysAgo in [5, 4, 3]) {
         final start = target - daysAgo * 86400000;
         history.add(add('shower', start));
-        history.add(add('commute', start + hour));
+        history.add(add('commute', start + 3 * hour));
       }
       for (final daysAgo in [2, 1]) {
         final start = target - daysAgo * 86400000;
         history.add(add('shower', start));
-        history.add(add('dinner', start + hour));
+        history.add(add('dinner', start + 3 * hour));
       }
 
       ordered(history);

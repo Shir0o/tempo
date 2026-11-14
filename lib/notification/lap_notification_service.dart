@@ -156,6 +156,7 @@ class LapNotificationService {
       database: database,
       candidates: activities,
       nowEpochMs: now,
+      targetEpochMs: dayRecorder.lap?.startedAtEpochMs,
       timezoneId: timezone,
       limit: chipCount,
     );

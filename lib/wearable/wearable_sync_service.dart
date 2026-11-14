@@ -249,6 +249,7 @@ class WearableSyncService {
       database: db,
       candidates: activities,
       nowEpochMs: now,
+      targetEpochMs: dayRecorder.lap?.startedAtEpochMs,
       timezoneId: timezone,
       limit: tileActivityCount,
     );

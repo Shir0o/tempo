@@ -12,6 +12,7 @@ import '../../core/state/day_recorder.dart';
 import '../../core/state/note_suggestions.dart';
 import '../../core/state/people_index.dart';
 import '../../core/state/record_commands.dart';
+import '../../core/state/suggestion_engine.dart';
 import '../../core/state/suggestion_loader.dart';
 import '../../core/state/today_order.dart';
 import '../../core/time/timezone_id.dart';
@@ -21,6 +22,7 @@ import 'activity_filter_sheet.dart';
 import 'activity_icon.dart';
 import 'activity_manager_view.dart';
 import 'helpers/activity_order.dart';
+import 'helpers/suggestion_reason_text.dart';
 import 'helpers/ui_helpers.dart';
 import 'note_sheet.dart';
 import 'theme/tempo_theme.dart';
@@ -125,9 +127,12 @@ class _DashboardViewState extends State<DashboardView>
   List<Category> _categories = [];
   List<Record> _todayRecords = [];
   Map<String, int> _todayActivityDurations = {};
-  List<Activity> _suggestedActivities = [];
 
-  /// Combo chips (Activity, People and note) ahead of [_suggestedActivities].
+  /// Learned suggestions, pinned Activities left out; those have a row of
+  /// their own.
+  List<RankedSuggestion> _suggestions = [];
+
+  /// Combo chips (Activity, People and note) ahead of [_suggestions].
   List<RecurringNote> _combos = [];
   String? _contactTagId;
   int _comboLoad = 0;
@@ -282,12 +287,16 @@ class _DashboardViewState extends State<DashboardView>
           ? await widget.database.getLap()
           : null;
 
-      final suggested = await loadSuggestions(
+      // Rank for the moment being labeled: the open Lap's start.
+      final suggested = await loadRankedSuggestions(
         database: widget.database,
         candidates: activities,
         nowEpochMs: now.millisecondsSinceEpoch,
+        targetEpochMs:
+            (widget.dayRecorder?.lap ?? replicaLap)?.startedAtEpochMs,
         timezoneId: localTimezoneId(),
         limit: 4,
+        excludePinned: true,
       );
 
       if (mounted) {
@@ -297,7 +306,7 @@ class _DashboardViewState extends State<DashboardView>
           _categories = categories;
           _todayRecords = todayRecords;
           _todayActivityDurations = durations;
-          _suggestedActivities = suggested;
+          _suggestions = suggested;
           _loggedTodayMs = loggedMs;
           _lastActivity = activitiesById[lastActivityId];
           _lastRecord =
@@ -309,7 +318,13 @@ class _DashboardViewState extends State<DashboardView>
           _dayEndMs = dayEndMs;
           _isLoading = false;
         });
-        unawaited(_loadCombos(activities, suggested));
+        unawaited(
+          _loadCombos(activities, [
+            for (final activity in activities)
+              if (activity.isPinned) activity,
+            for (final suggestion in suggested) suggestion.activity,
+          ]),
+        );
         _filterController?.setCatalog(archived);
       }
     } catch (_) {
@@ -1138,15 +1153,23 @@ class _DashboardViewState extends State<DashboardView>
     if (mounted) _filterFocusNode.requestFocus();
   }
 
-  /// Suggestions in two rows: Activity-with-note combos under WITH NOTE,
-  /// plain Activities under ACTIVITY. A row with nothing to offer is hidden.
+  /// Pinned Activities that are still active, in their own row.
+  List<Activity> get _pinnedActivities => [
+    for (final activity in _activities)
+      if (activity.isPinned && !activity.isArchived) activity,
+  ];
+
+  /// Suggestions in up to three parts: Activity-with-note combos under WITH
+  /// NOTE, learned Activities under SUGGESTED, each with why it came up, and
+  /// the user's own pins under PINNED. A part with nothing to offer is hidden.
   Widget _buildSuggestedActivitiesRow() {
     final combos = [
       for (final combo in _combos)
         if (_activitiesById[combo.activityId] case final activity?)
           (activity, combo),
     ];
-    if (combos.isEmpty && _suggestedActivities.isEmpty) {
+    final pinned = _pinnedActivities;
+    if (combos.isEmpty && _suggestions.isEmpty && pinned.isEmpty) {
       return const SizedBox.shrink();
     }
 
@@ -1159,10 +1182,6 @@ class _DashboardViewState extends State<DashboardView>
         scaler.scale(13) * _chipLineHeight +
         scaler.scale(12) * _chipLineHeight +
         2;
-    final activityRowHeight = math.max(
-      60.0,
-      12 + 16 + scaler.scale(12.5) * _chipLineHeight + 4,
-    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1177,17 +1196,124 @@ class _DashboardViewState extends State<DashboardView>
             ],
           ),
         ],
-        if (_suggestedActivities.isNotEmpty) ...[
-          _buildSuggestionOverline('ACTIVITY'),
-          _buildSuggestionRow(
-            height: activityRowHeight,
-            children: [
-              for (final activity in _suggestedActivities)
-                _buildSuggestedChip(activity),
-            ],
+        if (_suggestions.isNotEmpty) ...[
+          _buildSuggestionOverline('SUGGESTED'),
+          _buildSuggestionGrid(),
+        ],
+        if (pinned.isNotEmpty) _buildPinnedRow(pinned),
+      ],
+    );
+  }
+
+  /// Learned suggestions two to a row, so each has room for its reason.
+  Widget _buildSuggestionGrid() {
+    final chips = [
+      for (final suggestion in _suggestions) _buildSuggestedChip(suggestion),
+    ];
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 6, 20, 6),
+      child: Column(
+        children: [
+          for (var i = 0; i < chips.length; i += 2) ...[
+            if (i > 0) const SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: chips[i]),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: i + 1 < chips.length
+                      ? chips[i + 1]
+                      : const SizedBox.shrink(),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// The user's pinned Activities, set apart from what the app learned.
+  Widget _buildPinnedRow(List<Activity> pinned) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 0, 6),
+      child: Row(
+        children: [
+          const Text(
+            'PINNED',
+            style: TextStyle(
+              fontFamily: _fontFamily,
+              color: TempoColors.textMuted,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.88,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.only(right: 20),
+              child: Row(
+                children: [
+                  for (final (index, activity) in pinned.indexed) ...[
+                    if (index > 0) const SizedBox(width: 8),
+                    _buildPinnedChip(activity),
+                  ],
+                ],
+              ),
+            ),
           ),
         ],
-      ],
+      ),
+    );
+  }
+
+  Widget _buildPinnedChip(Activity activity) {
+    return Semantics(
+      button: true,
+      label: 'Pinned: ${activity.name}. Tap to label untracked time.',
+      child: ExcludeSemantics(
+        child: Material(
+          color: Colors.transparent,
+          shape: const StadiumBorder(side: BorderSide(color: TempoColors.line)),
+          child: InkWell(
+            key: ValueKey('pinned-chip-${activity.id}'),
+            customBorder: const StadiumBorder(),
+            onTap: () => _labelActivity(activity),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 44, minWidth: 44),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.push_pin_outlined,
+                      size: 14,
+                      color: TempoColors.textMuted,
+                    ),
+                    const SizedBox(width: 6),
+                    ActivityIcon(activity, size: 16),
+                    const SizedBox(width: 6),
+                    Text(
+                      activity.name,
+                      style: const TextStyle(
+                        fontFamily: _fontFamily,
+                        color: Colors.white,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        height: _chipLineHeight,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1223,37 +1349,73 @@ class _DashboardViewState extends State<DashboardView>
     );
   }
 
-  Widget _buildSuggestedChip(Activity activity) {
+  Widget _buildSuggestedChip(RankedSuggestion suggestion) {
+    final activity = suggestion.activity;
+    final reason = suggestionReasonText(
+      suggestion.reason,
+      activityName: (id) => _activitiesById[id]?.name,
+    );
     return Semantics(
       button: true,
-      label: 'Suggested: ${activity.name}. Tap to label untracked time.',
-      child: Material(
-        color: _surface,
-        borderRadius: BorderRadius.circular(18),
-        child: InkWell(
-          key: ValueKey('suggested-chip-${activity.id}'),
+      label: [
+        'Suggested: ${activity.name}',
+        ?reason,
+        'Tap to label untracked time.',
+      ].join('. '),
+      child: ExcludeSemantics(
+        child: Material(
+          color: _surface,
           borderRadius: BorderRadius.circular(18),
-          onTap: () => _labelActivity(activity),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 48, minWidth: 48),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ActivityIcon(activity, size: 18),
-                  const SizedBox(width: 8),
-                  Text(
-                    activity.name,
-                    style: const TextStyle(
-                      fontFamily: _fontFamily,
-                      color: Colors.white,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                      height: _chipLineHeight,
+          child: InkWell(
+            key: ValueKey('suggested-chip-${activity.id}'),
+            borderRadius: BorderRadius.circular(18),
+            onTap: () => _labelActivity(activity),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 48),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                child: Row(
+                  children: [
+                    ActivityIcon(activity, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            activity.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontFamily: _fontFamily,
+                              color: Colors.white,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                              height: _chipLineHeight,
+                            ),
+                          ),
+                          if (reason != null)
+                            Text(
+                              reason,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontFamily: _fontFamily,
+                                color: TempoColors.textMuted,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                                height: _chipLineHeight,
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
