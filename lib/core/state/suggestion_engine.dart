@@ -92,7 +92,8 @@ class RankedSuggestion {
 ///   blended in, because a routine can differ by day (after Breakfast:
 ///   Commute on Thursdays, Work otherwise).
 /// - **Time**: what usually starts within an hour of the target's local time,
-///   on the same day of the week, blended with weekday-versus-weekend. When
+///   on the same day of the week, blended 2:1 with weekday-versus-weekend, and
+///   counting a start more the closer it is to the target's minute. When
 ///   that day of the week has too little history, weekday-versus-weekend alone.
 ///
 /// Each signal is a share of its own evidence (0..1), so an Activity strong on
@@ -136,6 +137,14 @@ class ContextualSuggestionEngine {
   /// A past start counts for the time signal within this many minutes of the
   /// target's local time of day, either side.
   static const int _slotWindowMinutes = 60;
+
+  /// Within the window, a start counts fully at the target's minute and falls
+  /// off linearly to half at the window's edge, so at 08:00 a Commute that
+  /// starts at 08:00 outranks Work that starts at 08:30.
+  static int _slotWeight(int weightMicros, int offsetMinutes) =>
+      weightMicros *
+      (2 * _slotWindowMinutes - offsetMinutes.abs()) ~/
+      (2 * _slotWindowMinutes);
 
   /// The day of the week joins a signal once that signal has seen it at least
   /// twice and still holds one fresh observation's worth of decayed mass, the
@@ -338,19 +347,20 @@ class ContextualSuggestionEngine {
       if (offset > 720) offset -= 1440;
       if (offset <= -720) offset += 1440;
       if (offset.abs() <= _slotWindowMinutes) {
+        final slotWeight = _slotWeight(weightMicros, offset);
         if (_isWeekend(recordWallClock.weekday) == targetIsWeekend) {
-          groupSlotMass += weightMicros;
+          groupSlotMass += slotWeight;
           if (isCandidate) {
-            add(groupSlotScore, activityId, weightMicros);
-            add(groupSlotOffset, activityId, weightMicros * offset);
+            add(groupSlotScore, activityId, slotWeight);
+            add(groupSlotOffset, activityId, slotWeight * offset);
           }
         }
         if (recordWallClock.weekday == targetWeekday) {
-          daySlotMass += weightMicros;
+          daySlotMass += slotWeight;
           daySlotObservations++;
           if (isCandidate) {
-            add(daySlotScore, activityId, weightMicros);
-            add(daySlotOffset, activityId, weightMicros * offset);
+            add(daySlotScore, activityId, slotWeight);
+            add(daySlotOffset, activityId, slotWeight * offset);
           }
         }
       }
@@ -417,7 +427,11 @@ class ContextualSuggestionEngine {
 
       final groupShare = _share(groupSlotScore[id] ?? 0, groupSlotMass);
       final dayShare = _share(daySlotScore[id] ?? 0, daySlotMass);
-      final time = weekdayActive ? (dayShare + groupShare) ~/ 2 : groupShare;
+      // The day of the week counts twice: six Thursdays without Breakfast at
+      // 08:00 outweigh Breakfast at 08:00 on the other weekdays.
+      final time = weekdayActive
+          ? (2 * dayShare + groupShare) ~/ 3
+          : groupShare;
 
       final frequency = _share(frequencyScore[id] ?? 0, frequencyMass);
 

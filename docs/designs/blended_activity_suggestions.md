@@ -44,8 +44,12 @@ of everything the signal saw (0 to 1):
   routine can differ by day: after Breakfast, Commute on Thursdays and Work
   otherwise.
 - **Time.** Share of starts within 60 minutes of the target's local time on
-  weekday versus weekend. When the target's day of the week has its own slot
-  history (same two gates), it is averaged with the share on that day alone.
+  weekday versus weekend. A start counts fully at the target's minute and
+  falls off linearly to half at 60 minutes, so at 08:00 a Commute that starts
+  at 08:00 outranks Work that starts at 08:30. When the target's day of the
+  week has its own slot history (same two gates), the share on that day alone
+  is blended in 2:1, so six Thursdays without Breakfast at 08:00 outweigh
+  Breakfast at 08:00 on the other weekdays.
 - **Frequency.** Overall share.
 
 The score is `10 × sequence + 8 × time + 1 × frequency`, in integer
