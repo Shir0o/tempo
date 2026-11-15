@@ -209,6 +209,10 @@ class _DashboardViewState extends State<DashboardView>
       Navigator.of(context).maybePop();
     }
     setState(() {});
+    // A label from the watch or the notification closes the Lap without going
+    // through this view, so the last Activity and the suggestions it leads to
+    // must be read again.
+    _loadData();
   }
 
   /// The Today page's order changed in Settings; re-lay out the same catalog.

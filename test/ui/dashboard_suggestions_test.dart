@@ -86,4 +86,119 @@ void main() {
     dayRecorder.dispose();
     await db.close();
   });
+
+  testWidgets('only Untracked time shows no learned picks', (
+    WidgetTester tester,
+  ) async {
+    final db = await TempoDatabase.openInMemory(
+      factory: databaseFactoryFfiNoIsolate,
+    );
+    await db.insertActivity(
+      Activity(
+        id: 'walk',
+        name: 'Walk',
+        createdAtEpochMs: 0,
+        updatedAtEpochMs: 0,
+      ),
+    );
+    final now = DateTime.now().millisecondsSinceEpoch;
+    const hour = 3600000;
+    await db.insertRecord(
+      Record(
+        id: 'gap',
+        activityId: null,
+        startedAtEpochMs: now - 2 * hour,
+        endedAtEpochMs: now - hour,
+        timezoneId: 'America/Los_Angeles',
+        createdAtEpochMs: now - 2 * hour,
+        updatedAtEpochMs: now - 2 * hour,
+      ),
+    );
+
+    final dayRecorder = DayRecorder(database: db);
+    await dayRecorder.initialize();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DashboardView(dayRecorder: dayRecorder, database: db),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('SUGGESTED'), findsNothing);
+    expect(find.byKey(const ValueKey('suggested-chip-walk')), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    dayRecorder.dispose();
+    await db.close();
+  });
+
+  testWidgets('a label from elsewhere refreshes the last Activity and picks', (
+    WidgetTester tester,
+  ) async {
+    final db = await TempoDatabase.openInMemory(
+      factory: databaseFactoryFfiNoIsolate,
+    );
+    for (final (id, name) in [
+      ('bible', 'Bible'),
+      ('grooming', 'Grooming'),
+      ('reading', 'Reading'),
+    ]) {
+      await db.insertActivity(
+        Activity(id: id, name: name, createdAtEpochMs: 0, updatedAtEpochMs: 0),
+      );
+    }
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    const hour = 3600000;
+    var n = 0;
+    Future<void> record(String activityId, int startMs) => db.insertRecord(
+      Record(
+        id: 'r${n++}',
+        activityId: activityId,
+        startedAtEpochMs: startMs,
+        endedAtEpochMs: startMs + hour ~/ 2,
+        timezoneId: 'America/Los_Angeles',
+        createdAtEpochMs: startMs,
+        updatedAtEpochMs: startMs,
+      ),
+    );
+    // Bible is followed by Grooming, twice, and Reading came last.
+    await record('bible', now - 6 * hour);
+    await record('grooming', now - 11 * hour ~/ 2);
+    await record('bible', now - 4 * hour);
+    await record('grooming', now - 7 * hour ~/ 2);
+    await record('reading', now - hour);
+
+    final dayRecorder = DayRecorder(database: db);
+    await dayRecorder.initialize();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DashboardView(dayRecorder: dayRecorder, database: db),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Still Reading'), findsOneWidget);
+    expect(find.text('After Bible'), findsNothing);
+
+    // The watch labels the open Lap through the same DayRecorder.
+    await dayRecorder.label('bible');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('Still Bible'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('suggested-chip-grooming')),
+      findsOneWidget,
+    );
+    expect(find.text('After Bible'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    dayRecorder.dispose();
+    await db.close();
+  });
 }

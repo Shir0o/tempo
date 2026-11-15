@@ -134,6 +134,30 @@ void main() {
       expect(ranked.map((activity) => activity.id), ['pinned']);
     });
 
+    test('only Untracked time is a cold start, not arbitrary picks', () async {
+      const hour = 3600000;
+      await insertRecord('gap1', null, now - 2 * hour);
+      await insertRecord('gap2', null, now - hour);
+
+      final learned = await loadRankedSuggestions(
+        database: db,
+        candidates: [activity('gym'), activity('shower')],
+        nowEpochMs: now,
+        timezoneId: zone,
+        limit: 4,
+      );
+      final chips = await loadSuggestions(
+        database: db,
+        candidates: [activity('gym'), activity('pinned', isPinned: true)],
+        nowEpochMs: now,
+        timezoneId: zone,
+        limit: 4,
+      );
+
+      expect(learned, isEmpty);
+      expect(chips.map((activity) => activity.id), ['pinned']);
+    });
+
     test('always gives a pinned activity a suggestion slot', () async {
       const hour = 3600000;
       await insertRecord('r1', 'gym', now - 2 * hour);

@@ -61,7 +61,8 @@ Future<List<Activity>> loadSuggestions({
 /// started before [nowEpochMs] are read.
 ///
 /// With [excludePinned], pinned Activities are left out so a caller can show
-/// them on their own. Returns nothing before any history exists.
+/// them on their own. Returns nothing before any Activity has been logged:
+/// Untracked time alone is no history.
 Future<List<RankedSuggestion>> loadRankedSuggestions({
   required TempoDatabase database,
   required List<Activity> candidates,
@@ -80,7 +81,9 @@ Future<List<RankedSuggestion>> loadRankedSuggestions({
     startedBefore: nowEpochMs,
     limit: suggestionHistoryRowCap,
   );
-  if (history.isEmpty) return const [];
+  if (history.every((observation) => observation.activityId == null)) {
+    return const [];
+  }
 
   final context = ContextualSuggestionEngine.contextFromHistory(
     history,
