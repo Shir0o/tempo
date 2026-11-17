@@ -149,6 +149,7 @@ class _DashboardViewState extends State<DashboardView>
   bool _filterOpen = false;
   bool _pickingFromFilter = false;
   final FocusNode _filterFocusNode = FocusNode();
+  bool _speechAvailable = false;
 
   int _dayStartMs = 0;
   int _dayEndMs = 0;
@@ -179,6 +180,9 @@ class _DashboardViewState extends State<DashboardView>
     widget.dayRecorder?.lapListenable.addListener(_onLapChanged);
     widget.todayOrder?.addListener(_onOrderChanged);
     widget.catalogRevision?.addListener(_onCatalogChanged);
+    widget.speechInput?.isAvailable().then((available) {
+      if (mounted && available) setState(() => _speechAvailable = true);
+    });
   }
 
   @override
@@ -673,6 +677,8 @@ class _DashboardViewState extends State<DashboardView>
                 if (_lastRecord case final record?)
                   SliverToBoxAdapter(child: _buildLastLoggedRow(record)),
                 SliverToBoxAdapter(child: _buildGridHeading()),
+                if (widget.showActivityFilter)
+                  SliverToBoxAdapter(child: _buildSearchBar()),
                 SliverToBoxAdapter(child: _buildSuggestedActivitiesRow()),
                 _buildActivityGrid(),
                 SliverPadding(
@@ -1105,20 +1111,60 @@ class _DashboardViewState extends State<DashboardView>
               ],
             ),
           ),
-          if (widget.showActivityFilter)
-            IconButton(
-              key: const ValueKey('activity-filter-button'),
-              focusNode: _filterFocusNode,
-              tooltip: 'Filter Activities',
-              onPressed: _openFilter,
-              icon: const Icon(Icons.search, color: Colors.white70),
-            ),
         ],
       ),
     );
   }
 
-  Future<void> _openFilter() async {
+  /// A full-width search bar under the heading: searching by name is often
+  /// faster than scrolling the grid. The mic opens it already listening.
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+      child: Material(
+        color: _surface,
+        shape: const StadiumBorder(side: BorderSide(color: TempoColors.line)),
+        clipBehavior: Clip.antiAlias,
+        child: Row(
+          children: [
+            Expanded(
+              child: InkWell(
+                key: const ValueKey('activity-filter-button'),
+                focusNode: _filterFocusNode,
+                onTap: _openFilter,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  child: Row(
+                    children: [
+                      Icon(Icons.search, color: Colors.white70, size: 20),
+                      SizedBox(width: 10),
+                      Text(
+                        'Search Activities',
+                        style: TextStyle(
+                          fontFamily: _fontFamily,
+                          color: Colors.white60,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            if (_speechAvailable)
+              IconButton(
+                key: const ValueKey('activity-filter-voice-button'),
+                tooltip: 'Search by voice',
+                onPressed: () => _openFilter(startWithVoice: true),
+                icon: const Icon(Icons.mic_none, color: Colors.white70),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openFilter({bool startWithVoice = false}) async {
     final controller = ActivityFilterController();
     _filterController = controller;
     _filterOpen = true;
@@ -1149,6 +1195,7 @@ class _DashboardViewState extends State<DashboardView>
         }
       },
       onManageActivities: _openActivityManager,
+      startWithVoice: startWithVoice,
     );
 
     controller.dispose();
@@ -1293,12 +1340,6 @@ class _DashboardViewState extends State<DashboardView>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(
-                      Icons.push_pin_outlined,
-                      size: 14,
-                      color: TempoColors.textMuted,
-                    ),
-                    const SizedBox(width: 6),
                     ActivityIcon(activity, size: 16),
                     const SizedBox(width: 6),
                     Text(
