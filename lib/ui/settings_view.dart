@@ -114,6 +114,11 @@ class _SettingsViewState extends State<SettingsView> {
     _loadSyncDiagnostics();
     widget.syncListener?.peersRevision.addListener(_onPeersChanged);
     widget.todayOrder?.addListener(_onTodayOrderChanged);
+    // main() already starts this; the same attempt is shared. Redraw when it
+    // resolves so the Drive card flips to Connected without a manual refresh.
+    widget.syncService?.restorePreviousSession().then((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override

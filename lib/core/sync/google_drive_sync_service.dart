@@ -85,6 +85,53 @@ class GoogleDriveSyncService {
     driveApi = api;
   }
 
+  /// Set while the user has Drive connected, so a relaunch knows it may ask
+  /// Google for the previous session without showing an account sheet.
+  static const String connectedSetting = 'google_drive_connected';
+
+  Future<bool>? _restoreAttempt;
+
+  /// Restores the session saved by the last [signIn] without user interaction.
+  ///
+  /// Called at launch and again when Settings opens; both share one attempt.
+  /// Gated on [connectedSetting] because Android's lightweight path falls back
+  /// to an account sheet when no previously authorized account exists, and
+  /// people who never connected Drive must not see that at startup.
+  Future<bool> restorePreviousSession() =>
+      _restoreAttempt ??= _restorePreviousSession();
+
+  Future<bool> _restorePreviousSession() async {
+    try {
+      final db = database;
+      if (db == null) return false;
+      if (await db.getSetting(connectedSetting) != 'true') return false;
+
+      final gSignIn = googleSignIn ?? GoogleSignIn.instance;
+      final attempt = gSignIn.attemptLightweightAuthentication();
+      // Web reports a restored sign-in on the authentication events stream.
+      if (attempt == null) return false;
+      final account = await attempt;
+      if (account == null) return false;
+
+      // Kept so an expired access token can still be renewed later.
+      _account = account;
+      final authz = await account.authorizationClient.authorizationForScopes(
+        driveScopes,
+      );
+      if (authz == null) {
+        _lastError = 'Google Drive needs to be reconnected.';
+        return false;
+      }
+      driveApi = drive.DriveApi(authz.authClient(scopes: driveScopes));
+      _lastError = null;
+      return true;
+    } catch (e) {
+      _lastError = e.toString();
+      debugPrint('Google Drive session restore failed: $e');
+      return false;
+    }
+  }
+
   /// Initiates interactive Google Sign-In with Drive scopes.
   Future<bool> signIn() async {
     try {
@@ -95,6 +142,7 @@ class GoogleDriveSyncService {
       );
       _account = account;
       driveApi = drive.DriveApi(authz.authClient(scopes: driveScopes));
+      await database?.setSetting(connectedSetting, 'true');
       _lastError = null;
       return true;
     } catch (e) {
@@ -113,6 +161,8 @@ class GoogleDriveSyncService {
     _account = null;
     driveApi = null;
     _cachedTimeTrackFolderId = null;
+    _restoreAttempt = null;
+    await database?.setSetting(connectedSetting, 'false');
   }
 
   /// Runs [action] with the Drive API, renewing the access token once if Google
