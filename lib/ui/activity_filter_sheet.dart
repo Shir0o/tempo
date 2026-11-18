@@ -27,6 +27,7 @@ Future<void> showActivityFilterSheet({
   required FilterSheetData data,
   required ValueChanged<Activity> onPick,
   required VoidCallback onManageActivities,
+  bool startWithVoice = false,
 }) {
   controller.setCatalog(catalog);
   return showModalBottomSheet<void>(
@@ -44,6 +45,7 @@ Future<void> showActivityFilterSheet({
       data: data,
       onPick: onPick,
       onManageActivities: onManageActivities,
+      startWithVoice: startWithVoice,
     ),
   );
 }
@@ -54,6 +56,7 @@ class _ActivityFilterSheet extends StatefulWidget {
   final FilterSheetData data;
   final ValueChanged<Activity> onPick;
   final VoidCallback onManageActivities;
+  final bool startWithVoice;
 
   const _ActivityFilterSheet({
     required this.controller,
@@ -61,6 +64,7 @@ class _ActivityFilterSheet extends StatefulWidget {
     required this.data,
     required this.onPick,
     required this.onManageActivities,
+    required this.startWithVoice,
   });
 
   @override
@@ -84,6 +88,11 @@ class _ActivityFilterSheetState extends State<_ActivityFilterSheet>
       });
     } else {
       widget.controller.setAvailability(false);
+    }
+    if (widget.startWithVoice) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _listen();
+      });
     }
   }
 
@@ -208,7 +217,7 @@ class _ActivityFilterSheetState extends State<_ActivityFilterSheet>
         key: const ValueKey('activity-filter-field'),
         controller: _text,
         focusNode: _focus,
-        autofocus: true,
+        autofocus: !widget.startWithVoice,
         textInputAction: TextInputAction.search,
         style: TempoText.body.copyWith(color: TempoColors.ink),
         decoration: InputDecoration(

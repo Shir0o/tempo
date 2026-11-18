@@ -208,4 +208,36 @@ void main() {
     recorder.dispose();
     await db.close();
   });
+
+  testWidgets('the search bar mic opens the sheet already listening', (
+    tester,
+  ) async {
+    final db = await seededDatabase();
+    final recorder = DayRecorder(database: db);
+    await recorder.initialize();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DashboardView(
+          dayRecorder: recorder,
+          database: db,
+          showActivityFilter: true,
+          speechInput: FakeSpeech('Laundry'),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(
+      find.byKey(const ValueKey('activity-filter-voice-button')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('activity-result-a2')), findsOneWidget);
+    expect(await db.getRecords(), isEmpty);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    recorder.dispose();
+    await db.close();
+  });
 }
