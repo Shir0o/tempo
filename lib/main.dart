@@ -65,6 +65,9 @@ Future<void> main() async {
   await _initializeGoogleSignIn();
   final driveSyncService = GoogleDriveSyncService(database: database);
   driveSyncService.attachToExportEngine(exportEngine);
+  // A fresh service starts signed out; restoring in the background keeps the
+  // CSV updating after a relaunch without asking the user to connect again.
+  unawaited(driveSyncService.restorePreviousSession());
 
   // 6. Automatic backup: local rolling snapshot, promoted to the destination
   final backupService = BackupService(
