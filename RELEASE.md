@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.20.0](https://github.com/Shir0o/tempo/compare/v1.19.0...v1.20.0) (2026-11-19)
+
+
+### Features
+
+* **today:** promote search to a full-width bar with one-tap voice ([#144](https://github.com/Shir0o/tempo/issues/144)) ([50c8788](https://github.com/Shir0o/tempo/commit/50c8788923c9060313515c35e77cba381b4be1d0))
+
+
+### Bug Fixes
+
+* **sync:** restore the Google Drive session on launch ([#145](https://github.com/Shir0o/tempo/issues/145)) ([5b134b4](https://github.com/Shir0o/tempo/commit/5b134b4a340afa5e35bbcca064cae256964642d0))
+* **ui:** fix 48dp tap targets and narrow-screen layout overflows ([#147](https://github.com/Shir0o/tempo/issues/147)) ([382baaf](https://github.com/Shir0o/tempo/commit/382baaf22c8758e5b3452f1b411a467344a0229a))
+
 ## [1.19.0](https://github.com/Shir0o/tempo/compare/v1.18.2...v1.19.0) (2026-11-14)
 
 
