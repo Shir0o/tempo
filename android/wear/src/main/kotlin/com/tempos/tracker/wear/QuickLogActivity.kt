@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -472,7 +471,8 @@ private fun LapHeader(lap: LapState, elapsedMs: Long, elapsedColor: Color) {
 
 /**
  * The phone's two repeat buttons: "Still <Activity>" grows the last Record,
- * "<Activity> again" starts a new one. Side by side to match the Today panel.
+ * "<Activity> again" starts a new one. Stacked so each name gets the full
+ * width of the round screen.
  */
 @Composable
 private fun RepeatActions(
@@ -488,15 +488,15 @@ private fun RepeatActions(
         }
     }
 
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Box(
             modifier = Modifier
-                .weight(1f)
+                .fillMaxWidth()
                 .height(40.dp)
                 .clip(CircleShape)
                 .background(fill)
@@ -516,7 +516,7 @@ private fun RepeatActions(
         }
         Box(
             modifier = Modifier
-                .weight(1f)
+                .fillMaxWidth()
                 .height(40.dp)
                 .clip(CircleShape)
                 .border(1.dp, Fog, CircleShape)
