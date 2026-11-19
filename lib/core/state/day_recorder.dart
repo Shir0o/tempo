@@ -38,6 +38,7 @@ class DayRecorder {
   final ValueNotifier<Lap?> _lapNotifier = ValueNotifier<Lap?>(null);
   final StreamController<Lap?> _lapStreamController =
       StreamController<Lap?>.broadcast(sync: true);
+  final ValueNotifier<int> _recordsRevision = ValueNotifier<int>(0);
 
   Future<void>? _lock;
   bool _isInitialized = false;
@@ -69,6 +70,10 @@ class DayRecorder {
 
   /// Broadcast stream emitting Lap changes.
   Stream<Lap?> get lapStream => _lapStreamController.stream;
+
+  /// Ticks after every committed Record write, including ones that leave the
+  /// Lap where it was (a late watch label of a span closed at midnight).
+  ValueListenable<int> get recordsRevision => _recordsRevision;
 
   /// The zone the open Lap started in. A Lap persisted before start zones
   /// existed reads as the zone last reported by the injected zone source,
@@ -1664,6 +1669,7 @@ class DayRecorder {
   }
 
   Future<void> _notifyRecordCommitted(Record record) async {
+    if (!_isDisposed) _recordsRevision.value++;
     await _requestExport();
     if (onRecordCommitted != null) {
       await onRecordCommitted!(record);
@@ -1706,6 +1712,7 @@ class DayRecorder {
     _midnightTimer = null;
     _lapStreamController.close();
     _lapNotifier.dispose();
+    _recordsRevision.dispose();
   }
 }
 
