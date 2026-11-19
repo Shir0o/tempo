@@ -270,10 +270,10 @@ class _ActivityFilterSheetState extends State<_ActivityFilterSheet>
     final data = widget.data;
 
     if (!controller.hasQuery) {
-      return const Center(
+      return Center(
         child: Text(
           'Type a name to narrow the list.',
-          style: TextStyle(color: TempoColors.inkMuted),
+          style: TempoText.body.copyWith(color: TempoColors.ink),
         ),
       );
     }
