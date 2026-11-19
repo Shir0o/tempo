@@ -91,6 +91,21 @@ void main() {
     await db.close();
   });
 
+  test('a late label of a closed span ticks recordsRevision without moving the Lap', () async {
+    await recorder.initialize();
+    nowUtc += 60000;
+    await recorder.split();
+    final lapBefore = recorder.lap;
+    final revisionBefore = recorder.recordsRevision.value;
+
+    nowUtc += 10000;
+    final record = await recorder.labelClosedSpan(sleep.id, atEpochMs: 1030000);
+
+    expect(record, isNotNull);
+    expect(recorder.lap, equals(lapBefore));
+    expect(recorder.recordsRevision.value, greaterThan(revisionBefore));
+  });
+
   test(
     'labeling closes exactly [lapStart, now) and opens the next Lap',
     () async {

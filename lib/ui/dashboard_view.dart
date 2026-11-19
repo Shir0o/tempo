@@ -145,6 +145,10 @@ class _DashboardViewState extends State<DashboardView>
   _UndoState? _undo;
   bool _isLoading = true;
 
+  /// Bumped by each [_loadData]; a load that finishes after a newer one began
+  /// read older rows and is dropped.
+  int _loadGeneration = 0;
+
   ActivityFilterController? _filterController;
   bool _filterOpen = false;
   bool _pickingFromFilter = false;
@@ -178,6 +182,7 @@ class _DashboardViewState extends State<DashboardView>
     _startLiveTicker();
     _loadData();
     widget.dayRecorder?.lapListenable.addListener(_onLapChanged);
+    widget.dayRecorder?.recordsRevision.addListener(_onRecordsChanged);
     widget.todayOrder?.addListener(_onOrderChanged);
     widget.catalogRevision?.addListener(_onCatalogChanged);
     widget.speechInput?.isAvailable().then((available) {
@@ -190,6 +195,7 @@ class _DashboardViewState extends State<DashboardView>
     _liveTicker?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     widget.dayRecorder?.lapListenable.removeListener(_onLapChanged);
+    widget.dayRecorder?.recordsRevision.removeListener(_onRecordsChanged);
     widget.todayOrder?.removeListener(_onOrderChanged);
     widget.catalogRevision?.removeListener(_onCatalogChanged);
     _filterFocusNode.dispose();
@@ -219,6 +225,12 @@ class _DashboardViewState extends State<DashboardView>
     _loadData();
   }
 
+  /// A Record was written without the Lap moving, such as a late watch label
+  /// of the span a MidnightSplit closed; the last Activity may have changed.
+  void _onRecordsChanged() {
+    if (mounted) _loadData();
+  }
+
   /// The Today page's order changed in Settings; re-lay out the same catalog.
   void _onOrderChanged() {
     if (mounted) setState(() {});
@@ -241,6 +253,7 @@ class _DashboardViewState extends State<DashboardView>
   }
 
   Future<void> _loadData() async {
+    final generation = ++_loadGeneration;
     try {
       final now = DateTime.now();
       final dayStart = DateTime(now.year, now.month, now.day);
@@ -307,7 +320,7 @@ class _DashboardViewState extends State<DashboardView>
         excludePinned: true,
       );
 
-      if (mounted) {
+      if (mounted && generation == _loadGeneration) {
         setState(() {
           _activities = activities;
           _activitiesById = activitiesById;
@@ -336,7 +349,9 @@ class _DashboardViewState extends State<DashboardView>
         _filterController?.setCatalog(archived);
       }
     } catch (_) {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted && generation == _loadGeneration) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
