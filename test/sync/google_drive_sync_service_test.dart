@@ -176,6 +176,42 @@ void main() {
       expect(syncService.lastError, isNull);
     });
 
+    test('overlapping syncs create one folder and one CSV', () async {
+      final csvFile = File('${tempDir.path}/stt_records_automatic.csv');
+      await csvFile.writeAsString('activity name\nReading');
+
+      await Future.wait([
+        syncService.syncCsvToDrive(csvFile),
+        syncService.syncCsvToDrive(csvFile),
+      ]);
+
+      final names = mockClient.driveFiles.map((f) => f['name']).toList();
+      expect(names.where((n) => n == 'Time track'), hasLength(1));
+      expect(
+        names.where((n) => n == 'stt_records_automatic.csv'),
+        hasLength(1),
+      );
+    });
+
+    test('an unchanged CSV is not uploaded again', () async {
+      final csvFile = File('${tempDir.path}/stt_records_automatic.csv');
+      await csvFile.writeAsString('activity name\nReading');
+
+      int uploads() => mockClient.recordedRequests
+          .where((r) => r.url.path.contains('/upload/'))
+          .length;
+
+      final firstId = await syncService.syncCsvToDrive(csvFile);
+      expect(uploads(), 1);
+
+      expect(await syncService.syncCsvToDrive(csvFile), firstId);
+      expect(uploads(), 1);
+
+      await csvFile.writeAsString('activity name\nReading\nWalk');
+      await syncService.syncCsvToDrive(csvFile);
+      expect(uploads(), 2);
+    });
+
     test(
       'attachToExportEngine triggers automatic CSV sync upon export',
       () async {

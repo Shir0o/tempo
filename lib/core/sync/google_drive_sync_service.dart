@@ -53,6 +53,16 @@ class GoogleDriveSyncService {
   String? _cachedTimeTrackFolderId;
   String? _lastError;
 
+  /// Tail of the upload queue: one upload at a time, so a manual sync and an
+  /// automatic one cannot both find no CSV and each create one.
+  Future<void>? _uploadQueue;
+
+  /// The bytes and file id of the last successful upload, so an export whose
+  /// CSV did not change (an Untracked Split, a repeated manual sync) is not
+  /// sent again as a new Drive revision.
+  Uint8List? _lastUploadedBytes;
+  String? _lastUploadedFileId;
+
   GoogleDriveSyncService({
     this.database,
     this.googleSignIn,
@@ -161,6 +171,8 @@ class GoogleDriveSyncService {
     _account = null;
     driveApi = null;
     _cachedTimeTrackFolderId = null;
+    _lastUploadedBytes = null;
+    _lastUploadedFileId = null;
     _restoreAttempt = null;
     await database?.setSetting(connectedSetting, 'false');
   }
@@ -212,9 +224,11 @@ class GoogleDriveSyncService {
     final query =
         "mimeType = 'application/vnd.google-apps.folder' and name = '$timeTrackFolderName' and trashed = false and 'root' in parents";
 
+    // Oldest first, so an earlier duplicate always resolves to the same one.
     final fileList = await api.files.list(
       q: query,
       spaces: 'drive',
+      orderBy: 'createdTime',
       $fields: 'files(id, name)',
     );
 
@@ -239,9 +253,35 @@ class GoogleDriveSyncService {
   Future<String> syncCsvToDrive(
     File csvFile, {
     String fileName = defaultCsvFileName,
-  }) async {
+  }) {
+    final previous = _uploadQueue;
+    final upload = () async {
+      if (previous != null) {
+        try {
+          await previous;
+        } catch (_) {}
+      }
+      return _syncCsvToDrive(csvFile, fileName);
+    }();
+    _uploadQueue = upload;
+    return upload;
+  }
+
+  Future<String> _syncCsvToDrive(File csvFile, String fileName) async {
     try {
-      return await _withDriveApi((api) async {
+      // Read once: the export engine may rename a newer CSV over this path
+      // mid-upload, and a stream of one file sized by another fails.
+      final bytes = await csvFile.readAsBytes();
+      final lastId = _lastUploadedFileId;
+      if (lastId != null &&
+          fileName == defaultCsvFileName &&
+          listEquals(bytes, _lastUploadedBytes)) {
+        _lastSyncTime = DateTime.now();
+        _lastError = null;
+        return lastId;
+      }
+
+      final id = await _withDriveApi((api) async {
         final folderId = await _ensureTimeTrackFolder(api);
 
         final query =
@@ -249,11 +289,12 @@ class GoogleDriveSyncService {
         final fileList = await api.files.list(
           q: query,
           spaces: 'drive',
+          orderBy: 'createdTime',
           $fields: 'files(id, name)',
         );
 
         // Built per attempt: a rejected upload may have consumed the stream.
-        final media = drive.Media(csvFile.openRead(), await csvFile.length());
+        final media = drive.Media(Stream.value(bytes), bytes.length);
 
         if (fileList.files != null && fileList.files!.isNotEmpty) {
           final existingId = fileList.files!.first.id!;
@@ -280,6 +321,11 @@ class GoogleDriveSyncService {
           return created.id!;
         }
       });
+      if (fileName == defaultCsvFileName) {
+        _lastUploadedBytes = bytes;
+        _lastUploadedFileId = id;
+      }
+      return id;
     } catch (e) {
       _lastError = e.toString();
       rethrow;
