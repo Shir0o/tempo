@@ -1,3 +1,4 @@
+import 'package:flutter/rendering.dart' show OverflowBoxFit;
 import 'package:material_ui/material_ui.dart';
 
 import '../../data/database/tempo_database.dart';
@@ -141,53 +142,79 @@ class _StatsViewState extends State<StatsView> {
   Widget _buildHeader() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 6),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 12,
+        runSpacing: 8,
         children: [
           Text(
             'Totals',
             style: TempoText.screenTitle.copyWith(color: Colors.white),
           ),
-          Container(
-            decoration: BoxDecoration(
-              color: TempoColors.surface,
-              borderRadius: BorderRadius.circular(18),
-            ),
-            padding: const EdgeInsets.all(3),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: StatsPeriod.values.map((period) {
-                final isSelected = _selectedPeriod == period;
-                return GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => _onPeriodChanged(period),
-                  child: Container(
-                    height: 30,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
+          _buildPeriodSelector(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPeriodSelector() {
+    return Container(
+      decoration: BoxDecoration(
+        color: TempoColors.surface,
+        borderRadius: BorderRadius.circular(TempoRadii.pill),
+      ),
+      padding: const EdgeInsets.all(3),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final period in StatsPeriod.values) _buildPeriodSegment(period),
+        ],
+      ),
+    );
+  }
+
+  /// One segment of the Day / Week / Month control. The visible pill stays
+  /// compact, while the hit box, the ripple and the semantics node are 48dp.
+  Widget _buildPeriodSegment(StatsPeriod period) {
+    final isSelected = _selectedPeriod == period;
+    return Semantics(
+      button: true,
+      selected: isSelected,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(TempoRadii.pill),
+            onTap: () => _onPeriodChanged(period),
+            child: Center(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: isSelected ? TempoColors.accent : Colors.transparent,
+                  borderRadius: BorderRadius.circular(TempoRadii.pill),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  child: Text(
+                    period.label,
+                    style: TempoText.label.copyWith(
+                      fontWeight: isSelected
+                          ? FontWeight.w700
+                          : FontWeight.w600,
                       color: isSelected
-                          ? TempoColors.accent
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(15),
-                    ),
-                    child: Text(
-                      period.label,
-                      style: TempoText.label.copyWith(
-                        fontWeight: isSelected
-                            ? FontWeight.w700
-                            : FontWeight.w600,
-                        color: isSelected
-                            ? TempoColors.ink
-                            : TempoColors.textMuted,
-                      ),
+                          ? TempoColors.ink
+                          : TempoColors.textMuted,
                     ),
                   ),
-                );
-              }).toList(),
+                ),
+              ),
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -237,10 +264,11 @@ class _StatsViewState extends State<StatsView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 12,
+            runSpacing: 4,
             children: [
               Text(
                 _rangeTitle(report),
@@ -369,7 +397,9 @@ class _StatsViewState extends State<StatsView> {
               if (i > 0) SizedBox(width: gap),
               Expanded(
                 child: OverflowBox(
+                  minWidth: 0,
                   maxWidth: 40,
+                  fit: OverflowBoxFit.deferToChild,
                   child: Text(
                     isMonth
                         ? (i % 7 == 0 ? '${report.days[i].date.day}' : '')

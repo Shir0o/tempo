@@ -1221,8 +1221,8 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
             customBorder: const CircleBorder(),
             onTap: () => Navigator.of(context).maybePop(),
             child: Container(
-              width: 44,
-              height: 44,
+              width: 48,
+              height: 48,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(color: TempoColors.line),
@@ -1251,13 +1251,22 @@ class _ActivityManagerViewState extends State<ActivityManagerView> {
           child: InkWell(
             customBorder: const StadiumBorder(),
             onTap: () => _openActivityEditor(),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: Text(
-                '+ New',
-                style: TempoText.label.copyWith(
-                  color: TempoColors.ink,
-                  fontWeight: FontWeight.w700,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+                child: Center(
+                  widthFactor: 1,
+                  child: Text(
+                    '+ New',
+                    style: TempoText.label.copyWith(
+                      color: TempoColors.ink,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ),
               ),
             ),

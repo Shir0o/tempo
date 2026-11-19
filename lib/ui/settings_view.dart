@@ -848,44 +848,48 @@ class _SettingsViewState extends State<SettingsView> {
     final chosen = await showModalBottomSheet<TodayOrder>(
       context: context,
       builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-              child: Text(
-                'Order on Today',
-                style: TempoText.title.copyWith(
-                  color: TempoColors.ink,
-                  fontSize: 22,
-                ),
-              ),
-            ),
-            for (final order in TodayOrder.values)
-              ListTile(
-                minTileHeight: 56,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(TempoRadii.row),
-                ),
-                title: Text(
-                  order.label,
-                  style: TempoText.body.copyWith(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+                child: Text(
+                  'Order on Today',
+                  style: TempoText.title.copyWith(
                     color: TempoColors.ink,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 22,
                   ),
                 ),
-                subtitle: Text(
-                  order.description,
-                  style: TempoText.label.copyWith(color: TempoColors.inkMuted),
-                ),
-                trailing: order == current
-                    ? const Icon(Icons.check_rounded, color: TempoColors.ink)
-                    : null,
-                onTap: () => Navigator.of(ctx).pop(order),
               ),
-            const SizedBox(height: 12),
-          ],
+              for (final order in TodayOrder.values)
+                ListTile(
+                  minTileHeight: 56,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(TempoRadii.row),
+                  ),
+                  title: Text(
+                    order.label,
+                    style: TempoText.body.copyWith(
+                      color: TempoColors.ink,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  subtitle: Text(
+                    order.description,
+                    style: TempoText.label.copyWith(
+                      color: TempoColors.inkMuted,
+                    ),
+                  ),
+                  trailing: order == current
+                      ? const Icon(Icons.check_rounded, color: TempoColors.ink)
+                      : null,
+                  onTap: () => Navigator.of(ctx).pop(order),
+                ),
+              const SizedBox(height: 12),
+            ],
+          ),
         ),
       ),
     );

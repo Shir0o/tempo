@@ -219,6 +219,7 @@ class _ActivityFilterSheetState extends State<_ActivityFilterSheet>
         focusNode: _focus,
         autofocus: !widget.startWithVoice,
         textInputAction: TextInputAction.search,
+        cursorColor: TempoColors.ink,
         style: TempoText.body.copyWith(color: TempoColors.ink),
         decoration: InputDecoration(
           hintText: 'Filter Activities',
@@ -270,10 +271,10 @@ class _ActivityFilterSheetState extends State<_ActivityFilterSheet>
     final data = widget.data;
 
     if (!controller.hasQuery) {
-      return const Center(
+      return Center(
         child: Text(
           'Type a name to narrow the list.',
-          style: TextStyle(color: TempoColors.inkMuted),
+          style: TempoText.body.copyWith(color: TempoColors.ink),
         ),
       );
     }
