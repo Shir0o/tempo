@@ -11,6 +11,7 @@ import '../../core/backup/backup_service.dart';
 import '../../core/export/csv_export_engine.dart';
 import '../../core/import/stt_import_service.dart';
 import '../../core/state/day_recorder.dart';
+import '../../core/state/suggestion_feedback.dart';
 import '../../core/state/today_order.dart';
 import '../../core/sync/google_drive_sync_service.dart';
 import '../../core/sync/intent_queue.dart';
@@ -102,6 +103,9 @@ class _SettingsViewState extends State<SettingsView> {
   bool _isReplica = false;
   bool _replicateEnabled = false;
 
+  /// Stored votes on suggestions, shown so they can be reset.
+  int _feedbackCount = 0;
+
   /// Bumped on every rebuild so an open second-level page redraws with it.
   final ValueNotifier<int> _revision = ValueNotifier(0);
 
@@ -109,6 +113,7 @@ class _SettingsViewState extends State<SettingsView> {
   void initState() {
     super.initState();
     _loadActivities();
+    _loadFeedbackCount();
     _loadExportSettings();
     _loadBackupSettings();
     _loadSyncDiagnostics();
@@ -143,6 +148,56 @@ class _SettingsViewState extends State<SettingsView> {
       if (mounted) setState(() => _redactComments = redact == 'true');
     } catch (_) {
       // The export setting is optional; a read failure keeps the default.
+    }
+  }
+
+  Future<void> _loadFeedbackCount() async {
+    try {
+      final feedback = await SuggestionFeedbackStore.load(widget.database);
+      if (mounted) setState(() => _feedbackCount = feedback.length);
+    } catch (_) {
+      // Feedback is optional; a read failure shows none.
+    }
+  }
+
+  Future<void> _resetSuggestionFeedback() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        title: const Text('Reset suggestion feedback?'),
+        content: const Text(
+          'Suggestions go back to learning from your history alone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dCtx).pop(false),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: TempoColors.inkMuted),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dCtx).pop(true),
+            child: const Text(
+              'Reset',
+              style: TextStyle(
+                color: TempoColors.ink,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    try {
+      await SuggestionFeedbackStore.clear(widget.database);
+      if (mounted) setState(() => _feedbackCount = 0);
+      _bumpCatalog();
+      _setStatus('Suggestion feedback was reset.');
+    } catch (e) {
+      _setStatus('Could not reset suggestion feedback: $e');
     }
   }
 
@@ -1021,6 +1076,17 @@ class _SettingsViewState extends State<SettingsView> {
                     (widget.todayOrder?.value ?? TodayOrder.categories).label,
                 opensPage: true,
                 onTap: _chooseTodayOrder,
+              ),
+              _SettingsRow(
+                title: 'Suggestion feedback',
+                subtitle: _feedbackCount == 0
+                    ? 'Long-press a suggestion on Today to rate it'
+                    : '$_feedbackCount ${_feedbackCount == 1 ? 'vote' : 'votes'} '
+                          'shaping suggestions',
+                trailing: _feedbackCount == 0
+                    ? null
+                    : const _RowAction(label: 'Reset'),
+                onTap: _feedbackCount == 0 ? null : _resetSuggestionFeedback,
               ),
             ]),
             const SizedBox(height: 24),

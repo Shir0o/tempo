@@ -2,6 +2,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:tempo/core/state/day_recorder.dart';
+import 'package:tempo/core/state/suggestion_feedback.dart';
 import 'package:tempo/data/database/tempo_database.dart';
 import 'package:tempo/data/models/models.dart';
 import 'package:tempo/ui/dashboard_view.dart';
@@ -81,6 +82,89 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.textContaining('Logged Prayer'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    dayRecorder.dispose();
+    await db.close();
+  });
+
+  testWidgets('long-press rates a suggestion and a tap counts for it', (
+    WidgetTester tester,
+  ) async {
+    final db = await TempoDatabase.openInMemory(
+      factory: databaseFactoryFfiNoIsolate,
+    );
+    for (final (id, name) in [
+      ('breakfast', 'Breakfast'),
+      ('commute', 'Commute'),
+      ('walk', 'Walk'),
+    ]) {
+      await db.insertActivity(
+        Activity(id: id, name: name, createdAtEpochMs: 0, updatedAtEpochMs: 0),
+      );
+    }
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    const hour = 3600000;
+    var n = 0;
+    Future<void> record(String activityId, int startMs) => db.insertRecord(
+      Record(
+        id: 'r${n++}',
+        activityId: activityId,
+        startedAtEpochMs: startMs,
+        endedAtEpochMs: startMs + hour ~/ 2,
+        timezoneId: 'America/Los_Angeles',
+        createdAtEpochMs: startMs,
+        updatedAtEpochMs: startMs,
+      ),
+    );
+    await record('breakfast', now - 5 * hour);
+    await record('commute', now - 4 * hour);
+    await record('walk', now - 3 * hour);
+    await record('breakfast', now - 2 * hour);
+
+    final dayRecorder = DayRecorder(database: db);
+    await dayRecorder.initialize();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DashboardView(dayRecorder: dayRecorder, database: db),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final commute = find.byKey(const ValueKey('suggested-chip-commute'));
+    expect(commute, findsOneWidget);
+
+    await tester.ensureVisible(commute);
+    await tester.longPress(commute);
+    await tester.pumpAndSettle();
+    expect(find.text('Good suggestion'), findsOneWidget);
+    expect(find.text('Add a note first'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('suggestion-action-notUseful')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    // Hidden for this Lap, and remembered with what came before it.
+    expect(commute, findsNothing);
+    final stored = await SuggestionFeedbackStore.load(db);
+    expect(stored.single.activityId, 'commute');
+    expect(stored.single.vote, SuggestionVote.notUseful);
+    expect(stored.single.precedingActivityId, 'breakfast');
+
+    final walk = find.byKey(const ValueKey('suggested-chip-walk'));
+    expect(walk, findsOneWidget);
+    await tester.ensureVisible(walk);
+    await tester.tap(walk);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.textContaining('Logged Walk'), findsOneWidget);
+    final afterTap = await SuggestionFeedbackStore.load(db);
+    expect(afterTap.last.activityId, 'walk');
+    expect(afterTap.last.vote, SuggestionVote.accepted);
 
     await tester.pumpWidget(const SizedBox.shrink());
     dayRecorder.dispose();

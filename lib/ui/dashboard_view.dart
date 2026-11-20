@@ -13,6 +13,7 @@ import '../../core/state/note_suggestions.dart';
 import '../../core/state/people_index.dart';
 import '../../core/state/record_commands.dart';
 import '../../core/state/suggestion_engine.dart';
+import '../../core/state/suggestion_feedback.dart';
 import '../../core/state/suggestion_loader.dart';
 import '../../core/state/today_order.dart';
 import '../../core/time/timezone_id.dart';
@@ -131,6 +132,11 @@ class _DashboardViewState extends State<DashboardView>
   /// Learned suggestions, pinned Activities left out; those have a row of
   /// their own.
   List<RankedSuggestion> _suggestions = [];
+
+  /// Activities marked not useful while this Lap is open, hidden until the
+  /// Lap changes. Keyed by the Lap's start.
+  int? _dismissedLapStartMs;
+  final Set<String> _dismissedForLap = {};
 
   /// Combo chips (Activity, People and note) ahead of [_suggestions].
   List<RecurringNote> _combos = [];
@@ -309,16 +315,25 @@ class _DashboardViewState extends State<DashboardView>
           : null;
 
       // Rank for the moment being labeled: the open Lap's start.
-      final suggested = await loadRankedSuggestions(
-        database: widget.database,
-        candidates: activities,
-        nowEpochMs: now.millisecondsSinceEpoch,
-        targetEpochMs:
-            (widget.dayRecorder?.lap ?? replicaLap)?.startedAtEpochMs,
-        timezoneId: localTimezoneId(),
-        limit: 4,
-        excludePinned: true,
-      );
+      final lapStartMs =
+          (widget.dayRecorder?.lap ?? replicaLap)?.startedAtEpochMs;
+      if (lapStartMs != _dismissedLapStartMs) {
+        _dismissedLapStartMs = lapStartMs;
+        _dismissedForLap.clear();
+      }
+      final dismissed = Set<String>.of(_dismissedForLap);
+      final suggested = [
+        for (final suggestion in await loadRankedSuggestions(
+          database: widget.database,
+          candidates: activities,
+          nowEpochMs: now.millisecondsSinceEpoch,
+          targetEpochMs: lapStartMs,
+          timezoneId: localTimezoneId(),
+          limit: 4 + dismissed.length,
+          excludePinned: true,
+        ))
+          if (!dismissed.contains(suggestion.activity.id)) suggestion,
+      ].take(4).toList();
 
       if (mounted && generation == _loadGeneration) {
         setState(() {
@@ -374,6 +389,86 @@ class _DashboardViewState extends State<DashboardView>
       _showUndo('Logged ${activity.name} ${_rangeLabel(record)}', record);
     } catch (e) {
       _showError('Failed to label the Lap: $e');
+    }
+  }
+
+  /// A tapped suggestion counts lightly in its favour, then labels the Lap.
+  Future<void> _labelSuggested(Activity activity) async {
+    unawaited(_recordFeedback(activity, SuggestionVote.accepted));
+    await _labelActivity(activity);
+  }
+
+  /// Stores [vote] on [activity] for the moment being labeled. Feedback only
+  /// shapes later suggestions, so a failure is not worth interrupting for.
+  Future<void> _recordFeedback(Activity activity, SuggestionVote vote) async {
+    try {
+      await SuggestionFeedbackStore.record(
+        database: widget.database,
+        activityId: activity.id,
+        vote: vote,
+        nowEpochMs: DateTime.now().millisecondsSinceEpoch,
+        targetEpochMs: _lap?.startedAtEpochMs,
+        timezoneId: localTimezoneId(),
+      );
+    } catch (_) {}
+  }
+
+  /// Long-press on a suggestion: add a note first, or say whether it was a
+  /// good suggestion for this moment.
+  Future<void> _openSuggestionActions(Activity activity) async {
+    final choice = await showModalBottomSheet<_SuggestionAction>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+              child: Text(
+                activity.name,
+                style: TempoText.title.copyWith(
+                  color: TempoColors.ink,
+                  fontSize: 22,
+                ),
+              ),
+            ),
+            for (final action in _SuggestionAction.values)
+              ListTile(
+                key: ValueKey('suggestion-action-${action.name}'),
+                minTileHeight: 56,
+                leading: Icon(action.icon, color: TempoColors.ink),
+                title: Text(
+                  action.label,
+                  style: TempoText.body.copyWith(
+                    color: TempoColors.ink,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                onTap: () => Navigator.of(ctx).pop(action),
+              ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+    if (choice == null || !mounted) return;
+    switch (choice) {
+      case _SuggestionAction.note:
+        await _noteThenLabel(activity);
+      case _SuggestionAction.good:
+        await _recordFeedback(activity, SuggestionVote.good);
+        _showMessage(
+          'Got it. ${activity.name} will come up more at times like this.',
+        );
+        await _loadData();
+      case _SuggestionAction.notUseful:
+        setState(() => _dismissedForLap.add(activity.id));
+        await _recordFeedback(activity, SuggestionVote.notUseful);
+        _showMessage(
+          'Got it. ${activity.name} will come up less at times like this.',
+        );
+        await _loadData();
     }
   }
 
@@ -658,6 +753,8 @@ class _DashboardViewState extends State<DashboardView>
       _showError('Failed to open the note: $e');
     }
   }
+
+  void _showMessage(String message) => _showError(message);
 
   void _showError(String message) {
     if (!mounted) return;
@@ -1420,7 +1517,7 @@ class _DashboardViewState extends State<DashboardView>
       label: [
         'Suggested: ${activity.name}',
         ?reason,
-        'Tap to label untracked time.',
+        'Tap to label untracked time. Long-press to rate this suggestion.',
       ].join('. '),
       child: ExcludeSemantics(
         child: Material(
@@ -1429,7 +1526,8 @@ class _DashboardViewState extends State<DashboardView>
           child: InkWell(
             key: ValueKey('suggested-chip-${activity.id}'),
             borderRadius: BorderRadius.circular(18),
-            onTap: () => _labelActivity(activity),
+            onTap: () => _labelSuggested(activity),
+            onLongPress: () => _openSuggestionActions(activity),
             child: ConstrainedBox(
               constraints: const BoxConstraints(minHeight: 48),
               child: Padding(
@@ -1908,3 +2006,15 @@ const TextStyle _stripLabelStyle = TextStyle(
   letterSpacing: 0.4,
   fontFeatures: [FontFeature.tabularFigures()],
 );
+
+/// What a long-press on a suggestion offers.
+enum _SuggestionAction {
+  note('Add a note first', Icons.edit_note_rounded),
+  good('Good suggestion', Icons.thumb_up_alt_outlined),
+  notUseful('Not useful here', Icons.thumb_down_alt_outlined);
+
+  const _SuggestionAction(this.label, this.icon);
+
+  final String label;
+  final IconData icon;
+}
