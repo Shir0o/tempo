@@ -962,11 +962,12 @@ class _SettingsViewState extends State<SettingsView> {
     }
   }
 
-  Future<void> _handleImportSimpleTimeTracker() async {
+  /// Picks a file with one of [extensions] and opens the import preview.
+  Future<void> _handleImportFile(List<String> extensions) async {
     try {
       final files = await FilePicker.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['csv', 'backup', 'txt'],
+        allowedExtensions: extensions,
       );
 
       if (files.isEmpty) return;
@@ -1116,10 +1117,10 @@ class _SettingsViewState extends State<SettingsView> {
                   onTap: () => _openPage(_devicesTitle, _buildDevicesPage),
                 ),
               _SettingsRow(
-                title: 'Import from Simple Time Tracker',
-                subtitle: 'Pick a .backup or .csv file',
-                trailing: const _RowAction(label: 'Choose file'),
-                onTap: _isProcessing ? null : _handleImportSimpleTimeTracker,
+                title: 'Import',
+                subtitle: 'Bring in records from a file',
+                opensPage: true,
+                onTap: () => _openPage('Import', _buildImportPage),
               ),
             ]),
             const SizedBox(height: 24),
@@ -1384,6 +1385,29 @@ class _SettingsViewState extends State<SettingsView> {
     ];
   }
 
+  List<Widget> _buildImportPage() {
+    return [
+      _buildGroup([
+        _SettingsRow(
+          title: 'Spreadsheet (.csv)',
+          subtitle: 'A Tempo export, or a Simple Time Tracker CSV',
+          trailing: const _RowAction(label: 'Choose file'),
+          onTap: _isProcessing
+              ? null
+              : () => _handleImportFile(const ['csv', 'txt']),
+        ),
+        _SettingsRow(
+          title: 'Simple Time Tracker backup',
+          subtitle: 'A .backup file',
+          trailing: const _RowAction(label: 'Choose file'),
+          onTap: _isProcessing
+              ? null
+              : () => _handleImportFile(const ['backup']),
+        ),
+      ]),
+    ];
+  }
+
   List<Widget> _buildSyncDetailsPage() {
     final stats = _syncStats;
     final appliedSeq = stats?.appliedSeq ?? 0;
@@ -1470,7 +1494,7 @@ class _SettingsViewState extends State<SettingsView> {
                         ),
                       ),
                       Text(
-                        'stt_records_automatic.csv',
+                        GoogleDriveSyncService.defaultCsvFileName,
                         style: TempoText.label.copyWith(
                           color: TempoColors.ink,
                           fontWeight: FontWeight.w700,

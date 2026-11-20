@@ -8,8 +8,9 @@ import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
 import '../time/timezone_id.dart';
 
-/// Atomic Write-Flush-Rename CSV Export Engine guaranteeing 100% Simple Time Tracker
-/// schema parity and zero-corruption reads for peer tools such as BNPB.
+/// Atomic Write-Flush-Rename CSV Export Engine. Keeps the common 8-column
+/// time-tracking CSV layout and guarantees zero-corruption reads for other apps
+/// that consume the file.
 class CsvExportEngine {
   final TempoDatabase database;
   final File targetFile;
@@ -23,8 +24,8 @@ class CsvExportEngine {
   /// switch flipped in Settings takes effect without rebuilding the engine.
   final bool? redactComments;
 
-  /// Default file name matching Simple Time Tracker continuous auto-export.
-  static const String defaultFileName = 'stt_records_automatic.csv';
+  /// Default file name of the continuous automatic export.
+  static const String defaultFileName = 'tempo_records_automatic.csv';
 
   /// Exact 8-column header, all lowercase, comma-separated.
   static const String csvHeader =
@@ -108,7 +109,7 @@ class CsvExportEngine {
   Future<File>? get lastExportFuture => _lastExportFuture;
 
   // ==========================================
-  // Formatting Utilities (STT Schema Parity)
+  // Formatting Utilities (8-column CSV layout)
   // ==========================================
 
   /// Formats [dt] into strict `yyyy-MM-dd HH:mm:ss` (US locale, 24h, zero-padded).
@@ -123,7 +124,7 @@ class CsvExportEngine {
   }
 
   /// Formats duration in milliseconds to unpadded `"$hr:$min:$sec"`
-  /// matching Simple Time Tracker (e.g. `0:19:9`, `1:0:0`, `0:0:0`).
+  /// (e.g. `0:19:9`, `1:0:0`, `0:0:0`).
   static String formatDuration(int durationMs) {
     final ms = durationMs < 0 ? 0 : durationMs;
     final totalSeconds = ms ~/ 1000;
@@ -149,7 +150,7 @@ class CsvExportEngine {
     return '"${escapeString(text)}"';
   }
 
-  /// Formats a single record row matching the 8-column STT CSV layout.
+  /// Formats a single record row in the 8-column CSV layout.
   ///
   /// With [redactComments] the comment cell is written as an empty quoted
   /// string; its column, the times, the tags, and the duration are unchanged.
@@ -223,7 +224,7 @@ class CsvExportEngine {
     buffer.write('\n');
 
     for (final record in records) {
-      // Untracked Records have no Activity, so BNPB never sees a row without
+      // Untracked Records have no Activity, so readers never see a row without
       // an activity name. Labelling one includes it on the next export.
       if (record.isUntracked) continue;
 
