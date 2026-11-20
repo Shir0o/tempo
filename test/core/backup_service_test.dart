@@ -331,6 +331,94 @@ CREATE TABLE IF NOT EXISTS changes (
     });
   });
 
+  group('keeping the destination small', () {
+    test(
+      'leaving the app uploads nothing when the store is unchanged',
+      () async {
+        await insertContiguousDay();
+        await database.setSetting(BackupService.backupEnabledSetting, 'true');
+        final destination = FilesystemBackupDestination(
+          rootPath: destinationRoot.path,
+        );
+        final service = buildService(destination: destination);
+
+        final first = (await service.promote())!;
+        clock = clock.add(const Duration(minutes: 1));
+        await service.onAppPause();
+        clock = clock.add(const Duration(minutes: 1));
+        await service.onAppPause();
+
+        Future<List<String>> backups() async => [
+          for (final file in await destination.list('tempo/store-1'))
+            if (p.basename(file.path).startsWith('backup-'))
+              p.basename(file.path),
+        ];
+        expect(await backups(), [first.file]);
+        expect((await service.readManifest()).generations.map((g) => g.file), [
+          first.file,
+        ]);
+
+        await insertRecord('r3', base + 7200000, base + 10800000);
+        clock = clock.add(const Duration(minutes: 1));
+        await service.onAppPause();
+        expect(await backups(), hasLength(2));
+      },
+    );
+
+    test('an explicit backup still writes a new generation', () async {
+      await insertContiguousDay();
+      final destination = FilesystemBackupDestination(
+        rootPath: destinationRoot.path,
+      );
+      final service = buildService(destination: destination);
+
+      final first = (await service.promote())!;
+      clock = clock.add(const Duration(hours: 1));
+      final second = (await service.promote())!;
+
+      expect(second.file, isNot(first.file));
+      expect((await service.readManifest()).generations, hasLength(2));
+    });
+
+    test(
+      'backups the manifest lost track of are trimmed to the limit',
+      () async {
+        await insertContiguousDay();
+        final destination = FilesystemBackupDestination(
+          rootPath: destinationRoot.path,
+        );
+        final storeDirectory = Directory(
+          p.join(destinationRoot.path, 'tempo', 'store-1'),
+        );
+        await storeDirectory.create(recursive: true);
+        final strays = [
+          for (var day = 1; day <= 8; day++)
+            'backup-202611${day.toString().padLeft(2, '0')}T080000Z.db',
+        ];
+        for (final name in strays) {
+          await File(p.join(storeDirectory.path, name)).writeAsBytes([1, 2]);
+        }
+        await File(p.join(storeDirectory.path, 'notes.txt'))
+            .writeAsString('keep me');
+
+        final service = buildService(destination: destination);
+        final generation = (await service.promote())!;
+
+        final names = {
+          for (final file in await destination.list('tempo/store-1'))
+            p.basename(file.path),
+        };
+        expect(names, contains(generation.file));
+        expect(names, contains('notes.txt'));
+        expect(
+          names.where((name) => strays.contains(name)).toSet(),
+          strays.reversed.take(5).toSet(),
+          reason: 'the newest five strays survive, the older three go',
+        );
+      },
+    );
+  });
+
   group('restore', () {
     test(
       'a failed validation leaves the store and the local snapshot intact',
@@ -422,9 +510,9 @@ CREATE TABLE IF NOT EXISTS changes (
         expect(stored, isNotNull);
         expect(sha256Hex(stored!), generation.sha256);
         expect(
-          store.files.keys.where((path) => path.startsWith('tempo/.tmp/')),
+          store.writes.where((path) => path.startsWith('tempo/.tmp/')),
           isEmpty,
-          reason: 'the temp copy is deleted after a verified promotion',
+          reason: 'each file is uploaded once, with no temp copy',
         );
 
         final manifest = await service.readManifest();
@@ -512,6 +600,7 @@ class _FakeSafStore implements SafDocumentStore {
 
   final SafTree? tree;
   final Map<String, List<int>> files = {};
+  final List<String> writes = [];
   bool corruptWrites = false;
 
   @override
@@ -535,6 +624,7 @@ class _FakeSafStore implements SafDocumentStore {
     String relativePath,
     List<int> bytes,
   ) async {
+    writes.add(relativePath);
     files[relativePath] = corruptWrites
         ? bytes.sublist(0, bytes.length ~/ 2)
         : List<int>.from(bytes);

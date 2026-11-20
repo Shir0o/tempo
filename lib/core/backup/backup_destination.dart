@@ -101,6 +101,17 @@ abstract class BackupDestination {
     String? expectedSha256,
   });
 
+  /// Writes [bytes] to [to] and throws unless the file reads back with
+  /// [expectedSha256]. A filesystem goes through a temp file named [tempName]
+  /// and an atomic rename. SAF writes [to] directly: it has no atomic rename,
+  /// and a temp copy would upload every byte twice to a cloud provider.
+  Future<void> writeVerified({
+    required String to,
+    required List<int> bytes,
+    required String expectedSha256,
+    required String tempName,
+  });
+
   /// Reads a destination-relative file.
   Stream<List<int>> openRead(String relativePath);
 
@@ -190,6 +201,21 @@ class FilesystemBackupDestination implements BackupDestination {
         );
       }
     }
+  }
+
+  @override
+  Future<void> writeVerified({
+    required String to,
+    required List<int> bytes,
+    required String expectedSha256,
+    required String tempName,
+  }) async {
+    final tempPath = await writeTemp(tempName, bytes);
+    await renameAtomically(
+      from: tempPath,
+      to: to,
+      expectedSha256: expectedSha256,
+    );
   }
 
   @override
@@ -562,6 +588,29 @@ class SafBackupDestination implements BackupDestination {
       );
     }
     await store.delete(treeUri, from);
+  }
+
+  @override
+  Future<void> writeVerified({
+    required String to,
+    required List<int> bytes,
+    required String expectedSha256,
+    required String tempName,
+  }) async {
+    _assertOpen();
+    final directory = p.posix.dirname(to);
+    if (directory != '.') {
+      await store.createDirectory(treeUri, directory);
+    }
+    await store.writeFile(treeUri, to, bytes);
+    final actual = sha256Hex(await store.readFile(treeUri, to));
+    if (actual != expectedSha256) {
+      await store.delete(treeUri, to);
+      throw BackupVerificationException(
+        'SAF destination hash mismatch for $to: '
+        'expected $expectedSha256, got $actual',
+      );
+    }
   }
 
   @override
