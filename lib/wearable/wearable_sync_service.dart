@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 
 import '../core/state/day_recorder.dart';
+import '../core/state/suggestion_feedback.dart';
 import '../core/state/suggestion_loader.dart';
 import '../core/time/timezone_id.dart';
 import '../data/database/tempo_database.dart';
@@ -427,9 +428,19 @@ class WearableSyncService {
           if (!await _activityExists(activityId)) {
             return await _reject(action, IntentResult.reasonUnknownActivity);
           }
+          final db = database;
           final record = await dayRecorder.label(
             activityId,
             comment: action.comment ?? '',
+            // The same Tags a label on Today would get.
+            tags: db == null
+                ? const []
+                : await loadLearnedTagIds(
+                    db,
+                    activityId: activityId,
+                    comment: action.comment ?? '',
+                    beforeEpochMs: action.timestampEpochMs,
+                  ),
             atEpochMs: action.timestampEpochMs,
             atZoneId: action.zoneId,
             intentId: action.actionId,

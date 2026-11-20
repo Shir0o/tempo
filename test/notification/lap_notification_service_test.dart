@@ -180,6 +180,40 @@ void main() {
       },
     );
 
+    test('a chip tap fills in the Tags the Activity usually has', () async {
+      await db.insertTag(
+        const Tag(
+          id: 't1',
+          name: 'Outside',
+          createdAtEpochMs: lapStart,
+          updatedAtEpochMs: lapStart,
+        ),
+      );
+      for (var i = 1; i <= 2; i++) {
+        final endedAt = lapStart - i * 400000;
+        await db.insertRecord(
+          Record(
+            id: 'tagged-$i',
+            activityId: 'a',
+            startedAtEpochMs: endedAt - 60000,
+            endedAtEpochMs: endedAt,
+            timezoneId: zone,
+            createdAtEpochMs: endedAt,
+            updatedAtEpochMs: endedAt,
+            tagIds: const ['t1'],
+          ),
+        );
+      }
+
+      mockTime = lapStart + 60000;
+      await service.handleAction('LABEL', activityId: 'a');
+      final labeled = (await db.getRecords(
+        activityId: 'a',
+        startedAfter: lapStart - 1,
+      )).single;
+      expect(labeled.tagIds, ['t1']);
+    });
+
     test('Still grows the last Record and Undo shrinks it back', () async {
       mockTime = lapStart + 60000;
       await service.handleAction('LABEL', activityId: 'a');

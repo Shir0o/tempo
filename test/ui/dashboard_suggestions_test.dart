@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:tempo/core/state/day_recorder.dart';
 import 'package:tempo/core/state/suggestion_feedback.dart';
+import 'package:tempo/core/state/suggestion_impressions.dart';
 import 'package:tempo/data/database/tempo_database.dart';
 import 'package:tempo/data/models/models.dart';
 import 'package:tempo/ui/dashboard_view.dart';
@@ -174,6 +175,13 @@ void main() {
       expect(afterTap.last.activityId, 'walk');
       expect(afterTap.last.vote, SuggestionVote.logged);
       expect(afterTap.last.recordId, isNotNull);
+      // The other suggestions on screen were passed over; Walk was picked.
+      final passedOver = await SuggestionImpressions.load(
+        db,
+        nowEpochMs: DateTime.now().millisecondsSinceEpoch,
+      );
+      expect(passedOver, isNotEmpty);
+      expect(passedOver.containsKey('walk'), isFalse);
 
       // The bar asks whether it was a good suggestion.
       expect(find.text('Good suggestion?'), findsOneWidget);
@@ -185,12 +193,88 @@ void main() {
       expect(afterAsk.last.activityId, 'walk');
       expect(afterAsk.last.vote, SuggestionVote.good);
       expect(afterAsk.last.precedingActivityId, 'breakfast');
+      // The same rating the Record's edit sheet shows.
+      expect(afterAsk.last.recordId, afterTap.last.recordId);
 
       await tester.pumpWidget(const SizedBox.shrink());
       dayRecorder.dispose();
       await db.close();
     },
   );
+
+  testWidgets('an Activity picked by hand gets the Tags it usually has', (
+    WidgetTester tester,
+  ) async {
+    final db = await TempoDatabase.openInMemory(
+      factory: databaseFactoryFfiNoIsolate,
+    );
+    await db.insertActivity(
+      const Activity(
+        id: 'walk',
+        name: 'Walk',
+        createdAtEpochMs: 0,
+        updatedAtEpochMs: 0,
+      ),
+    );
+    await db.insertTag(
+      const Tag(
+        id: 'outside',
+        name: 'Outside',
+        createdAtEpochMs: 0,
+        updatedAtEpochMs: 0,
+      ),
+    );
+    final now = DateTime.now().millisecondsSinceEpoch;
+    const hour = 3600000;
+    for (var i = 1; i <= 3; i++) {
+      final startMs = now - i * 24 * hour;
+      await db.insertRecord(
+        Record(
+          id: 'w$i',
+          activityId: 'walk',
+          startedAtEpochMs: startMs,
+          endedAtEpochMs: startMs + hour ~/ 2,
+          timezoneId: 'America/Los_Angeles',
+          createdAtEpochMs: startMs,
+          updatedAtEpochMs: startMs,
+          tagIds: const ['outside'],
+        ),
+      );
+    }
+
+    final dayRecorder = DayRecorder(database: db);
+    await dayRecorder.initialize();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DashboardView(dayRecorder: dayRecorder, database: db),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final block = find.byKey(const ValueKey('activity-block-walk'));
+    await tester.ensureVisible(block);
+    await tester.tap(block);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.textContaining('Logged Walk'), findsOneWidget);
+
+    final logged = (await db.getRecords(
+      activityId: 'walk',
+      orderBy: 'started_at_epoch_ms DESC',
+      limit: 1,
+    )).single;
+    expect(logged.tagIds, ['outside']);
+    // Kept with the Record, so removing the Tag later counts against it.
+    final stored = (await SuggestionFeedbackStore.load(db)).single;
+    expect(stored.vote, SuggestionVote.tagged);
+    expect(stored.recordId, logged.id);
+    expect(stored.tagIds, ['outside']);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    dayRecorder.dispose();
+    await db.close();
+  });
 
   testWidgets('only Untracked time shows no learned picks', (
     WidgetTester tester,

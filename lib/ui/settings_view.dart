@@ -12,6 +12,7 @@ import '../../core/export/csv_export_engine.dart';
 import '../../core/import/stt_import_service.dart';
 import '../../core/state/day_recorder.dart';
 import '../../core/state/suggestion_feedback.dart';
+import '../../core/state/suggestion_impressions.dart';
 import '../../core/state/today_order.dart';
 import '../../core/sync/google_drive_sync_service.dart';
 import '../../core/sync/intent_queue.dart';
@@ -193,6 +194,7 @@ class _SettingsViewState extends State<SettingsView> {
 
     try {
       await SuggestionFeedbackStore.clear(widget.database);
+      await SuggestionImpressions.clear(widget.database);
       if (mounted) setState(() => _feedbackCount = 0);
       _bumpCatalog();
       _setStatus('Suggestion feedback was reset.');

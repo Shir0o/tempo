@@ -104,7 +104,9 @@ class RankedSuggestion {
 /// counts fully in the same situation (the same preceding Activity, within an
 /// hour on the same day of the week) and much less as the situation differs.
 /// Not useful cuts a score hard, good raises it up to double, and tapping a
-/// suggestion is a light good. Feedback fades like history does.
+/// suggestion is a light good. Feedback fades like history does. A
+/// suggestion shown on Today many times and passed over every time ranks
+/// slowly lower (see [applyIgnored]).
 ///
 /// Every observation is weighted by a 14-day half-life over a 60-day window.
 /// Weights are held as integer micro-units so equal scores compare exactly and
@@ -163,11 +165,20 @@ class ContextualSuggestionEngine {
     SuggestionVote.good => _microsPerUnit,
     SuggestionVote.notUseful => -_microsPerUnit,
     SuggestionVote.accepted => _microsPerUnit ~/ 4,
-    SuggestionVote.logged => 0,
+    SuggestionVote.logged || SuggestionVote.tagged => 0,
   };
 
   /// Net good feedback multiplies a score by up to this many times.
   static const int _maxFeedbackBoost = 2;
+
+  /// Times a suggestion can be shown and passed over before it starts to
+  /// rank lower, in micro-units.
+  static const int ignoredGraceMicros = 3 * _microsPerUnit;
+
+  /// Each time past the grace divides a score by this much more, in
+  /// hundredths, up to [_maxIgnoredDemotion] times.
+  static const int _ignoredDemotionPercent = 15;
+  static const int _maxIgnoredDemotion = 3;
 
   /// Each unit of net not-useful feedback divides a score by this much more:
   /// one fresh vote in the same situation leaves a twenty-first of it, enough
@@ -241,6 +252,7 @@ class ContextualSuggestionEngine {
     required int targetEpochMs,
     required String timezoneId,
     Iterable<SuggestionFeedback> feedback = const [],
+    Map<String, int> ignored = const {},
     int limit = 6,
   }) => [
     for (final suggestion in rankExplained(
@@ -251,6 +263,7 @@ class ContextualSuggestionEngine {
       targetEpochMs: targetEpochMs,
       timezoneId: timezoneId,
       feedback: feedback,
+      ignored: ignored,
       limit: limit,
     ))
       suggestion.activity,
@@ -265,6 +278,7 @@ class ContextualSuggestionEngine {
     required int targetEpochMs,
     required String timezoneId,
     Iterable<SuggestionFeedback> feedback = const [],
+    Map<String, int> ignored = const {},
     int limit = 6,
   }) {
     assert(
@@ -512,6 +526,11 @@ class ContextualSuggestionEngine {
     for (final MapEntry(key: id, value: net) in feedbackNet.entries) {
       totals[id] = _applyFeedback(totals[id]!, net);
     }
+    // A suggestion shown again and again but never tapped slowly sinks.
+    for (final MapEntry(key: id, value: times) in ignored.entries) {
+      final total = totals[id];
+      if (total != null) totals[id] = applyIgnored(total, times);
+    }
 
     final sorted = List<Activity>.from(activeCandidates)
       ..sort((a, b) {
@@ -565,7 +584,7 @@ class ContextualSuggestionEngine {
   }) {
     final net = <String, int>{};
     for (final entry in feedback) {
-      if (entry.vote == SuggestionVote.logged) continue;
+      if (entry.vote.readsRecord) continue;
       final id = keyOf(entry);
       if (id == null) continue;
       final ageMs = targetEpochMs - entry.givenAtEpochMs;
@@ -642,6 +661,20 @@ class ContextualSuggestionEngine {
     return total *
         _microsPerUnit ~/
         (_microsPerUnit + _feedbackDemotion * -net);
+  }
+
+  /// [total] lowered for a suggestion passed over [ignoredMicros] times
+  /// (faded, in micro-units): untouched for the first
+  /// [ignoredGraceMicros], then divided by 15% more for each time after, up
+  /// to [_maxIgnoredDemotion] times.
+  static int applyIgnored(int total, int ignoredMicros) {
+    final excess = ignoredMicros - ignoredGraceMicros;
+    if (excess <= 0) return total;
+    final divisor = math.min(
+      _microsPerUnit + excess * _ignoredDemotionPercent ~/ 100,
+      _maxIgnoredDemotion * _microsPerUnit,
+    );
+    return total * _microsPerUnit ~/ divisor;
   }
 
   /// [minute] rounded to five minutes and wrapped into one day.
