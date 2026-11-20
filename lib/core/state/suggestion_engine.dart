@@ -163,6 +163,7 @@ class ContextualSuggestionEngine {
     SuggestionVote.good => _microsPerUnit,
     SuggestionVote.notUseful => -_microsPerUnit,
     SuggestionVote.accepted => _microsPerUnit ~/ 4,
+    SuggestionVote.logged => 0,
   };
 
   /// Net good feedback multiplies a score by up to this many times.
@@ -185,6 +186,11 @@ class ContextualSuggestionEngine {
       (day) => (math.pow(0.5, day / _halfLifeDays) * _microsPerUnit).round(),
     ),
   );
+
+  /// How much an observation or vote [ageMs] old still counts, in
+  /// micro-units: the 14-day half-life, and nothing past the window.
+  static int decayMicros(int ageMs) =>
+      _weightMicrosForAge(ageMs < 0 ? 0 : ageMs ~/ Duration.millisecondsPerDay);
 
   static int _weightMicrosForAge(int ageDays) {
     if (ageDays < 0 || ageDays > historyWindowDays) return 0;
@@ -488,9 +494,16 @@ class ContextualSuggestionEngine {
       reasons[id] = reason;
     }
 
+    // Votes on the Activity alone; votes on a note suggestion are ranked
+    // with the notes.
     final feedbackNet = _feedbackNet(
       feedback,
-      candidateIndex: candidateIndex,
+      keyOf: (entry) =>
+          entry.people == null &&
+              candidateIndex.containsKey(entry.activityId) &&
+              entry.activityId != precedingActivityId
+          ? entry.activityId
+          : null,
       precedingActivityId: precedingActivityId,
       targetEpochMs: targetEpochMs,
       targetMinute: targetMinute,
@@ -519,12 +532,32 @@ class ContextualSuggestionEngine {
     ];
   }
 
-  /// Net decayed feedback per candidate, in micro-units, scaled by how alike
-  /// each vote's situation is to the target's. Leaves out the preceding
-  /// Activity, which is never suggested next.
+  /// Net decayed feedback per key, in micro-units (one fresh vote in the very
+  /// same situation is 1 000 000), scaled by how alike each vote's situation
+  /// is to the target's. [keyOf] names what a vote is about, or null to skip
+  /// it; the Today page keys note suggestions with
+  /// [SuggestionFeedback.comboKey].
+  static Map<String, int> feedbackNet(
+    Iterable<SuggestionFeedback> feedback, {
+    required String? Function(SuggestionFeedback entry) keyOf,
+    required String? precedingActivityId,
+    required int targetEpochMs,
+    required String timezoneId,
+  }) {
+    final target = wallClockAt(timezoneId, targetEpochMs);
+    return _feedbackNet(
+      feedback,
+      keyOf: keyOf,
+      precedingActivityId: precedingActivityId,
+      targetEpochMs: targetEpochMs,
+      targetMinute: target.hour * 60 + target.minute,
+      targetWeekday: target.weekday,
+    );
+  }
+
   static Map<String, int> _feedbackNet(
     Iterable<SuggestionFeedback> feedback, {
-    required Map<String, int> candidateIndex,
+    required String? Function(SuggestionFeedback entry) keyOf,
     required String? precedingActivityId,
     required int targetEpochMs,
     required int targetMinute,
@@ -532,10 +565,9 @@ class ContextualSuggestionEngine {
   }) {
     final net = <String, int>{};
     for (final entry in feedback) {
-      final id = entry.activityId;
-      if (!candidateIndex.containsKey(id) || id == precedingActivityId) {
-        continue;
-      }
+      if (entry.vote == SuggestionVote.logged) continue;
+      final id = keyOf(entry);
+      if (id == null) continue;
       final ageMs = targetEpochMs - entry.givenAtEpochMs;
       final decay = _weightMicrosForAge(
         ageMs < 0 ? 0 : ageMs ~/ Duration.millisecondsPerDay,

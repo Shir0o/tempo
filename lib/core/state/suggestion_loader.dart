@@ -92,7 +92,7 @@ Future<List<RankedSuggestion>> loadRankedSuggestions({
     history,
     targetEpochMs: target,
   );
-  final feedback = await SuggestionFeedbackStore.load(database);
+  final feedback = (await SuggestionFeedbackStore.loadResolved(database)).votes;
   return const ContextualSuggestionEngine().rankExplained(
     candidates: [
       for (final activity in candidates)

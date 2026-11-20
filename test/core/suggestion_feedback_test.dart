@@ -346,4 +346,274 @@ void main() {
       expect(await first(), isNot('grooming'));
     });
   });
+
+  group('edits after logging', () {
+    SuggestionFeedback logged({
+      List<String>? people,
+      String comment = '',
+      List<String>? tagIds,
+    }) => SuggestionFeedback(
+      activityId: 'bible',
+      vote: SuggestionVote.logged,
+      givenAtEpochMs: target,
+      targetEpochMs: target,
+      timezoneId: zone,
+      precedingActivityId: 'morning',
+      people: people,
+      recordId: 'r1',
+      comment: comment,
+      tagIds: tagIds,
+    );
+
+    Record saved({
+      String activityId = 'bible',
+      String comment = '',
+      List<String> tagIds = const [],
+    }) => Record(
+      id: 'r1',
+      activityId: activityId,
+      startedAtEpochMs: target,
+      endedAtEpochMs: target + 60000,
+      comment: comment,
+      timezoneId: zone,
+      createdAtEpochMs: target,
+      updatedAtEpochMs: target,
+      tagIds: tagIds,
+    );
+
+    List<String> votes(ResolvedFeedback resolved) => [
+      for (final vote in resolved.votes)
+        '${vote.vote.name}${vote.people == null ? '' : ' ${vote.people}'}',
+    ];
+
+    test('an undone label says nothing', () {
+      final resolved = resolveLogged(logged(), null);
+      expect(resolved.votes, isEmpty);
+      expect(resolved.tags, isEmpty);
+    });
+
+    test('a kept Activity suggestion is a light vote for it', () {
+      expect(votes(resolveLogged(logged(), saved())), ['accepted']);
+    });
+
+    test('a changed Activity counts against the suggestion and its note', () {
+      final resolved = resolveLogged(
+        logged(people: ['Sam'], comment: 'John 3 w/ Sam'),
+        saved(activityId: 'work', comment: 'John 3 w/ Sam'),
+      );
+      expect(votes(resolved), ['notUseful', 'notUseful [Sam]']);
+    });
+
+    test('a note kept as suggested counts strongly for it', () {
+      final resolved = resolveLogged(
+        logged(people: ['Sam'], comment: 'John 3 w/ Sam'),
+        saved(comment: ' John 3  w/ Sam'),
+      );
+      expect(votes(resolved).last, 'good [Sam]');
+    });
+
+    test('another Person with the same reading counts lightly for it', () {
+      final resolved = resolveLogged(
+        logged(people: ['Sam'], comment: 'John 3 w/ Sam'),
+        saved(comment: 'John 3 w/ Lee'),
+      );
+      expect(votes(resolved).last, 'accepted [Sam]');
+    });
+
+    test('a rewritten reading counts against the note', () {
+      final resolved = resolveLogged(
+        logged(people: ['Sam'], comment: 'John 3 w/ Sam'),
+        saved(comment: 'Acts 1 w/ Sam'),
+      );
+      expect(votes(resolved), ['accepted', 'notUseful [Sam]']);
+    });
+
+    test('Tag fixes count for and against each Tag', () {
+      final resolved = resolveLogged(
+        logged(tagIds: ['home', 'church']),
+        saved(tagIds: ['church', 'travel']),
+      );
+      expect(
+        {for (final tag in resolved.tags) tag.tagId: tag.micros},
+        {'home': -1000000, 'church': 250000, 'travel': 1000000},
+      );
+    });
+
+    test('entries without a record are not read back as logged', () {
+      expect(
+        SuggestionFeedback.fromJson({
+          'activity': 'bible',
+          'vote': 'logged',
+          'given': 1,
+          'target': 1,
+          'zone': 'UTC',
+        }),
+        isNull,
+      );
+    });
+
+    test('note feedback is keyed apart from Activity feedback', () {
+      final noteVote = vote(
+        'grooming',
+        SuggestionVote.notUseful,
+      ).withVote(SuggestionVote.notUseful, people: ['Sam']);
+      // A rejected note does not demote the Activity itself.
+      expect(rank([noteVote]), rank());
+
+      final net = ContextualSuggestionEngine.feedbackNet(
+        [noteVote],
+        keyOf: (entry) => entry.people == null
+            ? null
+            : SuggestionFeedback.comboKey(entry.activityId, entry.people!),
+        precedingActivityId: 'bible',
+        targetEpochMs: target,
+        timezoneId: zone,
+      );
+      expect(net, {
+        SuggestionFeedback.comboKey('grooming', ['sam']): -1000000,
+      });
+    });
+  });
+
+  group('suggestedTagIds', () {
+    var n = 0;
+    Record past(
+      int daysAgo,
+      List<String> tagIds, {
+      String activityId = 'bible',
+      String comment = '',
+    }) => Record(
+      id: 't${n++}',
+      activityId: activityId,
+      startedAtEpochMs: target - daysAgo * day,
+      endedAtEpochMs: target - daysAgo * day + 60000,
+      comment: comment,
+      timezoneId: zone,
+      createdAtEpochMs: 0,
+      updatedAtEpochMs: 0,
+      tagIds: tagIds,
+    );
+
+    test('fills in Tags on at least half of the last four Records', () {
+      final records = [
+        past(1, ['home']),
+        past(2, ['home', 'quiet']),
+        past(3, ['quiet']),
+        past(4, ['home']),
+        past(5, ['old']),
+        past(1, ['work'], activityId: 'work'),
+      ];
+      expect(
+        suggestedTagIds(records, activityId: 'bible', beforeEpochMs: target),
+        ['home', 'quiet'],
+      );
+    });
+
+    test('a note suggestion reads Records with the same first Person', () {
+      final records = [
+        past(1, ['phone'], comment: 'John 3 w/ Sam'),
+        past(2, ['home'], comment: 'John 2 w/ Lee'),
+      ];
+      expect(
+        suggestedTagIds(
+          records,
+          activityId: 'bible',
+          people: ['sam'],
+          contactTagId: 'contact',
+          beforeEpochMs: target,
+        ),
+        ['phone', 'contact'],
+      );
+    });
+
+    test('Tag feedback drops a removed Tag and adds an added one', () {
+      final records = [
+        past(1, ['home']),
+        past(2, ['home']),
+      ];
+      TagFeedback fix(String tagId, int micros) => TagFeedback(
+        activityId: 'bible',
+        tagId: tagId,
+        micros: micros,
+        givenAtEpochMs: target - day,
+      );
+      expect(
+        suggestedTagIds(
+          records,
+          activityId: 'bible',
+          people: ['Sam'],
+          contactTagId: 'contact',
+          feedback: [
+            fix('home', -1000000),
+            fix('church', 1000000),
+            fix('contact', -1000000),
+          ],
+          beforeEpochMs: target,
+        ),
+        ['church'],
+      );
+    });
+  });
+
+  group('loadResolved', () {
+    late TempoDatabase db;
+
+    setUp(() async {
+      db = await TempoDatabase.openInMemory();
+      await db.insertActivity(activity('bible'));
+      await db.insertActivity(activity('work'));
+    });
+
+    tearDown(() async {
+      await db.close();
+    });
+
+    test('reads each logged suggestion against its Record now', () async {
+      await db.insertRecord(
+        Record(
+          id: 'r1',
+          activityId: 'work',
+          startedAtEpochMs: target,
+          endedAtEpochMs: target + 60000,
+          timezoneId: zone,
+          createdAtEpochMs: target,
+          updatedAtEpochMs: target,
+        ),
+      );
+      final origin = SuggestionFeedback(
+        activityId: 'bible',
+        vote: SuggestionVote.logged,
+        givenAtEpochMs: target,
+        targetEpochMs: target,
+        timezoneId: zone,
+        recordId: 'r1',
+      );
+      await SuggestionFeedbackStore.add(db, origin);
+      await SuggestionFeedbackStore.add(
+        db,
+        vote('grooming', SuggestionVote.good),
+      );
+      // A label that was undone: its Record is gone.
+      await SuggestionFeedbackStore.add(
+        db,
+        SuggestionFeedback(
+          activityId: 'bible',
+          vote: SuggestionVote.logged,
+          givenAtEpochMs: target,
+          targetEpochMs: target,
+          timezoneId: zone,
+          recordId: 'gone',
+        ),
+      );
+
+      final resolved = await SuggestionFeedbackStore.loadResolved(db);
+      expect(
+        [for (final v in resolved.votes) (v.activityId, v.vote)],
+        [
+          ('bible', SuggestionVote.notUseful),
+          ('grooming', SuggestionVote.good),
+        ],
+      );
+    });
+  });
 }

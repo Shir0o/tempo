@@ -113,6 +113,31 @@ class _UndoState {
   }
 }
 
+/// The bar asking whether a suggestion the Lap was just labeled from was a
+/// good one. No answer before [deadline] is no feedback.
+class _FeedbackAsk {
+  final Activity activity;
+
+  /// The People of a note suggestion; null for an Activity suggestion.
+  final List<String>? people;
+
+  /// The moment the suggestion was for: the start of the Lap it labeled.
+  final int? targetEpochMs;
+  final DateTime deadline;
+
+  const _FeedbackAsk({
+    required this.activity,
+    required this.people,
+    required this.targetEpochMs,
+    required this.deadline,
+  });
+
+  bool get isOpen => DateTime.now().isBefore(deadline);
+}
+
+/// How long the "Good suggestion?" bar stays up.
+const Duration _feedbackAskWindow = Duration(seconds: 8);
+
 class _DashboardViewState extends State<DashboardView>
     with WidgetsBindingObserver {
   /// The seam this page writes through: the injected commands, or the phone's
@@ -137,6 +162,13 @@ class _DashboardViewState extends State<DashboardView>
   /// Lap changes. Keyed by the Lap's start.
   int? _dismissedLapStartMs;
   final Set<String> _dismissedForLap = {};
+
+  /// Note history and Tag feedback from the last combo load, used to fill in
+  /// a suggestion's usual Tags when it is tapped.
+  List<Record> _noteRecords = const [];
+  List<TagFeedback> _tagFeedback = const [];
+
+  _FeedbackAsk? _feedbackAsk;
 
   /// Combo chips (Activity, People and note) ahead of [_suggestions].
   List<RecurringNote> _combos = [];
@@ -254,6 +286,7 @@ class _DashboardViewState extends State<DashboardView>
       if (!mounted) return;
       setState(() {
         if (_undo != null && _undo!.secondsLeft == 0) _undo = null;
+        if (_feedbackAsk?.isOpen == false) _feedbackAsk = null;
       });
     });
   }
@@ -370,7 +403,9 @@ class _DashboardViewState extends State<DashboardView>
     }
   }
 
-  Future<void> _labelActivity(
+  /// Labels the Lap and returns the Record it closed, or null when it is
+  /// waiting for the phone or failed.
+  Future<Record?> _labelActivity(
     Activity activity, {
     String comment = '',
     List<String> tagIds = const [],
@@ -384,31 +419,101 @@ class _DashboardViewState extends State<DashboardView>
       await _loadData();
       if (record == null) {
         _showQueued('${activity.name} is waiting for the phone.');
-        return;
+        return null;
       }
       _showUndo('Logged ${activity.name} ${_rangeLabel(record)}', record);
+      return record;
     } catch (e) {
       _showError('Failed to label the Lap: $e');
+      return null;
     }
   }
 
-  /// A tapped suggestion counts lightly in its favour, then labels the Lap.
-  Future<void> _labelSuggested(Activity activity) async {
-    unawaited(_recordFeedback(activity, SuggestionVote.accepted));
-    await _labelActivity(activity);
+  /// Labels the Lap from a suggestion, with the Tags it usually carries, then
+  /// remembers what was suggested so later edits count as feedback, and asks
+  /// whether it was a good suggestion.
+  Future<void> _labelFromSuggestion(
+    Activity activity, {
+    String comment = '',
+    List<String>? people,
+  }) async {
+    final targetMs = _lap?.startedAtEpochMs;
+    final tagIds = suggestedTagIds(
+      _noteRecords,
+      activityId: activity.id,
+      people: people ?? const [],
+      contactTagId: _contactTagId,
+      feedback: _tagFeedback,
+      beforeEpochMs: targetMs ?? DateTime.now().millisecondsSinceEpoch,
+    );
+    final record = await _labelActivity(
+      activity,
+      comment: comment,
+      tagIds: tagIds,
+    );
+    if (record == null) return;
+    unawaited(
+      _recordFeedback(
+        activity,
+        SuggestionVote.logged,
+        people: people,
+        targetEpochMs: targetMs,
+        recordId: record.id,
+        comment: comment,
+        tagIds: tagIds,
+      ),
+    );
+    if (!mounted) return;
+    setState(
+      () => _feedbackAsk = _FeedbackAsk(
+        activity: activity,
+        people: people,
+        targetEpochMs: targetMs ?? record.startedAtEpochMs,
+        deadline: DateTime.now().add(_feedbackAskWindow),
+      ),
+    );
+  }
+
+  Future<void> _labelSuggested(Activity activity) =>
+      _labelFromSuggestion(activity);
+
+  /// An answer on the "Good suggestion?" bar.
+  Future<void> _answerFeedbackAsk(bool good) async {
+    final ask = _feedbackAsk;
+    if (ask == null) return;
+    setState(() => _feedbackAsk = null);
+    await _recordFeedback(
+      ask.activity,
+      good ? SuggestionVote.good : SuggestionVote.notUseful,
+      people: ask.people,
+      targetEpochMs: ask.targetEpochMs,
+    );
+    await _loadData();
   }
 
   /// Stores [vote] on [activity] for the moment being labeled. Feedback only
   /// shapes later suggestions, so a failure is not worth interrupting for.
-  Future<void> _recordFeedback(Activity activity, SuggestionVote vote) async {
+  Future<void> _recordFeedback(
+    Activity activity,
+    SuggestionVote vote, {
+    List<String>? people,
+    int? targetEpochMs,
+    String? recordId,
+    String? comment,
+    List<String>? tagIds,
+  }) async {
     try {
       await SuggestionFeedbackStore.record(
         database: widget.database,
         activityId: activity.id,
         vote: vote,
         nowEpochMs: DateTime.now().millisecondsSinceEpoch,
-        targetEpochMs: _lap?.startedAtEpochMs,
+        targetEpochMs: targetEpochMs ?? _lap?.startedAtEpochMs,
         timezoneId: localTimezoneId(),
+        people: people,
+        recordId: recordId,
+        comment: comment,
+        tagIds: tagIds,
       );
     } catch (_) {}
   }
@@ -518,7 +623,11 @@ class _DashboardViewState extends State<DashboardView>
     try {
       final undone = await _commands.undo();
       if (!mounted) return;
-      setState(() => _undo = null);
+      setState(() {
+        _undo = null;
+        // An undone label leaves no suggestion to ask about.
+        if (undone) _feedbackAsk = null;
+      });
       if (undone) {
         await _loadData();
       } else {
@@ -615,18 +724,53 @@ class _DashboardViewState extends State<DashboardView>
         for (final r in await _noteHistory())
           if (active.contains(r.activityId)) r,
       ];
-      final combos = comboSuggestions(
+      final targetMs =
+          _lap?.startedAtEpochMs ??
+          DateTime.now().toUtc().millisecondsSinceEpoch;
+      final feedback = await SuggestionFeedbackStore.loadResolved(
+        widget.database,
+      );
+      final candidates = comboSuggestions(
         records,
         activityIds: [for (final a in suggested) a.id],
-        targetEpochMs:
-            _lap?.startedAtEpochMs ??
-            DateTime.now().toUtc().millisecondsSinceEpoch,
+        targetEpochMs: targetMs,
         targetZoneId: _lapStartZoneId,
+        limit: 4,
       );
+      final net = ContextualSuggestionEngine.feedbackNet(
+        feedback.votes,
+        keyOf: (entry) => switch (entry.people) {
+          final people? => SuggestionFeedback.comboKey(
+            entry.activityId,
+            people,
+          ),
+          null => null,
+        },
+        precedingActivityId: await SuggestionFeedbackStore.precedingActivityId(
+          widget.database,
+          targetMs,
+        ),
+        targetEpochMs: targetMs,
+        timezoneId: _lapStartZoneId,
+      );
+      int netOf(RecurringNote combo) =>
+          net[SuggestionFeedback.comboKey(combo.activityId, combo.people)] ?? 0;
+      // A note the user keeps rejecting here is left out; the rest keep their
+      // order unless feedback sets them apart.
+      final combos =
+          [
+            for (final combo in candidates)
+              if (netOf(combo) > -_comboDropMicros) combo,
+          ].indexed.toList()..sort((a, b) {
+            final byNet = netOf(b.$2).compareTo(netOf(a.$2));
+            return byNet != 0 ? byNet : a.$1.compareTo(b.$1);
+          });
       if (!mounted || load != _comboLoad) return;
       setState(() {
-        _combos = combos;
+        _combos = [for (final (_, combo) in combos.take(2)) combo];
         _contactTagId = contactTagId(tags);
+        _noteRecords = records;
+        _tagFeedback = feedback.tags;
       });
     } catch (_) {
       // Combo chips are optional; the plain chips still show.
@@ -636,14 +780,10 @@ class _DashboardViewState extends State<DashboardView>
   /// A combo chip: labels the Lap with its Activity, note and People, and the
   /// Contact Tag when it names someone.
   Future<void> _labelCombo(Activity activity, RecurringNote combo) {
-    return _labelActivity(
+    return _labelFromSuggestion(
       activity,
       comment: combo.comment,
-      tagIds: tagIdsWithContact(
-        const [],
-        _contactTagId,
-        hasPeople: combo.people.isNotEmpty,
-      ),
+      people: combo.people,
     );
   }
 
@@ -794,17 +934,33 @@ class _DashboardViewState extends State<DashboardView>
                 SliverToBoxAdapter(child: _buildSuggestedActivitiesRow()),
                 _buildActivityGrid(),
                 SliverPadding(
-                  padding: EdgeInsets.only(bottom: undo == null ? 32 : 104),
+                  padding: EdgeInsets.only(
+                    bottom:
+                        32 +
+                        (undo == null ? 0 : 72) +
+                        (_feedbackAsk == null ? 0 : 72),
+                  ),
                 ),
               ],
             ),
           ),
-          if (undo != null && undo.secondsLeft > 0)
+          if ((undo != null && undo.secondsLeft > 0) || _feedbackAsk != null)
             Positioned(
               left: 12,
               right: 12,
               bottom: 12,
-              child: _buildUndoBar(undo),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (_feedbackAsk case final ask?) _buildFeedbackAskBar(ask),
+                  if (_feedbackAsk != null &&
+                      undo != null &&
+                      undo.secondsLeft > 0)
+                    const SizedBox(height: 8),
+                  if (undo != null && undo.secondsLeft > 0) _buildUndoBar(undo),
+                ],
+              ),
             ),
         ],
       ),
@@ -1929,6 +2085,47 @@ class _DashboardViewState extends State<DashboardView>
     );
   }
 
+  Widget _buildFeedbackAskBar(_FeedbackAsk ask) {
+    Widget thumb(bool good) => IconButton(
+      key: ValueKey('feedback-ask-${good ? 'good' : 'bad'}'),
+      onPressed: () => _answerFeedbackAsk(good),
+      tooltip: good ? 'Good suggestion' : 'Not a good suggestion',
+      constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+      color: Colors.white,
+      icon: Icon(
+        good ? Icons.thumb_up_alt_outlined : Icons.thumb_down_alt_outlined,
+        size: 20,
+      ),
+    );
+    return Material(
+      color: _surface,
+      elevation: 8,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 4, 4),
+        child: Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Good suggestion?',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontFamily: _fontFamily,
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            thumb(true),
+            thumb(false),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildUndoBar(_UndoState undo) {
     return Material(
       color: _surface,
@@ -2018,3 +2215,7 @@ enum _SuggestionAction {
   final String label;
   final IconData icon;
 }
+
+/// Net not-useful feedback, in micro-units, past which a note suggestion is
+/// no longer offered at a similar moment: about one fresh rejection.
+const int _comboDropMicros = 500000;

@@ -13,13 +13,46 @@ back at the same moment until history outweighs it.
 
 ## What the user does
 
-- **Tap a suggestion:** labels the Lap as before, and counts as a light vote
-  for it at that moment.
+- **Tap a suggestion:** labels the Lap with the Tags that suggestion usually
+  carries. Tempo remembers what it suggested, so later edits to that Record
+  count as feedback (below).
+- **"Good suggestion?" bar:** after logging from a suggestion (SUGGESTED or
+  WITH NOTE), a bar with 👍 and 👎 shows above the undo bar for 8 seconds. No
+  answer is no feedback.
 - **Long-press a suggestion:** a sheet offers *Add a note first*, *Good
   suggestion* and *Not useful here*. Not useful hides the chip until the Lap
   changes.
 - **Settings → Suggestion feedback:** shows how many votes are kept and resets
   them.
+
+## Edits as quiet feedback
+
+A label made from a suggestion is stored as a `logged` entry with its Record
+id and the note and Tags it was given. Each time suggestions are ranked, the
+entry is read against what that Record holds now:
+
+| What the Record shows now | Vote |
+| --- | --- |
+| Undone or deleted | nothing |
+| Another Activity | not useful for the Activity (and its note) |
+| Same Activity | light vote (¼) for the Activity |
+| Note: same reading and People | good for the note |
+| Note: same reading, other People | light vote for the note |
+| Note: reading rewritten | not useful for the note |
+
+A note suggestion is keyed by its Activity and People. Its votes do not touch
+the Activity's own ranking; on Today they reorder the WITH NOTE row and leave
+out a note with about one fresh rejection at a similar moment.
+
+## Learned Tags
+
+A suggestion fills in the Tags on at least half of the Activity's last four
+Records (for a note, those naming the same first Person). The Contact Tag
+follows the note's People as before. Tag edits after logging are Tag feedback
+for that Activity: a suggested Tag removed counts −1, one added +1, one kept
++¼, fading on the same half-life. At a net of half a fresh vote, feedback
+drops a Tag history would fill in (the Contact Tag included) or adds one it
+would not.
 
 ## How a vote is kept
 
@@ -37,7 +70,7 @@ at most 500 are kept.
 For each candidate it sums its votes:
 
 ```
-vote      = +1 good, -1 not useful, +1/4 tap
+vote      = +1 good, -1 not useful, +1/4 light
 weight    = vote × decay(age) × similarity²
 similarity = ½ [same preceding Activity]
            + ½ closeness of the time of day (within ±60 min, full at the
