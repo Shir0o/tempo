@@ -69,7 +69,7 @@ Your records live in a local SQLite database on your device. No account is requi
 
 OPEN EXPORT
 
-Continuous CSV export in the Simple Time Tracker schema, written atomically, for tools like BNPB. Times stay in each Record's own zone.
+Continuous CSV export in a common 8-column layout, written atomically, so other apps can read it. Times stay in each Record's own zone.
 
 Tempo is for Android, macOS, and Wear OS.
 ```

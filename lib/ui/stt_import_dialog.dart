@@ -269,7 +269,7 @@ class _SttImportDialogState extends State<SttImportDialog> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'Import Simple Time Tracker',
+                      'Import file',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 16,

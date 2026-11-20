@@ -71,7 +71,7 @@ recordType\t20\tReading\tic_book_24px\t7\t0\t\t\t\t\t\t0\t
         await tester.pumpAndSettle();
 
         // Inspection Stage 1
-        expect(find.text('Import Simple Time Tracker'), findsOneWidget);
+        expect(find.text('Import file'), findsOneWidget);
         expect(find.text('stt_backup_2026.backup'), findsOneWidget);
         expect(find.text('Format: .backup'), findsOneWidget);
         expect(find.text('Categories'), findsOneWidget);
@@ -95,7 +95,7 @@ recordType\t20\tReading\tic_book_24px\t7\t0\t\t\t\t\t\t0\t
         await tester.pumpAndSettle();
 
         // Dialog closed
-        expect(find.text('Import Simple Time Tracker'), findsNothing);
+        expect(find.text('Import file'), findsNothing);
 
         // Verify categories and activities were created in database
         final categories = await db.getCategories();

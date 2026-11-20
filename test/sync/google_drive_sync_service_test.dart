@@ -29,6 +29,10 @@ class MockDriveHttpClient extends http.BaseClient {
 
       if (qParam.contains("name = 'Time track'")) {
         matched = driveFiles.where((f) => f['name'] == 'Time track').toList();
+      } else if (qParam.contains("name = 'tempo_records_automatic.csv'")) {
+        matched = driveFiles
+            .where((f) => f['name'] == 'tempo_records_automatic.csv')
+            .toList();
       } else if (qParam.contains("name = 'stt_records_automatic.csv'")) {
         matched = driveFiles
             .where((f) => f['name'] == 'stt_records_automatic.csv')
@@ -78,8 +82,8 @@ class MockDriveHttpClient extends http.BaseClient {
             bodyString.contains('"name": "Time track"')) {
           name = 'Time track';
           mimeType = 'application/vnd.google-apps.folder';
-        } else if (bodyString.contains('stt_records_automatic.csv')) {
-          name = 'stt_records_automatic.csv';
+        } else if (bodyString.contains('tempo_records_automatic.csv')) {
+          name = 'tempo_records_automatic.csv';
         } else if (bodyString.contains('tempo_backup.db')) {
           name = 'tempo_backup.db';
         }
@@ -165,7 +169,7 @@ void main() {
     );
 
     test('syncCsvToDrive uploads CSV file into Time track folder', () async {
-      final csvFile = File('${tempDir.path}/stt_records_automatic.csv');
+      final csvFile = File('${tempDir.path}/tempo_records_automatic.csv');
       await csvFile.writeAsString(
         'activity name,time started,time ended,duration\nCoding,10:00,11:00,60',
       );
@@ -177,7 +181,7 @@ void main() {
     });
 
     test('overlapping syncs create one folder and one CSV', () async {
-      final csvFile = File('${tempDir.path}/stt_records_automatic.csv');
+      final csvFile = File('${tempDir.path}/tempo_records_automatic.csv');
       await csvFile.writeAsString('activity name\nReading');
 
       await Future.wait([
@@ -188,13 +192,43 @@ void main() {
       final names = mockClient.driveFiles.map((f) => f['name']).toList();
       expect(names.where((n) => n == 'Time track'), hasLength(1));
       expect(
-        names.where((n) => n == 'stt_records_automatic.csv'),
+        names.where((n) => n == 'tempo_records_automatic.csv'),
         hasLength(1),
       );
     });
 
+    test('a CSV under the old name is renamed, not duplicated', () async {
+      mockClient.driveFiles.addAll([
+        {
+          'id': 'folder-1',
+          'name': 'Time track',
+          'mimeType': 'application/vnd.google-apps.folder',
+        },
+        {'id': 'legacy-csv', 'name': 'stt_records_automatic.csv'},
+      ]);
+      final csvFile = File('${tempDir.path}/tempo_records_automatic.csv');
+      await csvFile.writeAsString('activity name\nReading');
+
+      expect(await syncService.syncCsvToDrive(csvFile), 'legacy-csv');
+
+      final rename = mockClient.recordedRequests.singleWhere(
+        (r) => r.method == 'PATCH' && r.url.path.endsWith('/legacy-csv'),
+      );
+      final body = utf8.decode(
+        await rename.finalize().toBytes(),
+        allowMalformed: true,
+      );
+      expect(body, contains('tempo_records_automatic.csv'));
+      expect(
+        mockClient.driveFiles.where(
+          (f) => f['name'] == 'tempo_records_automatic.csv',
+        ),
+        isEmpty,
+      );
+    });
+
     test('an unchanged CSV is not uploaded again', () async {
-      final csvFile = File('${tempDir.path}/stt_records_automatic.csv');
+      final csvFile = File('${tempDir.path}/tempo_records_automatic.csv');
       await csvFile.writeAsString('activity name\nReading');
 
       int uploads() => mockClient.recordedRequests
