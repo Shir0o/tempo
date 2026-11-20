@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.1](https://github.com/Shir0o/tempo/compare/v1.20.0...v1.20.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* stale Today reloads, Drive upload duplicates, and stacked watch repeat buttons ([#150](https://github.com/Shir0o/tempo/issues/150)) ([d91ecbc](https://github.com/Shir0o/tempo/commit/d91ecbcbda7958c2c3c2d1961b6d31b9ee5b274f))
+
 ## [1.20.0](https://github.com/Shir0o/tempo/compare/v1.19.0...v1.20.0) (2026-11-19)
 
 
