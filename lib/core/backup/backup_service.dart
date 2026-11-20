@@ -257,9 +257,11 @@ class BackupService {
   }
 
   /// Promotion on app pause, so leaving the app never waits for the hour.
+  /// Nothing is uploaded when the store has not changed since the newest
+  /// generation, so switching apps does not refill the destination.
   Future<void> onAppPause() async {
     if (!await _isBackupEnabled()) return;
-    await _runGuarded(promote);
+    await _runGuarded(() => promote(skipIfUnchanged: true));
   }
 
   /// Snapshot and promote before a destructive action: a restore, an import
@@ -293,7 +295,7 @@ class BackupService {
       final lastPromotion = await _lastPromotedAt();
       if (lastPromotion == null ||
           now.difference(lastPromotion) >= promotionInterval) {
-        await _runGuarded(promote);
+        await _runGuarded(() => promote(skipIfUnchanged: true));
       }
     } finally {
       _tickRunning = false;
@@ -552,9 +554,14 @@ class BackupService {
   /// Promotes the newest verified local snapshot to the destination, writes
   /// one generation into the manifest, then prunes beyond the generation
   /// limit. Returns null when no destination is configured.
-  Future<BackupGeneration?> promote() => _serialized(_promote);
+  ///
+  /// With [skipIfUnchanged], a snapshot whose hash matches the newest
+  /// generation still on the destination is not uploaded again; that
+  /// generation is returned instead.
+  Future<BackupGeneration?> promote({bool skipIfUnchanged = false}) =>
+      _serialized(() => _promote(skipIfUnchanged: skipIfUnchanged));
 
-  Future<BackupGeneration?> _promote() async {
+  Future<BackupGeneration?> _promote({bool skipIfUnchanged = false}) async {
     final destination = await _loadDestination();
     if (destination == null) return null;
     if (!await destination.reopen()) {
@@ -569,10 +576,20 @@ class BackupService {
     final directory = p.posix.join('tempo', storeId);
 
     final manifest = await readManifest();
-    final taken = <String>{
-      for (final generation in manifest.generations) generation.file,
+    final existing = [
       for (final file in await destination.list(directory))
         p.posix.basename(file.path),
+    ];
+    if (skipIfUnchanged && manifest.generations.isNotEmpty) {
+      final newest = manifest.generations.first;
+      if (newest.sha256 == snapshot.sha256 && existing.contains(newest.file)) {
+        _lastPromotionAt = _now();
+        return newest;
+      }
+    }
+    final taken = <String>{
+      for (final generation in manifest.generations) generation.file,
+      ...existing,
     };
     final fileName = _uniqueGenerationName(
       DateTime.fromMillisecondsSinceEpoch(
@@ -582,13 +599,12 @@ class BackupService {
       taken,
     );
 
-    final tempName = '${_uuid()}.db';
     final bytes = await snapshot.file.readAsBytes();
-    final tempPath = await destination.writeTemp(tempName, bytes);
-    await destination.renameAtomically(
-      from: tempPath,
+    await destination.writeVerified(
       to: p.posix.join(directory, fileName),
+      bytes: bytes,
       expectedSha256: snapshot.sha256,
+      tempName: '${_uuid()}.db',
     );
 
     final generation = BackupGeneration(
@@ -613,6 +629,29 @@ class BackupService {
     );
     for (final stale in pruned) {
       await destination.delete(p.posix.join(directory, stale.file));
+    }
+
+    // Generations the manifest lost track of (an unreadable manifest, an
+    // interrupted write) would otherwise stay forever. Beyond the kept
+    // generations, only the newest [limit] backup files survive, so a
+    // manifest that failed to read once never costs more than it should.
+    final keptFiles = {for (final g in kept) g.file};
+    final strays =
+        existing
+            .where(
+              (name) =>
+                  _generationFilePattern.hasMatch(name) &&
+                  !keptFiles.contains(name) &&
+                  !pruned.any((g) => g.file == name),
+            )
+            .toList()
+          ..sort((a, b) => b.compareTo(a));
+    for (final stray in strays.skip(limit)) {
+      try {
+        await destination.delete(p.posix.join(directory, stray));
+      } catch (e) {
+        debugPrint('Backup: could not remove $stray: $e');
+      }
     }
 
     _lastPromotionAt = _now();
@@ -649,17 +688,20 @@ class BackupService {
     BackupDestination destination,
   ) async {
     final bytes = utf8.encode(jsonEncode(manifest.toJson()));
-    final expected = sha256Hex(bytes);
-    final tempPath = await destination.writeTemp('manifest.json', bytes);
-    await destination.renameAtomically(
-      from: tempPath,
+    await destination.writeVerified(
       to: await _manifestPath(),
-      expectedSha256: expected,
+      bytes: bytes,
+      expectedSha256: sha256Hex(bytes),
+      tempName: 'manifest.json',
     );
   }
 
   Future<String> _manifestPath() async =>
       p.posix.join('tempo', await _storeIdValue(), 'manifest.json');
+
+  static final RegExp _generationFilePattern = RegExp(
+    r'^backup-\d{8}T\d{6}Z\.db$',
+  );
 
   String _uniqueGenerationName(DateTime createdAt, Set<String> taken) {
     var instant = createdAt.toUtc();
