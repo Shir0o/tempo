@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.0](https://github.com/Shir0o/tempo/compare/v1.22.0...v1.23.0) (2026-11-20)
+
+
+### Features
+
+* **suggestions:** long-press feedback on note suggestions ([#158](https://github.com/Shir0o/tempo/issues/158)) ([e8039f3](https://github.com/Shir0o/tempo/commit/e8039f328cc761e02d981baac5cc9eb0d22f7d6b))
+
 ## [1.22.0](https://github.com/Shir0o/tempo/compare/v1.21.0...v1.22.0) (2026-11-20)
 
 
