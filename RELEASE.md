@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.22.0](https://github.com/Shir0o/tempo/compare/v1.21.0...v1.22.0) (2026-11-20)
+
+
+### Features
+
+* **suggestions:** rate a logged entry later, sink passed-over picks, fill learned tags on every label ([#154](https://github.com/Shir0o/tempo/issues/154)) ([590a62b](https://github.com/Shir0o/tempo/commit/590a62bf4fde4da59d2873fc03b008ded42847b2))
+
+
+### Bug Fixes
+
+* stop backups from piling up in Drive ([#157](https://github.com/Shir0o/tempo/issues/157)) ([80918c0](https://github.com/Shir0o/tempo/commit/80918c0b7e1d01b24f6ff629ef9f0bb38fd09321))
+
 ## [1.21.0](https://github.com/Shir0o/tempo/compare/v1.20.1...v1.21.0) (2026-11-20)
 
 
