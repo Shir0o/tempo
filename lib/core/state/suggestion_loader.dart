@@ -1,6 +1,7 @@
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
 import 'suggestion_engine.dart';
+import 'suggestion_feedback.dart';
 
 /// The most Records a suggestion history read will keep. The newest rows win;
 /// the oldest are the most decayed, so discarding them changes little.
@@ -60,6 +61,8 @@ Future<List<Activity>> loadSuggestions({
 /// user labels after the fact. It defaults to [nowEpochMs]. Only Records that
 /// started before [nowEpochMs] are read.
 ///
+/// The user's feedback on earlier suggestions shapes the order.
+///
 /// With [excludePinned], pinned Activities are left out so a caller can show
 /// them on their own. Returns nothing before any Activity has been logged:
 /// Untracked time alone is no history.
@@ -89,6 +92,7 @@ Future<List<RankedSuggestion>> loadRankedSuggestions({
     history,
     targetEpochMs: target,
   );
+  final feedback = (await SuggestionFeedbackStore.loadResolved(database)).votes;
   return const ContextualSuggestionEngine().rankExplained(
     candidates: [
       for (final activity in candidates)
@@ -99,6 +103,7 @@ Future<List<RankedSuggestion>> loadRankedSuggestions({
     secondPrecedingActivityId: context.secondPrecedingActivityId,
     targetEpochMs: target,
     timezoneId: timezoneId,
+    feedback: feedback,
     limit: limit,
   );
 }

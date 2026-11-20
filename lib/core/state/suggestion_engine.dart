@@ -100,6 +100,12 @@ class RankedSuggestion {
 /// both outranks one strong on only one. Sequence weighs slightly more than
 /// time, and overall frequency is a light tie-breaker.
 ///
+/// The user's feedback on past suggestions then scales each score: a vote
+/// counts fully in the same situation (the same preceding Activity, within an
+/// hour on the same day of the week) and much less as the situation differs.
+/// Not useful cuts a score hard, good raises it up to double, and tapping a
+/// suggestion is a light good. Feedback fades like history does.
+///
 /// Every observation is weighted by a 14-day half-life over a 60-day window.
 /// Weights are held as integer micro-units so equal scores compare exactly and
 /// the candidate-order tie-breaker stays stable.
@@ -152,6 +158,22 @@ class ContextualSuggestionEngine {
   static const int _weekdayMinObservations = 2;
   static const int _weekdayMinMass = _microsPerUnit;
 
+  /// What one fresh vote in the very same situation is worth.
+  static int _voteMicros(SuggestionVote vote) => switch (vote) {
+    SuggestionVote.good => _microsPerUnit,
+    SuggestionVote.notUseful => -_microsPerUnit,
+    SuggestionVote.accepted => _microsPerUnit ~/ 4,
+    SuggestionVote.logged => 0,
+  };
+
+  /// Net good feedback multiplies a score by up to this many times.
+  static const int _maxFeedbackBoost = 2;
+
+  /// Each unit of net not-useful feedback divides a score by this much more:
+  /// one fresh vote in the same situation leaves a twenty-first of it, enough
+  /// to drop even a routine's usual next step.
+  static const int _feedbackDemotion = 20;
+
   /// Signal weights in the blended score.
   static const int _sequenceWeight = 10;
   static const int _timeWeight = 8;
@@ -164,6 +186,11 @@ class ContextualSuggestionEngine {
       (day) => (math.pow(0.5, day / _halfLifeDays) * _microsPerUnit).round(),
     ),
   );
+
+  /// How much an observation or vote [ageMs] old still counts, in
+  /// micro-units: the 14-day half-life, and nothing past the window.
+  static int decayMicros(int ageMs) =>
+      _weightMicrosForAge(ageMs < 0 ? 0 : ageMs ~/ Duration.millisecondsPerDay);
 
   static int _weightMicrosForAge(int ageDays) {
     if (ageDays < 0 || ageDays > historyWindowDays) return 0;
@@ -213,6 +240,7 @@ class ContextualSuggestionEngine {
     String? secondPrecedingActivityId,
     required int targetEpochMs,
     required String timezoneId,
+    Iterable<SuggestionFeedback> feedback = const [],
     int limit = 6,
   }) => [
     for (final suggestion in rankExplained(
@@ -222,6 +250,7 @@ class ContextualSuggestionEngine {
       secondPrecedingActivityId: secondPrecedingActivityId,
       targetEpochMs: targetEpochMs,
       timezoneId: timezoneId,
+      feedback: feedback,
       limit: limit,
     ))
       suggestion.activity,
@@ -235,6 +264,7 @@ class ContextualSuggestionEngine {
     String? secondPrecedingActivityId,
     required int targetEpochMs,
     required String timezoneId,
+    Iterable<SuggestionFeedback> feedback = const [],
     int limit = 6,
   }) {
     assert(
@@ -464,10 +494,35 @@ class ContextualSuggestionEngine {
       reasons[id] = reason;
     }
 
+    // Votes on the Activity alone; votes on a note suggestion are ranked
+    // with the notes.
+    final feedbackNet = _feedbackNet(
+      feedback,
+      keyOf: (entry) =>
+          entry.people == null &&
+              candidateIndex.containsKey(entry.activityId) &&
+              entry.activityId != precedingActivityId
+          ? entry.activityId
+          : null,
+      precedingActivityId: precedingActivityId,
+      targetEpochMs: targetEpochMs,
+      targetMinute: targetMinute,
+      targetWeekday: targetWeekday,
+    );
+    for (final MapEntry(key: id, value: net) in feedbackNet.entries) {
+      totals[id] = _applyFeedback(totals[id]!, net);
+    }
+
     final sorted = List<Activity>.from(activeCandidates)
       ..sort((a, b) {
         final byTotal = totals[b.id]!.compareTo(totals[a.id]!);
         if (byTotal != 0) return byTotal;
+        // With no score to scale, feedback still orders: a disliked
+        // Activity sinks below ones nobody has voted on.
+        final byFeedback = (feedbackNet[b.id] ?? 0).compareTo(
+          feedbackNet[a.id] ?? 0,
+        );
+        if (byFeedback != 0) return byFeedback;
         return candidateIndex[a.id]!.compareTo(candidateIndex[b.id]!);
       });
 
@@ -475,6 +530,118 @@ class ContextualSuggestionEngine {
       for (final activity in sorted.take(limit))
         RankedSuggestion(activity, reasons[activity.id]),
     ];
+  }
+
+  /// Net decayed feedback per key, in micro-units (one fresh vote in the very
+  /// same situation is 1 000 000), scaled by how alike each vote's situation
+  /// is to the target's. [keyOf] names what a vote is about, or null to skip
+  /// it; the Today page keys note suggestions with
+  /// [SuggestionFeedback.comboKey].
+  static Map<String, int> feedbackNet(
+    Iterable<SuggestionFeedback> feedback, {
+    required String? Function(SuggestionFeedback entry) keyOf,
+    required String? precedingActivityId,
+    required int targetEpochMs,
+    required String timezoneId,
+  }) {
+    final target = wallClockAt(timezoneId, targetEpochMs);
+    return _feedbackNet(
+      feedback,
+      keyOf: keyOf,
+      precedingActivityId: precedingActivityId,
+      targetEpochMs: targetEpochMs,
+      targetMinute: target.hour * 60 + target.minute,
+      targetWeekday: target.weekday,
+    );
+  }
+
+  static Map<String, int> _feedbackNet(
+    Iterable<SuggestionFeedback> feedback, {
+    required String? Function(SuggestionFeedback entry) keyOf,
+    required String? precedingActivityId,
+    required int targetEpochMs,
+    required int targetMinute,
+    required int targetWeekday,
+  }) {
+    final net = <String, int>{};
+    for (final entry in feedback) {
+      if (entry.vote == SuggestionVote.logged) continue;
+      final id = keyOf(entry);
+      if (id == null) continue;
+      final ageMs = targetEpochMs - entry.givenAtEpochMs;
+      final decay = _weightMicrosForAge(
+        ageMs < 0 ? 0 : ageMs ~/ Duration.millisecondsPerDay,
+      );
+      if (decay == 0) continue;
+
+      final similarity = _feedbackSimilarity(
+        entry,
+        precedingActivityId: precedingActivityId,
+        targetMinute: targetMinute,
+        targetWeekday: targetWeekday,
+      );
+      if (similarity == 0) continue;
+
+      final weight =
+          _voteMicros(entry.vote) *
+          decay ~/
+          _microsPerUnit *
+          similarity ~/
+          _microsPerUnit;
+      net.update(id, (value) => value + weight, ifAbsent: () => weight);
+    }
+    return net;
+  }
+
+  /// How alike a vote's situation is to the target's, 0..1 in micro-units.
+  /// Half of the match is the same preceding Activity, half the time of day,
+  /// which counts fully within the hour on the same day of the week, half on
+  /// another day of the same kind (weekday or weekend), and a quarter
+  /// otherwise.
+  static int _feedbackSimilarity(
+    SuggestionFeedback entry, {
+    required String? precedingActivityId,
+    required int targetMinute,
+    required int targetWeekday,
+  }) {
+    final sequence = entry.precedingActivityId == precedingActivityId
+        ? _microsPerUnit
+        : 0;
+
+    final wallClock = entry.timezoneId == 'UTC'
+        ? DateTime.fromMillisecondsSinceEpoch(entry.targetEpochMs, isUtc: true)
+        : wallClockAt(entry.timezoneId, entry.targetEpochMs);
+    var offset = wallClock.hour * 60 + wallClock.minute - targetMinute;
+    if (offset > 720) offset -= 1440;
+    if (offset <= -720) offset += 1440;
+    var time = 0;
+    if (offset.abs() <= _slotWindowMinutes) {
+      time = _slotWeight(_microsPerUnit, offset);
+      if (wallClock.weekday != targetWeekday) {
+        time ~/= _isWeekend(wallClock.weekday) == _isWeekend(targetWeekday)
+            ? 2
+            : 4;
+      }
+    }
+    // Squared, so a vote counts fully in the same situation but only a
+    // quarter where half of it matches.
+    final similarity = (sequence + time) ~/ 2;
+    return similarity * similarity ~/ _microsPerUnit;
+  }
+
+  /// [total] scaled by net feedback [net]: raised by half of each unit of good,
+  /// up to [_maxFeedbackBoost] times, or divided down for not useful.
+  static int _applyFeedback(int total, int net) {
+    if (net >= 0) {
+      final boost = math.min(
+        net ~/ 2,
+        (_maxFeedbackBoost - 1) * _microsPerUnit,
+      );
+      return total * (_microsPerUnit + boost) ~/ _microsPerUnit;
+    }
+    return total *
+        _microsPerUnit ~/
+        (_microsPerUnit + _feedbackDemotion * -net);
   }
 
   /// [minute] rounded to five minutes and wrapped into one day.
