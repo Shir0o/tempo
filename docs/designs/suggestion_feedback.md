@@ -19,9 +19,13 @@ back at the same moment until history outweighs it.
 - **"Good suggestion?" bar:** after logging from a suggestion (SUGGESTED or
   WITH NOTE), a bar with 👍 and 👎 shows above the undo bar for 8 seconds. No
   answer is no feedback.
-- **Long-press a suggestion:** a sheet offers *Add a note first*, *Good
-  suggestion* and *Not useful here*. Not useful hides the chip until the Lap
-  changes.
+- **Long-press a suggestion:** on a SUGGESTED or a WITH NOTE chip, a sheet
+  offers *Add a note first* (*Edit the note first* on a note, which opens
+  with its note), *Good suggestion* and *Not useful here*. A vote on a note
+  is kept with its People, like every other vote on it. Not useful hides the
+  chip until the Lap changes. Logging from the note sheet here counts as
+  logging from the suggestion: the rating bar shows, and what was changed
+  in the note counts as an edit.
 - **Rate it later:** a Record logged from a suggestion shows *Suggested by
   Tempo* with *Good suggestion* and *Not useful* in its History edit sheet.
   A tap counts at once (not on Save) and tapping it again takes it back. It
