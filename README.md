@@ -37,11 +37,11 @@ Tempo describes how a day was spent, without judging it.
 - **Quick Popover**: number keys `1`–`9` label the open Lap, with Split and a 3-second undo bar.
 - **Deep links**: `tempo://start?activity=...` labels the open Lap and `tempo://split` marks a boundary, for Raycast, Shortcuts, and other automations.
 
-### Ecosystem and BNPB
+### Ecosystem and other apps
 
-- **Continuous CSV export** in the Simple Time Tracker 8-column schema (`activity name,time started,time ended,comment,categories,record tags,duration,duration minutes`), written with an atomic Write-Flush-Rename sequence and a 1,000 ms debounce.
+- **Continuous CSV export** (`tempo_records_automatic.csv`) in the common 8-column time-tracking layout (`activity name,time started,time ended,comment,categories,record tags,duration,duration minutes`), written with an atomic Write-Flush-Rename sequence and a 1,000 ms debounce.
 - **Times in the Record's own zone**: rows never shift after travel, and subtracting the two times yields the true duration. Untracked Records stay out of the export until labeled.
-- **`w/` and `with ` name markers** plus `"Contact"` tags are preserved for BNPB ingestion.
+- **`w/` and `with ` name markers** plus `"Contact"` tags are preserved for apps that read the export.
 - **Android automation**: `app.tempo.action.START_TIMER` and `app.tempo.action.SPLIT` broadcast intents mirror `tempo://start` and `tempo://split` for Tasker, NFC tags, and Bluetooth triggers.
 
 ### Private AI Analysis via MCP

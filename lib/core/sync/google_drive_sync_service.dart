@@ -24,16 +24,19 @@ class GoogleDriveAccessExpiredException implements Exception {
 }
 
 /// Service managing synchronization of CSV exports with Google Drive.
-/// Follows BNPB and Simple Time Tracker conventions:
 /// - Target folder: root-level "Time track"
-/// - CSV file: "stt_records_automatic.csv"
+/// - CSV file: "tempo_records_automatic.csv"
 ///
 /// Database backup and restore are not part of this service: recovery lives in
 /// `BackupService`, which snapshots the store and promotes verified generations
 /// to a folder the user chooses.
 class GoogleDriveSyncService {
   static const String timeTrackFolderName = 'Time track';
-  static const String defaultCsvFileName = 'stt_records_automatic.csv';
+  static const String defaultCsvFileName = 'tempo_records_automatic.csv';
+
+  /// The CSV's name before it was renamed. An existing file by this name is
+  /// renamed in place on the next upload, so the folder keeps one CSV.
+  static const String legacyCsvFileName = 'stt_records_automatic.csv';
 
   static const List<String> driveScopes = [
     drive.DriveApi.driveFileScope,
@@ -284,14 +287,21 @@ class GoogleDriveSyncService {
       final id = await _withDriveApi((api) async {
         final folderId = await _ensureTimeTrackFolder(api);
 
-        final query =
-            "name = '$fileName' and '$folderId' in parents and trashed = false";
-        final fileList = await api.files.list(
-          q: query,
+        Future<drive.FileList> findByName(String name) => api.files.list(
+          q: "name = '$name' and '$folderId' in parents and trashed = false",
           spaces: 'drive',
           orderBy: 'createdTime',
           $fields: 'files(id, name)',
         );
+
+        var fileList = await findByName(fileName);
+        // Renamed below, so it keeps its id and revision history.
+        var renameFromLegacy = false;
+        if ((fileList.files?.isEmpty ?? true) &&
+            fileName == defaultCsvFileName) {
+          fileList = await findByName(legacyCsvFileName);
+          renameFromLegacy = fileList.files?.isNotEmpty ?? false;
+        }
 
         // Built per attempt: a rejected upload may have consumed the stream.
         final media = drive.Media(Stream.value(bytes), bytes.length);
@@ -299,7 +309,7 @@ class GoogleDriveSyncService {
         if (fileList.files != null && fileList.files!.isNotEmpty) {
           final existingId = fileList.files!.first.id!;
           final updated = await api.files.update(
-            drive.File(),
+            renameFromLegacy ? (drive.File()..name = fileName) : drive.File(),
             existingId,
             uploadMedia: media,
             $fields: 'id, name, modifiedTime',
