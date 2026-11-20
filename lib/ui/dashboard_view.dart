@@ -362,6 +362,7 @@ class _DashboardViewState extends State<DashboardView>
         _dismissedLapStartMs = lapStartMs;
         _dismissedForLap.clear();
       }
+      // Note suggestions marked not useful share the set, keyed by combo.
       final dismissed = Set<String>.of(_dismissedForLap);
       final suggested = [
         for (final suggestion in await loadRankedSuggestions(
@@ -509,17 +510,23 @@ class _DashboardViewState extends State<DashboardView>
   /// Labels the Lap from a suggestion, with the Tags it usually carries, then
   /// remembers what was suggested so later edits count as feedback, and asks
   /// whether it was a good suggestion.
+  ///
+  /// When the user edited the note first, [savedComment] and [savedTagIds] are
+  /// what is logged, and the difference from what was suggested counts like
+  /// any later edit.
   Future<void> _labelFromSuggestion(
     Activity activity, {
     String comment = '',
     List<String>? people,
+    String? savedComment,
+    List<String>? savedTagIds,
   }) async {
     final targetMs = _lap?.startedAtEpochMs;
     final tagIds = _learnedTags(activity.id, people: people ?? const []);
     final record = await _labelActivity(
       activity,
-      comment: comment,
-      tagIds: tagIds,
+      comment: savedComment ?? comment,
+      tagIds: savedTagIds ?? tagIds,
       picked: people == null
           ? activity.id
           : SuggestionFeedback.comboKey(activity.id, people),
@@ -596,9 +603,13 @@ class _DashboardViewState extends State<DashboardView>
     } catch (_) {}
   }
 
-  /// Long-press on a suggestion: add a note first, or say whether it was a
-  /// good suggestion for this moment.
-  Future<void> _openSuggestionActions(Activity activity) async {
+  /// Long-press on a suggestion, an Activity or a note under WITH NOTE: edit
+  /// the note first, or say whether it was a good suggestion for this moment.
+  Future<void> _openSuggestionActions(
+    Activity activity, {
+    RecurringNote? combo,
+  }) async {
+    final detail = combo == null ? '' : _comboDetail(combo);
     final choice = await showModalBottomSheet<_SuggestionAction>(
       context: context,
       builder: (ctx) => SafeArea(
@@ -616,13 +627,23 @@ class _DashboardViewState extends State<DashboardView>
                 ),
               ),
             ),
+            if (detail.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                child: Text(
+                  detail,
+                  style: TempoText.body.copyWith(color: TempoColors.inkMuted),
+                ),
+              ),
             for (final action in _SuggestionAction.values)
               ListTile(
                 key: ValueKey('suggestion-action-${action.name}'),
                 minTileHeight: 56,
                 leading: Icon(action.icon, color: TempoColors.ink),
                 title: Text(
-                  action.label,
+                  combo != null && action == _SuggestionAction.note
+                      ? 'Edit the note first'
+                      : action.label,
                   style: TempoText.body.copyWith(
                     color: TempoColors.ink,
                     fontWeight: FontWeight.w600,
@@ -636,23 +657,40 @@ class _DashboardViewState extends State<DashboardView>
       ),
     );
     if (choice == null || !mounted) return;
+    final people = combo?.people;
+    final what = combo == null ? activity.name : 'This note';
     switch (choice) {
       case _SuggestionAction.note:
-        await _noteThenLabel(activity);
+        await _noteThenLabel(activity, fromSuggestion: true, combo: combo);
       case _SuggestionAction.good:
-        await _recordFeedback(activity, SuggestionVote.good);
-        _showMessage(
-          'Got it. ${activity.name} will come up more at times like this.',
-        );
+        await _recordFeedback(activity, SuggestionVote.good, people: people);
+        _showMessage('Got it. $what will come up more at times like this.');
         await _loadData();
       case _SuggestionAction.notUseful:
-        setState(() => _dismissedForLap.add(activity.id));
-        await _recordFeedback(activity, SuggestionVote.notUseful);
-        _showMessage(
-          'Got it. ${activity.name} will come up less at times like this.',
+        setState(
+          () => _dismissedForLap.add(
+            combo == null
+                ? activity.id
+                : SuggestionFeedback.comboKey(activity.id, combo.people),
+          ),
         );
+        await _recordFeedback(
+          activity,
+          SuggestionVote.notUseful,
+          people: people,
+        );
+        _showMessage('Got it. $what will come up less at times like this.');
         await _loadData();
     }
+  }
+
+  /// A note suggestion's reading and People, as its chip shows them.
+  static String _comboDetail(RecurringNote combo) {
+    final reading = splitComment(combo.comment).reading;
+    return [
+      if (reading.isNotEmpty) reading,
+      if (combo.people.isNotEmpty) 'w/ ${combo.people.join(', ')}',
+    ].join(' · ');
   }
 
   Future<void> _labelSameAsLast() async {
@@ -851,7 +889,9 @@ class _DashboardViewState extends State<DashboardView>
       final combos =
           [
             for (final combo in candidates)
-              if (netOf(combo) > -_comboDropMicros) combo,
+              if (netOf(combo) > -_comboDropMicros &&
+                  !_dismissedForLap.contains(keyOf(combo)))
+                combo,
           ].indexed.toList()..sort((a, b) {
             final byRank = rankOf(b.$2).compareTo(rankOf(a.$2));
             return byRank != 0 ? byRank : a.$1.compareTo(b.$1);
@@ -936,7 +976,16 @@ class _DashboardViewState extends State<DashboardView>
   /// Long-press on an Activity block: the note sheet before logging. Logging
   /// labels the Lap with the note and Tags in one command, so a replica
   /// queues a single proposal.
-  Future<void> _noteThenLabel(Activity activity) async {
+  ///
+  /// From a suggestion's long-press ([fromSuggestion]), the label counts as
+  /// logged from that suggestion, so its rating bar shows and what the user
+  /// changed in the note counts. A note suggestion ([combo]) opens with its
+  /// note.
+  Future<void> _noteThenLabel(
+    Activity activity, {
+    bool fromSuggestion = false,
+    RecurringNote? combo,
+  }) async {
     final lap = _lap;
     final since = lap == null
         ? '--:--'
@@ -946,16 +995,18 @@ class _DashboardViewState extends State<DashboardView>
       final choices = await _noteChoices(activity.id);
       if (!mounted) return;
       final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
-      final prefill = _notePrefill(
-        choices.records,
-        activity.id,
-        lap?.startedAtEpochMs ?? nowMs,
-        _lapStartZoneId,
-      );
+      final prefill =
+          combo?.comment ??
+          _notePrefill(
+            choices.records,
+            activity.id,
+            lap?.startedAtEpochMs ?? nowMs,
+            _lapStartZoneId,
+          );
       // The same Tags a tap would fill, for the People the note starts with.
       final learned = _learnedTags(
         activity.id,
-        people: peopleIn(prefill),
+        people: combo?.people ?? peopleIn(prefill),
         records: choices.records,
         contactTag: contactTagId(choices.tags),
       );
@@ -978,6 +1029,16 @@ class _DashboardViewState extends State<DashboardView>
         dismissLabel: 'Cancel',
       );
       if (note == null) return;
+      if (fromSuggestion || combo != null) {
+        await _labelFromSuggestion(
+          activity,
+          comment: combo?.comment ?? '',
+          people: combo?.people,
+          savedComment: note.comment,
+          savedTagIds: note.tagIds,
+        );
+        return;
+      }
       final record = await _labelActivity(
         activity,
         comment: note.comment,
@@ -1846,15 +1907,13 @@ class _DashboardViewState extends State<DashboardView>
   /// Activity name over `<reading> · w/ <names>`: one tap labels the Lap
   /// with all of it.
   Widget _buildComboChip(int index, Activity activity, RecurringNote combo) {
-    final reading = splitComment(combo.comment).reading;
-    final detail = [
-      if (reading.isNotEmpty) reading,
-      if (combo.people.isNotEmpty) 'w/ ${combo.people.join(', ')}',
-    ].join(' · ');
+    final detail = _comboDetail(combo);
     final label = [activity.name, if (detail.isNotEmpty) detail].join(' · ');
     return Semantics(
       button: true,
-      label: 'Suggested: $label. Tap to label untracked time.',
+      label:
+          'Suggested: $label. Tap to label untracked time. '
+          'Long-press to rate it or edit the note first.',
       child: ExcludeSemantics(
         child: Material(
           color: _surface,
@@ -1863,6 +1922,7 @@ class _DashboardViewState extends State<DashboardView>
             key: ValueKey('combo-chip-$index'),
             borderRadius: BorderRadius.circular(16),
             onTap: () => _labelCombo(activity, combo),
+            onLongPress: () => _openSuggestionActions(activity, combo: combo),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 14, 8),
               child: Row(
