@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.0](https://github.com/Shir0o/tempo/compare/v1.20.1...v1.21.0) (2026-11-20)
+
+
+### Features
+
+* **suggestions:** learn from feedback on each suggestion ([#152](https://github.com/Shir0o/tempo/issues/152)) ([4368dba](https://github.com/Shir0o/tempo/commit/4368dba7ba3272351a55a5c88d4bf2db06c37387))
+
 ## [1.20.1](https://github.com/Shir0o/tempo/compare/v1.20.0...v1.20.1) (2026-11-19)
 
 
