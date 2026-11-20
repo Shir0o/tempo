@@ -12,7 +12,18 @@ enum SuggestionVote {
   /// The Lap was labeled from this suggestion as [SuggestionFeedback.recordId].
   /// Not a vote by itself: it is read against what that Record holds now, so
   /// later edits count as feedback.
-  logged('logged');
+  logged('logged'),
+
+  /// The Lap was labeled without a suggestion, as [SuggestionFeedback.recordId],
+  /// with learned Tags filled in. Not a vote on the Activity: only how those
+  /// Tags were edited afterwards counts.
+  tagged('tagged');
+
+  /// A vote the user gave on purpose, which wins over what edits suggest.
+  bool get isExplicit => this == good || this == notUseful;
+
+  /// Kept with the Record it was given for, and read against it later.
+  bool get readsRecord => this == logged || this == tagged;
 
   const SuggestionVote(this.storageValue);
 
@@ -50,8 +61,9 @@ class SuggestionFeedback {
   /// The People of a note suggestion; null for an Activity suggestion.
   final List<String>? people;
 
-  /// For [SuggestionVote.logged]: the Record the label made, and the note and
-  /// Tags it was given.
+  /// For [SuggestionVote.logged] and [SuggestionVote.tagged]: the Record the
+  /// label made, and the note and Tags it was given. An explicit vote given
+  /// on a logged Record keeps its [recordId], so a later vote replaces it.
   final String? recordId;
   final String? comment;
   final List<String>? tagIds;
@@ -74,17 +86,23 @@ class SuggestionFeedback {
       '$activityId\n${people.map((p) => p.toLowerCase()).join(', ')}';
 
   /// This entry's moment with another [vote], about the Activity alone or,
-  /// with [people], about that note suggestion.
-  SuggestionFeedback withVote(SuggestionVote vote, {List<String>? people}) =>
-      SuggestionFeedback(
-        activityId: activityId,
-        vote: vote,
-        givenAtEpochMs: givenAtEpochMs,
-        targetEpochMs: targetEpochMs,
-        timezoneId: timezoneId,
-        precedingActivityId: precedingActivityId,
-        people: people,
-      );
+  /// with [people], about that note suggestion. [givenAtEpochMs] and
+  /// [recordId] replace this entry's when given.
+  SuggestionFeedback withVote(
+    SuggestionVote vote, {
+    List<String>? people,
+    int? givenAtEpochMs,
+    String? recordId,
+  }) => SuggestionFeedback(
+    activityId: activityId,
+    vote: vote,
+    givenAtEpochMs: givenAtEpochMs ?? this.givenAtEpochMs,
+    targetEpochMs: targetEpochMs,
+    timezoneId: timezoneId,
+    precedingActivityId: precedingActivityId,
+    people: people,
+    recordId: recordId,
+  );
 
   Map<String, Object?> toJson() => {
     'activity': activityId,
@@ -122,7 +140,7 @@ class SuggestionFeedback {
         (record != null && record is! String) ||
         (comment != null && comment is! String) ||
         (json['tags'] != null && tags == null) ||
-        (vote == SuggestionVote.logged && record == null)) {
+        (vote.readsRecord && record == null)) {
       return null;
     }
     return SuggestionFeedback(

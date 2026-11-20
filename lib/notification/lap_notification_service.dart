@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../core/state/day_recorder.dart';
+import '../core/state/suggestion_feedback.dart';
 import '../core/state/suggestion_loader.dart';
 import '../core/time/timezone_id.dart';
 import '../data/database/tempo_database.dart';
@@ -93,7 +94,15 @@ class LapNotificationService {
       switch (action) {
         case 'LABEL':
           if (activityId != null) {
-            closed = await dayRecorder.label(activityId);
+            // The same Tags a label on Today would get.
+            closed = await dayRecorder.label(
+              activityId,
+              tags: await loadLearnedTagIds(
+                database,
+                activityId: activityId,
+                beforeEpochMs: dayRecorder.lap?.startedAtEpochMs ?? _nowUtcMs(),
+              ),
+            );
           }
           break;
         case 'CONTINUE':

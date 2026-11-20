@@ -14,6 +14,7 @@ import '../../core/state/people_index.dart';
 import '../../core/state/record_commands.dart';
 import '../../core/state/suggestion_engine.dart';
 import '../../core/state/suggestion_feedback.dart';
+import '../../core/state/suggestion_impressions.dart';
 import '../../core/state/suggestion_loader.dart';
 import '../../core/state/today_order.dart';
 import '../../core/time/timezone_id.dart';
@@ -123,12 +124,19 @@ class _FeedbackAsk {
 
   /// The moment the suggestion was for: the start of the Lap it labeled.
   final int? targetEpochMs;
+
+  /// The Record the label made, and the save of what was suggested for it,
+  /// which an answer waits for.
+  final String recordId;
+  final Future<void> logged;
   final DateTime deadline;
 
   const _FeedbackAsk({
     required this.activity,
     required this.people,
     required this.targetEpochMs,
+    required this.recordId,
+    required this.logged,
     required this.deadline,
   });
 
@@ -404,12 +412,15 @@ class _DashboardViewState extends State<DashboardView>
   }
 
   /// Labels the Lap and returns the Record it closed, or null when it is
-  /// waiting for the phone or failed.
+  /// waiting for the phone or failed. [picked] is the suggestion tapped, if
+  /// any; the others on screen were passed over.
   Future<Record?> _labelActivity(
     Activity activity, {
     String comment = '',
     List<String> tagIds = const [],
+    String? picked,
   }) async {
+    final shown = _shownSuggestionKeys;
     try {
       final record = await _commands.label(
         activity.id,
@@ -422,11 +433,77 @@ class _DashboardViewState extends State<DashboardView>
         return null;
       }
       _showUndo('Logged ${activity.name} ${_rangeLabel(record)}', record);
+      unawaited(
+        _recordShown(shown, picked: picked, labeledActivityId: activity.id),
+      );
       return record;
     } catch (e) {
       _showError('Failed to label the Lap: $e');
       return null;
     }
+  }
+
+  /// The suggestions on screen now, keyed as [SuggestionImpressions] counts
+  /// them: an Activity by its id, a note suggestion by its combo key.
+  List<String> get _shownSuggestionKeys => [
+    for (final suggestion in _suggestions) suggestion.activity.id,
+    for (final combo in _combos)
+      SuggestionFeedback.comboKey(combo.activityId, combo.people),
+  ];
+
+  /// Counts the suggestions [shown] when a Lap was labeled: [picked] starts
+  /// again, the rest were passed over. Only shapes later suggestions, so a
+  /// failure is not worth interrupting for.
+  Future<void> _recordShown(
+    List<String> shown, {
+    String? picked,
+    String? labeledActivityId,
+  }) async {
+    try {
+      await SuggestionImpressions.recordLabel(
+        widget.database,
+        shown: shown,
+        picked: picked,
+        labeledActivityId: labeledActivityId,
+        nowEpochMs: DateTime.now().millisecondsSinceEpoch,
+      );
+    } catch (_) {}
+  }
+
+  /// The Tags [activityId] usually carries, filled in the same way whether
+  /// the Lap is labeled from a suggestion or not.
+  List<String> _learnedTags(
+    String activityId, {
+    List<String> people = const [],
+    Iterable<Record>? records,
+    String? contactTag,
+  }) => suggestedTagIds(
+    records ?? _noteRecords,
+    activityId: activityId,
+    people: people,
+    contactTagId: contactTag ?? _contactTagId,
+    feedback: _tagFeedback,
+    beforeEpochMs:
+        _lap?.startedAtEpochMs ?? DateTime.now().millisecondsSinceEpoch,
+  );
+
+  /// Labels the Lap with [activity] picked by hand (a block, a pin or the
+  /// filter), with the Tags it usually carries, and remembers them so later
+  /// edits to them count.
+  Future<void> _labelManually(Activity activity) async {
+    final tagIds = _learnedTags(activity.id);
+    final targetMs = _lap?.startedAtEpochMs;
+    final record = await _labelActivity(activity, tagIds: tagIds);
+    if (record == null || tagIds.isEmpty) return;
+    unawaited(
+      _recordFeedback(
+        activity,
+        SuggestionVote.tagged,
+        targetEpochMs: targetMs,
+        recordId: record.id,
+        tagIds: tagIds,
+      ),
+    );
   }
 
   /// Labels the Lap from a suggestion, with the Tags it usually carries, then
@@ -438,37 +515,34 @@ class _DashboardViewState extends State<DashboardView>
     List<String>? people,
   }) async {
     final targetMs = _lap?.startedAtEpochMs;
-    final tagIds = suggestedTagIds(
-      _noteRecords,
-      activityId: activity.id,
-      people: people ?? const [],
-      contactTagId: _contactTagId,
-      feedback: _tagFeedback,
-      beforeEpochMs: targetMs ?? DateTime.now().millisecondsSinceEpoch,
-    );
+    final tagIds = _learnedTags(activity.id, people: people ?? const []);
     final record = await _labelActivity(
       activity,
       comment: comment,
       tagIds: tagIds,
+      picked: people == null
+          ? activity.id
+          : SuggestionFeedback.comboKey(activity.id, people),
     );
     if (record == null) return;
-    unawaited(
-      _recordFeedback(
-        activity,
-        SuggestionVote.logged,
-        people: people,
-        targetEpochMs: targetMs,
-        recordId: record.id,
-        comment: comment,
-        tagIds: tagIds,
-      ),
+    final logged = _recordFeedback(
+      activity,
+      SuggestionVote.logged,
+      people: people,
+      targetEpochMs: targetMs,
+      recordId: record.id,
+      comment: comment,
+      tagIds: tagIds,
     );
+    unawaited(logged);
     if (!mounted) return;
     setState(
       () => _feedbackAsk = _FeedbackAsk(
         activity: activity,
         people: people,
         targetEpochMs: targetMs ?? record.startedAtEpochMs,
+        recordId: record.id,
+        logged: logged,
         deadline: DateTime.now().add(_feedbackAskWindow),
       ),
     );
@@ -482,12 +556,16 @@ class _DashboardViewState extends State<DashboardView>
     final ask = _feedbackAsk;
     if (ask == null) return;
     setState(() => _feedbackAsk = null);
-    await _recordFeedback(
-      ask.activity,
-      good ? SuggestionVote.good : SuggestionVote.notUseful,
-      people: ask.people,
-      targetEpochMs: ask.targetEpochMs,
-    );
+    try {
+      // The same rating the Record's edit sheet shows and changes.
+      await ask.logged;
+      await SuggestionFeedbackStore.rate(
+        widget.database,
+        recordId: ask.recordId,
+        vote: good ? SuggestionVote.good : SuggestionVote.notUseful,
+        nowEpochMs: DateTime.now().millisecondsSinceEpoch,
+      );
+    } catch (_) {}
     await _loadData();
   }
 
@@ -583,8 +661,10 @@ class _DashboardViewState extends State<DashboardView>
       _showError('There is no earlier Record to repeat yet.');
       return;
     }
+    final shown = _shownSuggestionKeys;
+    final tagIds = _learnedTags(last.id);
     try {
-      final record = await _commands.label(last.id);
+      final record = await _commands.label(last.id, tags: tagIds);
       await _loadData();
       if (record == null) {
         _showQueued('${last.name} is waiting for the phone.');
@@ -592,6 +672,7 @@ class _DashboardViewState extends State<DashboardView>
       }
       final name = _activitiesById[record.activityId]?.name ?? 'Record';
       _showUndo('Logged $name ${_rangeLabel(record)}', record);
+      unawaited(_recordShown(shown, labeledActivityId: last.id));
     } catch (e) {
       _showError('Failed to label the Lap: $e');
     }
@@ -753,8 +834,18 @@ class _DashboardViewState extends State<DashboardView>
         targetEpochMs: targetMs,
         timezoneId: _lapStartZoneId,
       );
-      int netOf(RecurringNote combo) =>
-          net[SuggestionFeedback.comboKey(combo.activityId, combo.people)] ?? 0;
+      String keyOf(RecurringNote combo) =>
+          SuggestionFeedback.comboKey(combo.activityId, combo.people);
+      int netOf(RecurringNote combo) => net[keyOf(combo)] ?? 0;
+      final ignored = await SuggestionImpressions.load(
+        widget.database,
+        nowEpochMs: DateTime.now().millisecondsSinceEpoch,
+      );
+      // Passed over again and again, a note slowly sinks below the others,
+      // though never so far that this alone leaves it out.
+      int rankOf(RecurringNote combo) =>
+          netOf(combo) -
+          SuggestionImpressions.comboPenaltyMicros(ignored[keyOf(combo)] ?? 0);
       // A note the user keeps rejecting here is left out; the rest keep their
       // order unless feedback sets them apart.
       final combos =
@@ -762,8 +853,8 @@ class _DashboardViewState extends State<DashboardView>
             for (final combo in candidates)
               if (netOf(combo) > -_comboDropMicros) combo,
           ].indexed.toList()..sort((a, b) {
-            final byNet = netOf(b.$2).compareTo(netOf(a.$2));
-            return byNet != 0 ? byNet : a.$1.compareTo(b.$1);
+            final byRank = rankOf(b.$2).compareTo(rankOf(a.$2));
+            return byRank != 0 ? byRank : a.$1.compareTo(b.$1);
           });
       if (!mounted || load != _comboLoad) return;
       setState(() {
@@ -861,6 +952,13 @@ class _DashboardViewState extends State<DashboardView>
         lap?.startedAtEpochMs ?? nowMs,
         _lapStartZoneId,
       );
+      // The same Tags a tap would fill, for the People the note starts with.
+      final learned = _learnedTags(
+        activity.id,
+        people: peopleIn(prefill),
+        records: choices.records,
+        contactTag: contactTagId(choices.tags),
+      );
       final note = await showNoteSheet(
         context,
         activityName: activity.name,
@@ -868,11 +966,7 @@ class _DashboardViewState extends State<DashboardView>
         subtitle: '$since–now · ${UiHelpers.formatDurationHuman(_elapsedMs)}',
         tags: choices.tags,
         people: choices.people,
-        initialTagIds: tagIdsWithContact(
-          const [],
-          contactTagId(choices.tags),
-          hasPeople: peopleIn(prefill).isNotEmpty,
-        ),
+        initialTagIds: learned,
         suggestedReading: prefill,
         suggestReading: (first) => suggestedReading(
           choices.records,
@@ -884,11 +978,22 @@ class _DashboardViewState extends State<DashboardView>
         dismissLabel: 'Cancel',
       );
       if (note == null) return;
-      await _labelActivity(
+      final record = await _labelActivity(
         activity,
         comment: note.comment,
         tagIds: note.tagIds,
       );
+      if (record != null && learned.isNotEmpty) {
+        unawaited(
+          _recordFeedback(
+            activity,
+            SuggestionVote.tagged,
+            targetEpochMs: lap?.startedAtEpochMs,
+            recordId: record.id,
+            tagIds: learned,
+          ),
+        );
+      }
     } catch (e) {
       _showError('Failed to open the note: $e');
     }
@@ -1457,7 +1562,7 @@ class _DashboardViewState extends State<DashboardView>
       onPick: (activity) async {
         _pickingFromFilter = true;
         try {
-          await _labelActivity(activity);
+          await _labelManually(activity);
         } finally {
           _pickingFromFilter = false;
         }
@@ -1600,7 +1705,7 @@ class _DashboardViewState extends State<DashboardView>
           child: InkWell(
             key: ValueKey('pinned-chip-${activity.id}'),
             customBorder: const StadiumBorder(),
-            onTap: () => _labelActivity(activity),
+            onTap: () => _labelManually(activity),
             child: ConstrainedBox(
               constraints: const BoxConstraints(minHeight: 44, minWidth: 44),
               child: Padding(
@@ -1945,7 +2050,7 @@ class _DashboardViewState extends State<DashboardView>
           clipBehavior: Clip.antiAlias,
           child: InkWell(
             key: ValueKey('activity-block-${activity.id}'),
-            onTap: () => _labelActivity(activity),
+            onTap: () => _labelManually(activity),
             onLongPress: () => _noteThenLabel(activity),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 14),

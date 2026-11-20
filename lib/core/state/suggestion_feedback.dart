@@ -46,8 +46,14 @@ class ResolvedFeedback {
 ///   reading counts against it.
 /// - Each suggested Tag removed counts against that Tag for the Activity, each
 ///   one added counts for it, and each kept counts lightly for it.
+///
+/// A [SuggestionVote.tagged] entry, from a label without a suggestion, gives
+/// only the Tag feedback.
 ResolvedFeedback resolveLogged(SuggestionFeedback logged, Record? record) {
   if (record == null) return ResolvedFeedback.none;
+  if (logged.vote == SuggestionVote.tagged) {
+    return ResolvedFeedback(votes: const [], tags: _tagEdits(logged, record));
+  }
   final people = logged.people;
   if (record.activityId != logged.activityId) {
     return ResolvedFeedback(
@@ -75,25 +81,31 @@ ResolvedFeedback resolveLogged(SuggestionFeedback logged, Record? record) {
         : SuggestionVote.accepted;
     votes.add(logged.withVote(vote, people: people));
   }
+  return ResolvedFeedback(votes: votes, tags: _tagEdits(logged, record));
+}
 
-  final tags = <TagFeedback>[];
+/// How the Tags filled in on [logged] were edited on [record]: each removed
+/// counts against that Tag for the Activity, each added for it, and each kept
+/// lightly for it. The same Activity only: a relabeled Record's Tags say
+/// nothing about this one.
+List<TagFeedback> _tagEdits(SuggestionFeedback logged, Record record) {
   final suggestedTags = logged.tagIds;
-  if (suggestedTags != null) {
-    TagFeedback tag(String id, int micros) => TagFeedback(
-      activityId: logged.activityId,
-      tagId: id,
-      micros: micros,
-      givenAtEpochMs: logged.givenAtEpochMs,
-    );
-    const unit = 1000000;
-    for (final id in suggestedTags) {
-      tags.add(tag(id, record.tagIds.contains(id) ? unit ~/ 4 : -unit));
-    }
-    for (final id in record.tagIds) {
-      if (!suggestedTags.contains(id)) tags.add(tag(id, unit));
-    }
+  if (suggestedTags == null || record.activityId != logged.activityId) {
+    return const [];
   }
-  return ResolvedFeedback(votes: votes, tags: tags);
+  TagFeedback tag(String id, int micros) => TagFeedback(
+    activityId: logged.activityId,
+    tagId: id,
+    micros: micros,
+    givenAtEpochMs: logged.givenAtEpochMs,
+  );
+  const unit = 1000000;
+  return [
+    for (final id in suggestedTags)
+      tag(id, record.tagIds.contains(id) ? unit ~/ 4 : -unit),
+    for (final id in record.tagIds)
+      if (!suggestedTags.contains(id)) tag(id, unit),
+  ];
 }
 
 String _normalized(String text) =>
@@ -129,7 +141,7 @@ class SuggestionFeedbackStore {
   static const String storageKey = 'suggestion_feedback';
 
   /// The most entries kept. The oldest go first.
-  static const int maxEntries = 500;
+  static const int maxEntries = 800;
 
   /// Every stored entry, oldest first. Unreadable data reads as none.
   static Future<List<SuggestionFeedback>> load(TempoDatabase database) async {
@@ -155,7 +167,8 @@ class SuggestionFeedbackStore {
         ContextualSuggestionEngine.historyWindow.inMilliseconds;
     final kept = [
       for (final entry in await load(database))
-        if (entry.givenAtEpochMs >= cutoff) entry,
+        if (entry.givenAtEpochMs >= cutoff && !_replacedBy(entry, feedback))
+          entry,
       feedback,
     ];
     final trimmed = kept.length > maxEntries
@@ -167,27 +180,91 @@ class SuggestionFeedbackStore {
     );
   }
 
+  /// A later explicit vote on the same logged Record replaces an earlier one.
+  static bool _replacedBy(SuggestionFeedback entry, SuggestionFeedback next) =>
+      next.vote.isExplicit &&
+      entry.vote.isExplicit &&
+      next.recordId != null &&
+      entry.recordId == next.recordId;
+
   /// Every stored entry, with each logged suggestion read against its Record
-  /// as it is now.
+  /// as it is now. Where the user rated a logged Record on purpose, that vote
+  /// stands in for what its edits would say; its Tag edits still count.
   static Future<ResolvedFeedback> loadResolved(TempoDatabase database) async {
     final entries = await load(database);
     final recordIds = [
       for (final entry in entries)
-        if (entry.vote == SuggestionVote.logged) entry.recordId!,
+        if (entry.vote.readsRecord) entry.recordId!,
     ];
+    final rated = {
+      for (final entry in entries)
+        if (entry.vote.isExplicit && entry.recordId != null) entry.recordId,
+    };
     final records = await _recordsById(database, recordIds);
     final votes = <SuggestionFeedback>[];
     final tags = <TagFeedback>[];
     for (final entry in entries) {
-      if (entry.vote != SuggestionVote.logged) {
+      if (!entry.vote.readsRecord) {
         votes.add(entry);
         continue;
       }
       final resolved = resolveLogged(entry, records[entry.recordId]);
-      votes.addAll(resolved.votes);
+      if (!rated.contains(entry.recordId)) votes.addAll(resolved.votes);
       tags.addAll(resolved.tags);
     }
     return ResolvedFeedback(votes: votes, tags: tags);
+  }
+
+  /// The suggestion [recordId] was logged from, and the user's own rating of
+  /// it, if any. Null when the Record was not logged from a suggestion on
+  /// this device.
+  static Future<({SuggestionFeedback logged, SuggestionVote? rating})?>
+  ratingFor(TempoDatabase database, String recordId) async {
+    final entries = await load(database);
+    SuggestionFeedback? logged;
+    SuggestionVote? rating;
+    for (final entry in entries) {
+      if (entry.recordId != recordId) continue;
+      if (entry.vote == SuggestionVote.logged) logged = entry;
+      if (entry.vote.isExplicit) rating = entry.vote;
+    }
+    if (logged == null) return null;
+    return (logged: logged, rating: rating);
+  }
+
+  /// Rates the suggestion [recordId] was logged from as [vote], good or not
+  /// useful, replacing any earlier rating of it; null takes the rating back.
+  /// The vote is about the moment it was suggested for. Does nothing when the
+  /// Record was not logged from a suggestion on this device.
+  static Future<void> rate(
+    TempoDatabase database, {
+    required String recordId,
+    required SuggestionVote? vote,
+    required int nowEpochMs,
+  }) async {
+    assert(vote == null || vote.isExplicit, 'Rate with good or not useful.');
+    final found = await ratingFor(database, recordId);
+    if (found == null) return;
+    if (vote != null) {
+      await add(
+        database,
+        found.logged.withVote(
+          vote,
+          people: found.logged.people,
+          givenAtEpochMs: nowEpochMs,
+          recordId: recordId,
+        ),
+      );
+      return;
+    }
+    final kept = [
+      for (final entry in await load(database))
+        if (!(entry.vote.isExplicit && entry.recordId == recordId)) entry,
+    ];
+    await database.setSetting(
+      storageKey,
+      jsonEncode([for (final entry in kept) entry.toJson()]),
+    );
   }
 
   /// The Activity, comment and Tags of each Record in [ids] that still exists.
@@ -350,4 +427,37 @@ List<String> suggestedTagIds(
 String? _firstPerson(String comment) {
   final names = peopleIn(comment);
   return names.isEmpty ? null : names.first.toLowerCase();
+}
+
+/// [suggestedTagIds] for a label made away from the Today page (the
+/// notification or the watch), read from the same year of history and Tag
+/// feedback, so a Record gets the same Tags however it was labeled. People
+/// come from [comment]. Reads nothing on failure: a label never waits on Tags.
+Future<List<String>> loadLearnedTagIds(
+  TempoDatabase database, {
+  required String activityId,
+  String comment = '',
+  required int beforeEpochMs,
+}) async {
+  try {
+    final records = await database.getRecords(
+      activityId: activityId,
+      startedAfter: beforeEpochMs - const Duration(days: 365).inMilliseconds,
+      startedBefore: beforeEpochMs,
+      orderBy: 'started_at_epoch_ms DESC',
+      limit: 50,
+    );
+    final tags = await database.getAllTags();
+    final feedback = await SuggestionFeedbackStore.loadResolved(database);
+    return suggestedTagIds(
+      records,
+      activityId: activityId,
+      people: peopleIn(comment),
+      contactTagId: contactTagId(tags),
+      feedback: feedback.tags,
+      beforeEpochMs: beforeEpochMs,
+    );
+  } catch (_) {
+    return const [];
+  }
 }

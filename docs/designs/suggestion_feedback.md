@@ -22,8 +22,16 @@ back at the same moment until history outweighs it.
 - **Long-press a suggestion:** a sheet offers *Add a note first*, *Good
   suggestion* and *Not useful here*. Not useful hides the chip until the Lap
   changes.
+- **Rate it later:** a Record logged from a suggestion shows *Suggested by
+  Tempo* with *Good suggestion* and *Not useful* in its History edit sheet.
+  A tap counts at once (not on Save) and tapping it again takes it back. It
+  is the same rating the "Good suggestion?" bar gives, so a later one
+  replaces it.
+- **Pass it over:** suggestions shown on Today when a Lap is labeled some
+  other way count as passed over, and one passed over many times ranks
+  slowly lower (below).
 - **Settings → Suggestion feedback:** shows how many votes are kept and resets
-  them.
+  them, with the passed-over counts.
 
 ## Edits as quiet feedback
 
@@ -40,6 +48,10 @@ entry is read against what that Record holds now:
 | Note: same reading, other People | light vote for the note |
 | Note: reading rewritten | not useful for the note |
 
+A rating the user gives on purpose (the bar, or the History edit sheet) is
+kept with the Record id and stands in for what the edits say; Tag edits still
+count.
+
 A note suggestion is keyed by its Activity and People. Its votes do not touch
 the Activity's own ranking; on Today they reorder the WITH NOTE row and leave
 out a note with about one fresh rejection at a similar moment.
@@ -54,6 +66,25 @@ for that Activity: a suggested Tag removed counts −1, one added +1, one kept
 drops a Tag history would fill in (the Contact Tag included) or adds one it
 would not.
 
+Every other label fills in the same Tags the same way: an Activity block, a
+pin or the filter on Today (stored as a `tagged` entry, so its Tag edits
+count too but it is no vote on the Activity), *Add a note first* (the note
+sheet opens with them), and a chip on the notification or the watch.
+
+## Passed over
+
+When a Lap is labeled on Today, each suggestion on screen (SUGGESTED and WITH
+NOTE) that was not the one tapped counts as passed over once. The one tapped
+starts again from zero; if its Activity was logged another way, its count is
+halved. Counts fade on the 14-day half-life and live under
+`suggestion_ignored` in `settings`, one per suggestion.
+
+The first three times change nothing. After that each time divides the score
+by 15% more, at most three times lower, so a pick shown all day and never
+taken sinks, falls off the screen, and can come back once the count fades. A
+WITH NOTE suggestion sinks among the notes by a quarter vote per time, never
+enough on its own to leave it out.
+
 ## How a vote is kept
 
 Each vote is stored with the moment it was about: the Activity, the vote, when
@@ -62,7 +93,7 @@ Votes live in the `settings` table as one JSON list under
 `suggestion_feedback`, like `today_activity_order`. No schema change. They stay
 on the device: not synced and not exported.
 Votes older than the 60-day history window are dropped on the next write, and
-at most 500 are kept.
+at most 800 are kept.
 
 ## How a vote changes the ranking
 
