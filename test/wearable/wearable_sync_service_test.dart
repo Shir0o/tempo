@@ -185,7 +185,7 @@ void main() {
     );
 
     test('labeling dispatches a fresh Lap snapshot to the watch', () async {
-      syncService.initialize();
+      await syncService.initialize();
       await pumpEventQueue();
       methodCalls.clear();
 
@@ -209,7 +209,7 @@ void main() {
     test(
       'syncActivities dispatches serialized activity list to channel',
       () async {
-        syncService.initialize();
+        await syncService.initialize();
         await pumpEventQueue();
         methodCalls.clear();
 
@@ -256,7 +256,7 @@ void main() {
           await dayRecorder.label(activityId);
         }
 
-        syncService.initialize();
+        await syncService.initialize();
         await pumpEventQueue();
         methodCalls.clear();
 
@@ -272,7 +272,7 @@ void main() {
     );
 
     test('tile slots decay older labels instead of dropping them', () async {
-      syncService.initialize();
+      await syncService.initialize();
       await pumpEventQueue();
       methodCalls.clear();
 
@@ -302,7 +302,7 @@ void main() {
     });
 
     test('incoming LABEL action from the watch labels the Lap', () async {
-      syncService.initialize();
+      await syncService.initialize();
 
       final messenger =
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -327,7 +327,7 @@ void main() {
     });
 
     test('incoming SPLIT action from the watch splits the Lap', () async {
-      syncService.initialize();
+      await syncService.initialize();
       await dayRecorder.label('act-coding');
       mockTime += 30000;
       // The tap reached the phone ten seconds after it happened.
@@ -359,7 +359,7 @@ void main() {
     test(
       'incoming REPEAT labels the Lap with the last Activity again',
       () async {
-        syncService.initialize();
+        await syncService.initialize();
         await pumpEventQueue();
         mockTime += 60000;
         await dayRecorder.label('act-coding');
@@ -387,7 +387,7 @@ void main() {
     );
 
     test('incoming CONTINUE grows the last Record over the Lap', () async {
-      syncService.initialize();
+      await syncService.initialize();
       await pumpEventQueue();
       mockTime += 60000;
       await dayRecorder.label('act-workout');
@@ -411,7 +411,7 @@ void main() {
     });
 
     test('REPEAT with no earlier Record is rejected', () async {
-      syncService.initialize();
+      await syncService.initialize();
       await pumpEventQueue();
       mockTime += 60000;
       methodCalls.clear();
@@ -435,7 +435,7 @@ void main() {
     test(
       'a delayed action is written at the instant and zone it was tapped',
       () async {
-        syncService.initialize();
+        await syncService.initialize();
         await pumpEventQueue();
         final lapStart = mockTime;
 
@@ -465,7 +465,7 @@ void main() {
     test(
       'an action older than the open Lap is rejected with lap-moved',
       () async {
-        syncService.initialize();
+        await syncService.initialize();
         await pumpEventQueue();
         final lapStart = mockTime;
 
@@ -497,7 +497,7 @@ void main() {
     test(
       'a label queued on the watch for hours is applied when it arrives',
       () async {
-        syncService.initialize();
+        await syncService.initialize();
         await pumpEventQueue();
         final lapStart = mockTime;
 
@@ -526,7 +526,7 @@ void main() {
     test(
       'a tap stamped in the future is still rejected as clock skew',
       () async {
-        syncService.initialize();
+        await syncService.initialize();
         await pumpEventQueue();
         mockTime += const Duration(minutes: 1).inMilliseconds;
         methodCalls.clear();
@@ -551,7 +551,7 @@ void main() {
     );
 
     test('an applied action is acknowledged with appliedActionSeq', () async {
-      syncService.initialize();
+      await syncService.initialize();
       await pumpEventQueue();
       mockTime += const Duration(minutes: 1).inMilliseconds;
       methodCalls.clear();
@@ -577,7 +577,7 @@ void main() {
     });
 
     test('the same action over both channels is applied once', () async {
-      syncService.initialize();
+      await syncService.initialize();
       await pumpEventQueue();
       mockTime += const Duration(minutes: 1).inMilliseconds;
 
@@ -599,7 +599,7 @@ void main() {
     test(
       'a repeated LABEL at the Lap start is refused, not written as 0s',
       () async {
-        syncService.initialize();
+        await syncService.initialize();
         await pumpEventQueue();
         mockTime += const Duration(minutes: 1).inMilliseconds;
         final tappedAt = mockTime;
@@ -641,7 +641,7 @@ void main() {
     );
 
     test('the watermark survives a service restart', () async {
-      syncService.initialize();
+      await syncService.initialize();
       await pumpEventQueue();
       mockTime += const Duration(minutes: 1).inMilliseconds;
 
@@ -664,7 +664,7 @@ void main() {
         channel: channel,
         nowUtcMs: () => mockTime,
       );
-      syncService.initialize();
+      await syncService.initialize();
       await pumpEventQueue();
 
       // The watch re-sends what is still pending once the phone comes back.
@@ -686,7 +686,7 @@ void main() {
             );
           });
 
-      syncService.initialize();
+      await syncService.initialize();
       // Should not throw
       await dayRecorder.label('act-coding');
       await Future<void>.delayed(Duration.zero);
