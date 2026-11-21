@@ -50,7 +50,7 @@ jobs:
           echo "All release secrets present."
 
       - name: Setup Java
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -62,7 +62,7 @@ jobs:
           cache: true
 
       - name: Setup Ruby + Bundler for fastlane
-        uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1
+        uses: ruby/setup-ruby@20eb24b0d509e2b9ed9b6d42ddfeb992915e0564 # v1
         with:
           ruby-version: '3.2'
           bundler-cache: false
