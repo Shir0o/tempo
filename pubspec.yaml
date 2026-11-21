@@ -7,7 +7,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  material_ui: ^1.9.0
+  material_ui: ^1.11.1
   cupertino_icons: ^2.0.0
   sqflite: ^2.4.6
   sqflite_common_ffi: ^2.4.7
@@ -18,13 +18,13 @@ dependencies:
   crypto: ^3.0.8
   path_provider: ^2.1.6
   http: ^1.6.0
-  googleapis: ^17.0.0
+  googleapis: ^19.0.0
   googleapis_auth: ^2.3.7
   google_sign_in: ^7.2.0
   extension_google_sign_in_as_googleapis_auth: ^3.0.0
   timezone: ^0.11.2
   flutter_timezone: ^5.1.1
-  file_picker: ^13.3.3
+  file_picker: ^13.4.0
   bonsoir: ^7.1.6
   qr_flutter: ^4.1.0
   mobile_scanner: ^7.5.0
