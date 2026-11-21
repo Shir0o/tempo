@@ -744,13 +744,13 @@ Future<BackupDestination?> pickBackupDestination({
   if (!kIsWeb && Platform.isAndroid) {
     return SafBackupDestination.pick(store: safStore);
   }
-  final selected = await FilePicker.getDirectoryPath(
+  final selected = await FilePicker.pickDirectory(
     dialogTitle: 'Choose a backup folder',
   );
   if (selected == null) return null;
   final roots = ownStorageRoots ?? await _appOwnedDirectories();
   final destination = FilesystemBackupDestination(
-    rootPath: selected,
+    rootPath: selected.toFilePath(),
     ownStorageRoots: roots,
   );
   if (destination.isOwnStorage) {
