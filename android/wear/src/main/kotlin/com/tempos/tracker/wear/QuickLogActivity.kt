@@ -1,12 +1,17 @@
 package com.tempos.tracker.wear
 
 import android.Manifest
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.speech.RecognizerIntent
 import android.view.HapticFeedbackConstants
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
@@ -17,6 +22,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -36,6 +42,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -43,6 +52,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
@@ -54,6 +64,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.wear.ambient.AmbientLifecycleObserver
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
@@ -177,6 +189,8 @@ class QuickLogActivity : ComponentActivity() {
 
 // Design D tokens (DESIGN.md).
 private val Night = Color(0xFF0B0B0A)
+private val NightCard = Color(0xFF1B1B18)
+private val Hairline = Color(0xFF262622)
 private val Ink = Color(0xFF121210)
 private val Lime = Color(0xFFC6F432)
 private val Fog = Color(0xFFA8A8A8)
@@ -306,6 +320,20 @@ fun QuickLogScreen(
     var elapsedMs by remember { mutableLongStateOf(lapElapsedMs(lap)) }
     var confirmed by remember { mutableStateOf<LabelConfirmation?>(null) }
 
+    // Voice is the watch's only search: the recognizer owns the microphone,
+    // so Tempo declares no RECORD_AUDIO and no keyboard is ever shown.
+    val context = LocalContext.current
+    var speechAvailable by remember {
+        mutableStateOf(
+            context.packageManager.resolveActivity(
+                Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH),
+                PackageManager.MATCH_DEFAULT_ONLY
+            ) != null
+        )
+    }
+    var voiceQuery by remember { mutableStateOf<VoiceQuery?>(null) }
+    var voicePending by remember { mutableStateOf(false) }
+
     // Action-and-Exit still applies, but only after real inactivity: a touch, a
     // scroll or the rotating crown counts as use and restarts the countdown, so
     // the list never closes while it is being read. Ambient is not use — the
@@ -315,9 +343,22 @@ fun QuickLogScreen(
     LaunchedEffect(isAmbient) {
         if (!isAmbient) lastInteractionMs.set(SystemClock.elapsedRealtime())
     }
+    // Coming back to this screen is use. It also clears a voice launch that
+    // never returned a result (for example the recognizer crashed), so the
+    // idle timeout cannot stay suspended forever.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        voicePending = false
+        lastInteractionMs.set(SystemClock.elapsedRealtime())
+    }
     LaunchedEffect(Unit) {
         while (isActive) {
             delay(IDLE_POLL_MS)
+            if (voicePending) {
+                // The recognizer is another app in front of this one: it is
+                // use even though no touch reaches this screen.
+                lastInteractionMs.set(SystemClock.elapsedRealtime())
+                continue
+            }
             if (SystemClock.elapsedRealtime() - lastInteractionMs.get() >= IDLE_TIMEOUT_MS) {
                 onFinish()
                 break
@@ -347,6 +388,49 @@ fun QuickLogScreen(
         val labeled = labeledSpan(lap)
         onActivitySelected(activity)
         confirmed = LabelConfirmation(activity, labeled)
+    }
+
+    val voiceLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        voicePending = false
+        lastInteractionMs.set(SystemClock.elapsedRealtime())
+        if (result.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
+        val heard = result.data
+            ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            ?.firstOrNull()
+            ?.trim()
+        if (heard.isNullOrEmpty()) return@rememberLauncherForActivityResult
+        val match = matchSpokenActivity(heard, activities)
+        val unique = match.unique
+        if (unique != null) {
+            // One clear name: speaking it is the tap. The lime confirmation and
+            // the phone's UndoGraceWindow cover a misheard word.
+            select(unique)
+        } else {
+            voiceQuery = VoiceQuery(heard, match.candidates)
+        }
+    }
+
+    fun startVoice() {
+        if (voicePending) return
+        lastInteractionMs.set(SystemClock.elapsedRealtime())
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+            )
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Say an Activity")
+        }
+        voicePending = true
+        try {
+            voiceLauncher.launch(intent)
+        } catch (_: ActivityNotFoundException) {
+            voicePending = false
+            speechAvailable = false
+        }
     }
 
     Box(
@@ -380,47 +464,82 @@ fun QuickLogScreen(
                     LapHeader(lap = lap, elapsedMs = elapsedMs, elapsedColor = Color.White)
                 }
 
-                // The phone's two repeat buttons, on top of the Activity pills:
-                // "Still <Activity>" grows the last Record, "<Activity> again"
-                // starts a new one.
-                val last = lastActivity
-                if (last != null) {
+                val query = voiceQuery
+                if (query != null && query.candidates.isNotEmpty()) {
+                    // A spoken phrase matched more than one Activity: show only
+                    // those, ranked, so the answer is one tap away.
                     item {
-                        RepeatActions(
-                            last = last,
-                            onStill = {
-                                val labeled = labeledSpan(lap)
-                                onStillSelected()
-                                confirmed = LabelConfirmation(last, labeled, "STILL")
-                            },
-                            onAgain = {
-                                val labeled = labeledSpan(lap)
-                                onAgainSelected()
-                                confirmed = LabelConfirmation(last, labeled, "AGAIN")
-                            }
-                        )
+                        VoiceHeard(heard = query.heard, caption = "Tap an Activity")
                     }
-                }
-
-                // The three most-used Activities, the same slots as the tile.
-                items(slotActivities) { activity ->
-                    ActivityPill(activity = activity, onClick = { select(activity) })
-                }
-
-                if (others.isNotEmpty()) {
-                    item {
-                        Text(
-                            text = "All activities",
-                            color = Fog,
-                            fontFamily = SpaceGrotesk,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
-                        )
+                    if (speechAvailable) {
+                        item {
+                            VoicePill(label = "Say again", onClick = ::startVoice)
+                        }
                     }
-
-                    items(others) { activity ->
+                    items(query.candidates) { activity ->
                         ActivityPill(activity = activity, onClick = { select(activity) })
+                    }
+                    item {
+                        ShowAllPill(onClick = { voiceQuery = null })
+                    }
+                } else {
+                    // The phone's two repeat buttons, on top of the Activity
+                    // pills: "Still <Activity>" grows the last Record,
+                    // "<Activity> again" starts a new one.
+                    val last = lastActivity
+                    if (last != null) {
+                        item {
+                            RepeatActions(
+                                last = last,
+                                onStill = {
+                                    val labeled = labeledSpan(lap)
+                                    onStillSelected()
+                                    confirmed = LabelConfirmation(last, labeled, "STILL")
+                                },
+                                onAgain = {
+                                    val labeled = labeledSpan(lap)
+                                    onAgainSelected()
+                                    confirmed = LabelConfirmation(last, labeled, "AGAIN")
+                                }
+                            )
+                        }
+                    }
+
+                    if (query != null) {
+                        item {
+                            VoiceHeard(heard = query.heard, caption = "No Activity matches")
+                        }
+                    }
+
+                    if (speechAvailable) {
+                        item {
+                            VoicePill(
+                                label = if (query == null) "Speak an Activity" else "Say again",
+                                onClick = ::startVoice
+                            )
+                        }
+                    }
+
+                    // The three most-used Activities, the same slots as the tile.
+                    items(slotActivities) { activity ->
+                        ActivityPill(activity = activity, onClick = { select(activity) })
+                    }
+
+                    if (others.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = "All activities",
+                                color = Fog,
+                                fontFamily = SpaceGrotesk,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
+                            )
+                        }
+
+                        items(others) { activity ->
+                            ActivityPill(activity = activity, onClick = { select(activity) })
+                        }
                     }
                 }
             }
@@ -570,6 +689,136 @@ fun ActivityPill(
             fontWeight = FontWeight.Bold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/** What the recognizer heard and the Activities it resolved to. */
+private data class VoiceQuery(
+    val heard: String,
+    val candidates: List<WearActivity> = emptyList()
+)
+
+/**
+ * "HEARD · coffee": the transcript over a one-line outcome, so the result of
+ * speaking is readable before the next tap.
+ */
+@Composable
+private fun VoiceHeard(heard: String, caption: String) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp, bottom = 2.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = "HEARD · \u201C$heard\u201D",
+            color = Fog,
+            fontFamily = SpaceGrotesk,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.08.em,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = caption,
+            color = Color.White,
+            fontFamily = SpaceGrotesk,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+/** The mic: voice is the only search on the watch, so it sits above the pills. */
+@Composable
+private fun VoicePill(label: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+            .height(44.dp)
+            .clip(CircleShape)
+            .background(NightCard)
+            .border(1.dp, Hairline, CircleShape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            MicGlyph()
+            Text(
+                text = label,
+                color = Color.White,
+                fontFamily = SpaceGrotesk,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+/** A hand-drawn mic, matching the check mark's line weight. */
+@Composable
+private fun MicGlyph() {
+    Canvas(modifier = Modifier.size(13.dp)) {
+        val stroke = 1.6.dp.toPx()
+        val bodyWidth = size.width * 0.34f
+        val bodyTop = size.height * 0.06f
+        val bodyBottom = size.height * 0.62f
+        drawRoundRect(
+            color = Lime,
+            topLeft = Offset((size.width - bodyWidth) / 2f, bodyTop),
+            size = Size(bodyWidth, bodyBottom - bodyTop),
+            cornerRadius = CornerRadius(bodyWidth / 2f)
+        )
+        drawArc(
+            color = Lime,
+            startAngle = 0f,
+            sweepAngle = 180f,
+            useCenter = false,
+            topLeft = Offset(size.width * 0.16f, size.height * 0.28f),
+            size = Size(size.width * 0.68f, size.height * 0.44f),
+            style = Stroke(width = stroke, cap = StrokeCap.Round)
+        )
+        drawLine(
+            color = Lime,
+            start = Offset(size.width / 2f, size.height * 0.72f),
+            end = Offset(size.width / 2f, size.height * 0.96f),
+            strokeWidth = stroke,
+            cap = StrokeCap.Round
+        )
+    }
+}
+
+/** Clears a spoken filter and returns to the full list. */
+@Composable
+private fun ShowAllPill(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+            .height(44.dp)
+            .clip(CircleShape)
+            .border(1.dp, Hairline, CircleShape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = "Show all",
+            color = Fog,
+            fontFamily = SpaceGrotesk,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold
         )
     }
 }

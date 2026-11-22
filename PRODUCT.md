@@ -25,7 +25,7 @@ Unlike cloud-locked, corporate subscription trackers (Toggl, Clockify, Harvest) 
 
 ## Operating Context
 
-- **Pixel Watch (Wear OS)**: Ultra-fast micro-interactions on the wrist. The complication shows the open Lap's elapsed time; tapping it or a smart tile slot (the three most-used Activities) labels the Lap, triggers haptic confirmation, and immediately exits back to the watch face so incoming notifications, texts, and calls are never blocked.
+- **Pixel Watch (Wear OS)**: Ultra-fast micro-interactions on the wrist. The complication shows the open Lap's elapsed time; tapping it or a smart tile slot (the three most-used Activities) labels the Lap, triggers haptic confirmation, and immediately exits back to the watch face so incoming notifications, texts, and calls are never blocked. The label screen also takes voice input — speak an Activity name and a clear match labels and exits, with no keyboard on the watch.
 - **Android Phone/Tablet**: Dashboard showing the open Lap, a midnight-to-midnight timeline of the day, and one-tap labeling; daily/weekly review of time per Activity, Activity configuration, and quick-settings tile labeling.
 - **macOS Desktop**: Lightweight menu bar popover for instant keyboard-driven labeling of the open Lap, plus full window for browsing and correcting past Days.
 - **Local MCP Client**: Local CLI process invoked over stdio by AI assistants to describe how time was spent: timelines, time per Activity, and comparisons across days and weeks.

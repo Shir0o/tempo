@@ -22,6 +22,7 @@ Tempo describes how a day was spent, without judging it.
 
 - **Lap complication**: shows the open Lap's elapsed time, anchored on its start instant with no polling.
 - **Label and exit**: tapping the complication or a tile slot labels the Lap, gives haptic and visual confirmation, and immediately returns to the watch face so notifications are never suppressed.
+- **Speak an Activity**: the label screen's mic opens the watch's own voice input and matches what you said to your Activities — no keyboard. A clear match labels and exits; an ambiguous one shows the matches to tap.
 - **Three useful slots**: the tile offers the three most useful Activities over the last 60 days, weighted toward recent use.
 - **Timestamp math**: elapsed time is computed locally from the Lap start, so the watch and phone do not maintain a 1 Hz link.
 

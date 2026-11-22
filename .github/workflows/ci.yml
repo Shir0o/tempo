@@ -77,6 +77,10 @@ jobs:
         working-directory: android
         run: ./gradlew :wear:compileDebugKotlin
 
+      - name: Test the watch app
+        working-directory: android
+        run: ./gradlew :wear:testDebugUnitTest
+
   macos:
     name: macOS Build
     runs-on: macos-latest
