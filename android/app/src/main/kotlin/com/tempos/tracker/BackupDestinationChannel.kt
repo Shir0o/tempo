@@ -2,6 +2,8 @@ package com.tempos.tracker
 
 import android.app.Activity
 import android.content.ContentResolver
+import android.content.Context
+import android.content.SharedPreferences
 import android.content.Intent
 import android.net.Uri
 import android.os.Handler
@@ -38,7 +40,19 @@ class BackupDestinationChannel : FlutterPlugin, ActivityAware, MethodChannel.Met
     companion object {
         const val CHANNEL_NAME = "tempo/backup_destination"
         private const val REQUEST_PICK_TREE = 0x5AF
+
+        /** Folder ids already resolved, so a stale listing never makes a twin. */
+        private const val FOLDER_CACHE_PREFS = "tempo_backup_folders"
+
+        /** How long to wait for a cloud provider that is still loading a listing. */
+        private const val LOADING_POLL_MS = 500L
+        private const val LOADING_POLLS = 10
+
+        /** A second look before creating a folder the listing did not show. */
+        private const val RECHECK_BEFORE_CREATE_MS = 1500L
     }
+
+    private var folderCache: SharedPreferences? = null
 
     private var channel: MethodChannel? = null
     private var activity: Activity? = null
@@ -65,6 +79,8 @@ class BackupDestinationChannel : FlutterPlugin, ActivityAware, MethodChannel.Met
     // FlutterPlugin
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        folderCache = binding.applicationContext
+            .getSharedPreferences(FOLDER_CACHE_PREFS, Context.MODE_PRIVATE)
         channel = MethodChannel(binding.binaryMessenger, CHANNEL_NAME).also {
             it.setMethodCallHandler(this)
         }
@@ -252,7 +268,7 @@ class BackupDestinationChannel : FlutterPlugin, ActivityAware, MethodChannel.Met
         call.argument<ByteArray>("bytes")
             ?: throw IllegalArgumentException("bytes is required")
 
-    /** One resolved tree: a relative-path walk with no cached documents. */
+    /** One resolved tree: a relative-path walk that remembers the folders it resolved. */
     private inner class Tree(treeUri: String) {
         private val uri: Uri = Uri.parse(treeUri)
 
@@ -332,13 +348,62 @@ class BackupDestinationChannel : FlutterPlugin, ActivityAware, MethodChannel.Met
             return match?.second?.takeIf { it.isNotBlank() }
         }
 
+        /**
+         * Finds or creates each folder on [relativeDirectory]. Cloud providers
+         * such as Google Drive can answer a listing from a stale cache that
+         * leaves out a folder that exists, or one created a moment ago, so a
+         * plain "not listed, so create it" made a new `tempo` folder beside the
+         * real one. Resolved folder ids are remembered per tree, a listing that
+         * is still loading is waited for, and a folder is created only after a
+         * second look still does not find it.
+         */
         fun ensureDirectory(relativeDirectory: String): String {
             var parentId = DocumentsContract.getTreeDocumentId(uri)
+            val walked = mutableListOf<String>()
             for (segment in segments(relativeDirectory)) {
-                parentId = findChild(parentId, segment, directory = true)?.first
-                    ?: createDocument(parentId, segment, DocumentsContract.Document.MIME_TYPE_DIR)
+                walked.add(segment)
+                val key = walked.joinToString("/")
+                parentId = cachedFolder(key, segment)
+                    ?: findChild(parentId, segment, directory = true)?.first
+                    ?: recheckThenCreate(parentId, segment)
+                rememberFolder(key, parentId)
             }
             return parentId
+        }
+
+        private fun recheckThenCreate(parentId: String, name: String): String {
+            Thread.sleep(RECHECK_BEFORE_CREATE_MS)
+            return findChild(parentId, name, directory = true)?.first
+                ?: createDocument(parentId, name, DocumentsContract.Document.MIME_TYPE_DIR)
+        }
+
+        private fun cacheKey(relativeDirectory: String): String = "$uri|$relativeDirectory"
+
+        /** The remembered folder id, if it still names a folder called [name]. */
+        private fun cachedFolder(relativeDirectory: String, name: String): String? {
+            val prefs = folderCache ?: return null
+            val key = cacheKey(relativeDirectory)
+            val id = prefs.getString(key, null) ?: return null
+            val valid = try {
+                val projection = arrayOf(
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE,
+                )
+                resolver.query(documentUri(id), projection, null, null, null)?.use { cursor ->
+                    cursor.moveToFirst() &&
+                        cursor.getString(0) == name &&
+                        cursor.getString(1) == DocumentsContract.Document.MIME_TYPE_DIR
+                } ?: false
+            } catch (e: Exception) {
+                // Deleted, moved out of the tree, or the grant changed.
+                false
+            }
+            if (!valid) prefs.edit().remove(key).apply()
+            return if (valid) id else null
+        }
+
+        private fun rememberFolder(relativeDirectory: String, documentId: String) {
+            folderCache?.edit()?.putString(cacheKey(relativeDirectory), documentId)?.apply()
         }
 
         fun writeFile(relativePath: String, bytes: ByteArray) {
@@ -403,8 +468,14 @@ class BackupDestinationChannel : FlutterPlugin, ActivityAware, MethodChannel.Met
 
         private fun findDirectory(relativeDirectory: String): String? {
             var parentId = DocumentsContract.getTreeDocumentId(uri)
+            val walked = mutableListOf<String>()
             for (segment in segments(relativeDirectory)) {
-                parentId = findChild(parentId, segment, directory = true)?.first ?: return null
+                walked.add(segment)
+                val key = walked.joinToString("/")
+                parentId = cachedFolder(key, segment)
+                    ?: findChild(parentId, segment, directory = true)?.first
+                    ?: return null
+                rememberFolder(key, parentId)
             }
             return parentId
         }
@@ -448,8 +519,27 @@ class BackupDestinationChannel : FlutterPlugin, ActivityAware, MethodChannel.Met
                 DocumentsContract.Document.COLUMN_LAST_MODIFIED,
             )
             val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(uri, parentId)
-            val rows = mutableListOf<Row>()
+            var rows = mutableListOf<Row>()
+            // A cloud provider may answer with what it has cached and mark the
+            // listing as still loading; reading that as complete misses files.
+            for (attempt in 0..LOADING_POLLS) {
+                rows = mutableListOf()
+                val loading = readChildren(childrenUri, projection, rows)
+                if (!loading || attempt == LOADING_POLLS) break
+                Thread.sleep(LOADING_POLL_MS)
+            }
+            return rows
+        }
+
+        /** Fills [rows] and returns true while the provider says it is still loading. */
+        private fun readChildren(
+            childrenUri: Uri,
+            projection: Array<String>,
+            rows: MutableList<Row>,
+        ): Boolean {
+            var loading = false
             resolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
+                loading = cursor.extras?.getBoolean(DocumentsContract.EXTRA_LOADING, false) ?: false
                 while (cursor.moveToNext()) {
                     rows.add(
                         Row(
@@ -462,7 +552,7 @@ class BackupDestinationChannel : FlutterPlugin, ActivityAware, MethodChannel.Met
                     )
                 }
             }
-            return rows
+            return loading
         }
 
         private fun documentUri(documentId: String): Uri =
