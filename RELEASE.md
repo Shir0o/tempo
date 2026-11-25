@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.24.0](https://github.com/Shir0o/tempo/compare/v1.23.0...v1.24.0) (2026-11-25)
+
+
+### Features
+
+* **wear:** label the open Lap by voice ([#162](https://github.com/Shir0o/tempo/issues/162)) ([e942352](https://github.com/Shir0o/tempo/commit/e942352b5b2856e85d4ebe7f3321335f67599f92))
+
+
+### Bug Fixes
+
+* **backup:** stop Drive from getting duplicate tempo folders ([#164](https://github.com/Shir0o/tempo/issues/164)) ([b56a51b](https://github.com/Shir0o/tempo/commit/b56a51b06c2606c9a4e658be2e05c67ee7193053))
+* **ui:** enforce WCAG contrast on Today Activity blocks ([#167](https://github.com/Shir0o/tempo/issues/167)) ([c60bc0c](https://github.com/Shir0o/tempo/commit/c60bc0cf77a3a8e5f8dfa3e3e52fee65b7c88769))
+
 ## [1.23.0](https://github.com/Shir0o/tempo/compare/v1.22.0...v1.23.0) (2026-11-20)
 
 
