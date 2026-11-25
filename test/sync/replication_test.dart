@@ -420,6 +420,29 @@ void main() {
     );
   });
 
+  test('a zone change made on the Mac reaches the phone', () async {
+    phoneNow = base + 30 * minuteMs;
+    final record = await phoneRecorder.label('act-coding');
+    macNow = base + 31 * minuteMs;
+    phoneNow = base + 31 * minuteMs;
+    await client.pull();
+
+    await macCommands.adjustEdges(
+      record.id,
+      startTimezoneId: 'America/Denver',
+      endTimezoneId: 'America/Denver',
+    );
+    final result = await client.pull();
+
+    expect(result.intentResults.single.result.isApplied, isTrue);
+    final onPhone = (await phoneRecords()).single;
+    expect(onPhone.startedAtEpochMs, record.startedAtEpochMs);
+    expect(onPhone.endedAtEpochMs, record.endedAtEpochMs);
+    expect(onPhone.timezoneId, 'America/Denver');
+    expect(onPhone.endTimezoneId, 'America/Denver');
+    expect(await macDb.getRecordById(record.id), equals(onPhone));
+  });
+
   test('a moved Lap rejects the intent with lap-moved', () async {
     await client.pull();
 

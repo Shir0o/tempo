@@ -187,3 +187,30 @@ int epochMsFromWallClock(
   }
   return candidate;
 }
+
+/// Every IANA zone id the bundled zone database knows, A–Z.
+List<String> knownTimezoneIds() {
+  _ensureTimezoneDatabase();
+  return tz.timeZoneDatabase.locations.keys.toList()..sort();
+}
+
+/// The zones offered when changing a Record's start or end zone:
+/// [deviceZone] first, then [recent] in order, then every known zone, each
+/// once. A non-empty [query] keeps only zones whose id contains it (case
+/// ignored, `_` read as a space) or whose abbreviation at [atEpochMs] is it,
+/// so "denver" and "MST" both find `America/Denver`.
+List<String> timezoneChoices({
+  required String deviceZone,
+  Iterable<String> recent = const [],
+  String query = '',
+  required int atEpochMs,
+}) {
+  final ordered = <String>{deviceZone, ...recent, ...knownTimezoneIds()};
+  final q = query.trim().toLowerCase();
+  if (q.isEmpty) return ordered.toList();
+  return ordered.where((zone) {
+    if (zone.toLowerCase().replaceAll('_', ' ').contains(q)) return true;
+    if (zone.toLowerCase().contains(q)) return true;
+    return zoneAbbreviationAt(zone, atEpochMs).toLowerCase() == q;
+  }).toList();
+}

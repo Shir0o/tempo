@@ -36,10 +36,14 @@ abstract class RecordCommands {
     required List<String> tagIds,
   });
 
+  /// Moves a Record's Edges, and may change the zone each Edge is shown and
+  /// exported in. See [DayRecorder.adjustEdges].
   Future<Record?> adjustEdges(
     String recordId, {
     int? startEpochMs,
     int? endEpochMs,
+    String? startTimezoneId,
+    String? endTimezoneId,
   });
 
   /// Turns a Record into an Untracked Record in place.
@@ -101,10 +105,14 @@ class PhoneRecordCommands implements RecordCommands {
     String recordId, {
     int? startEpochMs,
     int? endEpochMs,
+    String? startTimezoneId,
+    String? endTimezoneId,
   }) => dayRecorder.adjustEdges(
     recordId,
     startEpochMs: startEpochMs,
     endEpochMs: endEpochMs,
+    startTimezoneId: startTimezoneId,
+    endTimezoneId: endTimezoneId,
   );
 
   @override
@@ -235,6 +243,8 @@ class RemoteRecordCommands implements RecordCommands {
     String recordId, {
     int? startEpochMs,
     int? endEpochMs,
+    String? startTimezoneId,
+    String? endTimezoneId,
   }) async => _queue(
     SyncIntent.adjustEdges(
       intentId: _generateIntentId(),
@@ -244,6 +254,8 @@ class RemoteRecordCommands implements RecordCommands {
       recordId: recordId,
       startEpochMs: startEpochMs,
       endEpochMs: endEpochMs,
+      startTimezoneId: startTimezoneId,
+      endTimezoneId: endTimezoneId,
     ),
   );
 

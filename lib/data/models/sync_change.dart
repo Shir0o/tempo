@@ -382,6 +382,8 @@ class SyncIntent {
     required String recordId,
     int? startEpochMs,
     int? endEpochMs,
+    String? startTimezoneId,
+    String? endTimezoneId,
   }) => SyncIntent(
     intentId: intentId,
     kind: SyncIntentKind.adjustEdges,
@@ -392,6 +394,8 @@ class SyncIntent {
       'record_id': recordId,
       'start_epoch_ms': startEpochMs,
       'end_epoch_ms': endEpochMs,
+      'start_timezone_id': ?startTimezoneId,
+      'end_timezone_id': ?endTimezoneId,
     },
   );
 
@@ -495,6 +499,12 @@ class SyncIntent {
   int? get startEpochMs => payload['start_epoch_ms'] as int?;
 
   int? get endEpochMs => payload['end_epoch_ms'] as int?;
+
+  /// The zone an adjustEdges intent moves the Record's start into, if any.
+  String? get startTimezoneId => payload['start_timezone_id'] as String?;
+
+  /// The zone an adjustEdges intent moves the Record's end into, if any.
+  String? get endTimezoneId => payload['end_timezone_id'] as String?;
 
   int? get atEpochMs => payload['at_epoch_ms'] as int?;
 

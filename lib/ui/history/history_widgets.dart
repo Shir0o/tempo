@@ -564,6 +564,10 @@ class EdgeStepper extends StatelessWidget {
   final VoidCallback? onLater;
   final VoidCallback? onPickTime;
 
+  /// Opens the time zone picker for this Edge. When set, the overline (which
+  /// names the zone) becomes the button.
+  final VoidCallback? onPickZone;
+
   const EdgeStepper({
     super.key,
     required this.overline,
@@ -573,6 +577,7 @@ class EdgeStepper extends StatelessWidget {
     required this.onEarlier,
     required this.onLater,
     required this.onPickTime,
+    this.onPickZone,
   });
 
   @override
@@ -587,10 +592,34 @@ class EdgeStepper extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.only(left: 2),
-            child: SheetOverline(overline),
-          ),
+          if (onPickZone == null)
+            Padding(
+              padding: const EdgeInsets.only(left: 2),
+              child: SheetOverline(overline),
+            )
+          else
+            Semantics(
+              button: true,
+              label: '$overline, change $edgeName time zone',
+              excludeSemantics: true,
+              child: InkWell(
+                onTap: onPickZone,
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 2),
+                  child: Row(
+                    children: [
+                      Flexible(child: SheetOverline(overline)),
+                      const Icon(
+                        Icons.arrow_drop_down_rounded,
+                        size: 18,
+                        color: TempoColors.inkMuted,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           Row(
             children: [
               _CircleStep(

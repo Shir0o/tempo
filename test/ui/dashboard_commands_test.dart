@@ -59,6 +59,8 @@ class _RecordingCommands implements RecordCommands {
     String recordId, {
     int? startEpochMs,
     int? endEpochMs,
+    String? startTimezoneId,
+    String? endTimezoneId,
   }) async {
     calls.add('adjustEdges:$recordId');
     return null;
