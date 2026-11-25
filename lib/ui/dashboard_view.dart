@@ -166,11 +166,6 @@ class _DashboardViewState extends State<DashboardView>
   /// their own.
   List<RankedSuggestion> _suggestions = [];
 
-  /// Activities marked not useful while this Lap is open, hidden until the
-  /// Lap changes. Keyed by the Lap's start.
-  int? _dismissedLapStartMs;
-  final Set<String> _dismissedForLap = {};
-
   /// Note history and Tag feedback from the last combo load, used to fill in
   /// a suggestion's usual Tags when it is tapped.
   List<Record> _noteRecords = const [];
@@ -358,24 +353,15 @@ class _DashboardViewState extends State<DashboardView>
       // Rank for the moment being labeled: the open Lap's start.
       final lapStartMs =
           (widget.dayRecorder?.lap ?? replicaLap)?.startedAtEpochMs;
-      if (lapStartMs != _dismissedLapStartMs) {
-        _dismissedLapStartMs = lapStartMs;
-        _dismissedForLap.clear();
-      }
-      // Note suggestions marked not useful share the set, keyed by combo.
-      final dismissed = Set<String>.of(_dismissedForLap);
-      final suggested = [
-        for (final suggestion in await loadRankedSuggestions(
-          database: widget.database,
-          candidates: activities,
-          nowEpochMs: now.millisecondsSinceEpoch,
-          targetEpochMs: lapStartMs,
-          timezoneId: localTimezoneId(),
-          limit: 4 + dismissed.length,
-          excludePinned: true,
-        ))
-          if (!dismissed.contains(suggestion.activity.id)) suggestion,
-      ].take(4).toList();
+      final suggested = await loadRankedSuggestions(
+        database: widget.database,
+        candidates: activities,
+        nowEpochMs: now.millisecondsSinceEpoch,
+        targetEpochMs: lapStartMs,
+        timezoneId: localTimezoneId(),
+        limit: 4,
+        excludePinned: true,
+      );
 
       if (mounted && generation == _loadGeneration) {
         setState(() {
@@ -564,7 +550,7 @@ class _DashboardViewState extends State<DashboardView>
     if (ask == null) return;
     setState(() => _feedbackAsk = null);
     try {
-      // The same rating the Record's edit sheet shows and changes.
+      // Replaces anything rated for this Record before.
       await ask.logged;
       await SuggestionFeedbackStore.rate(
         widget.database,
@@ -601,87 +587,6 @@ class _DashboardViewState extends State<DashboardView>
         tagIds: tagIds,
       );
     } catch (_) {}
-  }
-
-  /// Long-press on a suggestion, an Activity or a note under WITH NOTE: edit
-  /// the note first, or say whether it was a good suggestion for this moment.
-  Future<void> _openSuggestionActions(
-    Activity activity, {
-    RecurringNote? combo,
-  }) async {
-    final detail = combo == null ? '' : _comboDetail(combo);
-    final choice = await showModalBottomSheet<_SuggestionAction>(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-              child: Text(
-                activity.name,
-                style: TempoText.title.copyWith(
-                  color: TempoColors.ink,
-                  fontSize: 22,
-                ),
-              ),
-            ),
-            if (detail.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                child: Text(
-                  detail,
-                  style: TempoText.body.copyWith(color: TempoColors.inkMuted),
-                ),
-              ),
-            for (final action in _SuggestionAction.values)
-              ListTile(
-                key: ValueKey('suggestion-action-${action.name}'),
-                minTileHeight: 56,
-                leading: Icon(action.icon, color: TempoColors.ink),
-                title: Text(
-                  combo != null && action == _SuggestionAction.note
-                      ? 'Edit the note first'
-                      : action.label,
-                  style: TempoText.body.copyWith(
-                    color: TempoColors.ink,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                onTap: () => Navigator.of(ctx).pop(action),
-              ),
-            const SizedBox(height: 12),
-          ],
-        ),
-      ),
-    );
-    if (choice == null || !mounted) return;
-    final people = combo?.people;
-    final what = combo == null ? activity.name : 'This note';
-    switch (choice) {
-      case _SuggestionAction.note:
-        await _noteThenLabel(activity, fromSuggestion: true, combo: combo);
-      case _SuggestionAction.good:
-        await _recordFeedback(activity, SuggestionVote.good, people: people);
-        _showMessage('Got it. $what will come up more at times like this.');
-        await _loadData();
-      case _SuggestionAction.notUseful:
-        setState(
-          () => _dismissedForLap.add(
-            combo == null
-                ? activity.id
-                : SuggestionFeedback.comboKey(activity.id, combo.people),
-          ),
-        );
-        await _recordFeedback(
-          activity,
-          SuggestionVote.notUseful,
-          people: people,
-        );
-        _showMessage('Got it. $what will come up less at times like this.');
-        await _loadData();
-    }
   }
 
   /// A note suggestion's reading and People, as its chip shows them.
@@ -889,9 +794,7 @@ class _DashboardViewState extends State<DashboardView>
       final combos =
           [
             for (final combo in candidates)
-              if (netOf(combo) > -_comboDropMicros &&
-                  !_dismissedForLap.contains(keyOf(combo)))
-                combo,
+              if (netOf(combo) > -_comboDropMicros) combo,
           ].indexed.toList()..sort((a, b) {
             final byRank = rankOf(b.$2).compareTo(rankOf(a.$2));
             return byRank != 0 ? byRank : a.$1.compareTo(b.$1);
@@ -1059,8 +962,6 @@ class _DashboardViewState extends State<DashboardView>
       _showError('Failed to open the note: $e');
     }
   }
-
-  void _showMessage(String message) => _showError(message);
 
   void _showError(String message) {
     if (!mounted) return;
@@ -1839,7 +1740,7 @@ class _DashboardViewState extends State<DashboardView>
       label: [
         'Suggested: ${activity.name}',
         ?reason,
-        'Tap to label untracked time. Long-press to rate this suggestion.',
+        'Tap to label untracked time. Long-press to add a note first.',
       ].join('. '),
       child: ExcludeSemantics(
         child: Material(
@@ -1849,7 +1750,7 @@ class _DashboardViewState extends State<DashboardView>
             key: ValueKey('suggested-chip-${activity.id}'),
             borderRadius: BorderRadius.circular(18),
             onTap: () => _labelSuggested(activity),
-            onLongPress: () => _openSuggestionActions(activity),
+            onLongPress: () => _noteThenLabel(activity, fromSuggestion: true),
             child: ConstrainedBox(
               constraints: const BoxConstraints(minHeight: 48),
               child: Padding(
@@ -1913,7 +1814,7 @@ class _DashboardViewState extends State<DashboardView>
       button: true,
       label:
           'Suggested: $label. Tap to label untracked time. '
-          'Long-press to rate it or edit the note first.',
+          'Long-press to edit the note first.',
       child: ExcludeSemantics(
         child: Material(
           color: _surface,
@@ -1922,7 +1823,8 @@ class _DashboardViewState extends State<DashboardView>
             key: ValueKey('combo-chip-$index'),
             borderRadius: BorderRadius.circular(16),
             onTap: () => _labelCombo(activity, combo),
-            onLongPress: () => _openSuggestionActions(activity, combo: combo),
+            onLongPress: () =>
+                _noteThenLabel(activity, fromSuggestion: true, combo: combo),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 14, 8),
               child: Row(
@@ -2368,18 +2270,6 @@ const TextStyle _stripLabelStyle = TextStyle(
   letterSpacing: 0.4,
   fontFeatures: [FontFeature.tabularFigures()],
 );
-
-/// What a long-press on a suggestion offers.
-enum _SuggestionAction {
-  note('Add a note first', Icons.edit_note_rounded),
-  good('Good suggestion', Icons.thumb_up_alt_outlined),
-  notUseful('Not useful here', Icons.thumb_down_alt_outlined);
-
-  const _SuggestionAction(this.label, this.icon);
-
-  final String label;
-  final IconData icon;
-}
 
 /// Net not-useful feedback, in micro-units, past which a note suggestion is
 /// no longer offered at a similar moment: about one fresh rejection.

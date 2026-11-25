@@ -90,7 +90,7 @@ void main() {
   });
 
   testWidgets(
-    'long-press rates a suggestion, and a tap is kept and asked about',
+    'long-press adds a note first, and a tap is kept and asked about',
     (WidgetTester tester) async {
       final db = await TempoDatabase.openInMemory(
         factory: databaseFactoryFfiNoIsolate,
@@ -143,25 +143,17 @@ void main() {
       final commute = find.byKey(const ValueKey('suggested-chip-commute'));
       expect(commute, findsOneWidget);
 
+      // Long-press goes straight to adding a note; it asks for no rating.
       await tester.ensureVisible(commute);
       await tester.longPress(commute);
       await tester.pumpAndSettle();
-      expect(find.text('Good suggestion'), findsOneWidget);
-      expect(find.text('Add a note first'), findsOneWidget);
-
-      await tester.tap(
-        find.byKey(const ValueKey('suggestion-action-notUseful')),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Good suggestion'), findsNothing);
+      expect(find.text('Not useful here'), findsNothing);
+      expect(find.text('Log Commute'), findsOneWidget);
+      Navigator.of(tester.element(find.text('Log Commute'))).pop();
       await tester.pumpAndSettle();
-
-      // Hidden for this Lap, and remembered with what came before it.
-      expect(commute, findsNothing);
-      final stored = await SuggestionFeedbackStore.load(db);
-      expect(stored.single.activityId, 'commute');
-      expect(stored.single.vote, SuggestionVote.notUseful);
-      expect(stored.single.precedingActivityId, 'breakfast');
+      expect(commute, findsOneWidget);
+      expect(await SuggestionFeedbackStore.load(db), isEmpty);
 
       final walk = find.byKey(const ValueKey('suggested-chip-walk'));
       expect(walk, findsOneWidget);
@@ -175,6 +167,7 @@ void main() {
       expect(afterTap.last.activityId, 'walk');
       expect(afterTap.last.vote, SuggestionVote.logged);
       expect(afterTap.last.recordId, isNotNull);
+      expect(afterTap.last.precedingActivityId, 'breakfast');
       // The other suggestions on screen were passed over; Walk was picked.
       final passedOver = await SuggestionImpressions.load(
         db,

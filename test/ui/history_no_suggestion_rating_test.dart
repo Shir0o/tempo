@@ -13,7 +13,7 @@ void main() {
     databaseFactory = databaseFactoryFfiNoIsolate;
   });
 
-  testWidgets('a Record logged from a suggestion can be rated later', (
+  testWidgets('a Record logged from a suggestion has no rating to give', (
     tester,
   ) async {
     final db = await TempoDatabase.openInMemory(
@@ -49,34 +49,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // Only the bar right after logging asks; the edit sheet does not.
     await tester.tap(find.text('Errands').first);
     await tester.pumpAndSettle();
-    expect(find.text('SUGGESTED BY TEMPO'), findsOneWidget);
-
-    final good = find.byKey(const ValueKey('record-rating-good'));
-    await tester.ensureVisible(good);
-    await tester.tap(good);
-    await tester.pumpAndSettle();
-    expect(
-      (await SuggestionFeedbackStore.ratingFor(db, record.id))?.rating,
-      SuggestionVote.good,
-    );
-
-    // Tapping it again takes the rating back.
-    await tester.tap(good);
-    await tester.pumpAndSettle();
-    expect(
-      (await SuggestionFeedbackStore.ratingFor(db, record.id))?.rating,
-      null,
-    );
-
-    final notUseful = find.byKey(const ValueKey('record-rating-not_useful'));
-    await tester.tap(notUseful);
-    await tester.pumpAndSettle();
-    expect(
-      (await SuggestionFeedbackStore.ratingFor(db, record.id))?.rating,
-      SuggestionVote.notUseful,
-    );
+    expect(find.text('Save'), findsOneWidget);
+    expect(find.text('SUGGESTED BY TEMPO'), findsNothing);
+    expect(find.text('Good suggestion'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
     recorder.dispose();
