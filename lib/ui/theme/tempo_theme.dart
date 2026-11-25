@@ -36,6 +36,30 @@ class TempoColors {
   /// Secondary text on dark surfaces.
   static const Color textMuted = Color(0xFFA8A8A8);
 
+  /// WCAG 2.x contrast ratio between two opaque colours, from 1 to 21.
+  static double contrastRatio(Color a, Color b) {
+    final luminanceA = a.computeLuminance();
+    final luminanceB = b.computeLuminance();
+    return (math.max(luminanceA, luminanceB) + 0.05) /
+        (math.min(luminanceA, luminanceB) + 0.05);
+  }
+
+  /// Text on an Activity colour: [ink] wherever it reads better, white only on
+  /// custom colours dark enough to need it. Every palette colour gets ink.
+  static Color onActivityColor(Color background) =>
+      contrastRatio(ink, background) >= contrastRatio(Colors.white, background)
+      ? ink
+      : Colors.white;
+
+  /// Secondary text on an Activity colour (the block's total). Dimmed from
+  /// [onActivityColor] but kept opaque so the measured ratio is the rendered
+  /// one, and never below the 4.5:1 AA threshold.
+  static Color secondaryOnActivityColor(Color background) {
+    final on = onActivityColor(background);
+    final softened = Color.alphaBlend(on.withValues(alpha: 0.78), background);
+    return contrastRatio(softened, background) >= 4.5 ? softened : on;
+  }
+
   /// Colours offered when creating or editing an Activity.
   static const List<Color> activityPalette = [
     Color(0xFF9AA5C8),

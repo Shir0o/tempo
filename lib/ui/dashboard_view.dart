@@ -2092,8 +2092,8 @@ class _DashboardViewState extends State<DashboardView>
 
   Widget _buildActivityBlock(Activity activity, int durationMs) {
     final color = UiHelpers.parseHexColor(activity.colorHex);
-    final dark = ThemeData.estimateBrightnessForColor(color) == Brightness.dark;
-    final textColor = dark ? Colors.white : _ink;
+    final textColor = TempoColors.onActivityColor(color);
+    final secondaryTextColor = TempoColors.secondaryOnActivityColor(color);
     final total = durationMs <= 0
         ? '0m'
         : UiHelpers.formatDurationHuman(durationMs);
@@ -2138,7 +2138,7 @@ class _DashboardViewState extends State<DashboardView>
                     total,
                     style: TextStyle(
                       fontFamily: _fontFamily,
-                      color: textColor.withValues(alpha: 0.7),
+                      color: secondaryTextColor,
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                       fontFeatures: const [FontFeature.tabularFigures()],
