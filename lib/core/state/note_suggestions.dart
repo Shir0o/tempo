@@ -26,26 +26,35 @@ class RecurringNote {
 }
 
 /// The AutoAdvance reading for a new Record of [activityId], from the Records
-/// that started before [beforeEpochMs]. The key is the Activity plus
-/// [firstPerson] (the first Person named, any case); with no Person, the
-/// Activity's Records that name no one. Null when nothing matches or the
-/// latest reading has no number.
+/// that started before [beforeEpochMs]. The key is the Activity plus the
+/// reading group of [firstPerson] (any case): every Record of the Activity
+/// that names someone in that group, whoever came and in whatever order they
+/// were named. With no Person, the Activity's Records that name no one. Null
+/// when nothing matches or the latest reading has no number.
 String? suggestedReading(
   Iterable<Record> records, {
   required String activityId,
   String? firstPerson,
   required int beforeEpochMs,
 }) {
-  final person = firstPerson?.toLowerCase();
-  final matching = [
+  final earlier = [
     for (final r in records)
       if (_counts(r) &&
           r.activityId == activityId &&
-          r.startedAtEpochMs < beforeEpochMs &&
-          _firstPerson(r.comment) == person)
+          r.startedAtEpochMs < beforeEpochMs)
         r,
   ];
-  return autoAdvance(_latestFirst(matching));
+  final groups = _readingGroups(earlier);
+  final group = firstPerson == null
+      ? null
+      : groups[_groupKey(activityId, firstPerson)];
+  bool inGroup(String person) => groups[_groupKey(activityId, person)] == group;
+  bool matches(Record r) {
+    if (firstPerson == null) return _firstPerson(r.comment) == null;
+    return group != null && peopleIn(r.comment).any(inGroup);
+  }
+
+  return autoAdvance(_latestFirst(earlier.where(matches).toList()));
 }
 
 /// [comment] with its reading (the text before the NameMarker) set to [next]
@@ -153,7 +162,8 @@ RecurringNote? recurringNote(
 
 /// Up to [limit] combo suggestions for the Today row: the RecurringNote of
 /// any Activity first, then the latest Records of [activityIds] that name
-/// People, one per Activity and set of People. A combo offers its People and,
+/// People, one per Activity and reading group (see [suggestedReading]), with
+/// the People of the group's latest Record. A combo offers its People and,
 /// when AutoAdvance finds one, the next reading.
 List<RecurringNote> comboSuggestions(
   Iterable<Record> records, {
@@ -164,8 +174,17 @@ List<RecurringNote> comboSuggestions(
 }) {
   final result = <RecurringNote>[];
   final seen = <String>{};
-  String comboKey(String activityId, List<String> people) =>
-      '$activityId\n${people.map((p) => p.toLowerCase()).join(', ')}';
+  final groups = _readingGroups([
+    for (final r in records)
+      if (_counts(r) && r.startedAtEpochMs < targetEpochMs) r,
+  ]);
+  // One combo per reading group, so a group whose attendance or name order
+  // changes from one meeting to the next still shows once.
+  String comboKey(String activityId, List<String> people) {
+    if (people.isEmpty) return '$activityId\n';
+    final first = _groupKey(activityId, people.first);
+    return groups[first] ?? first;
+  }
 
   final recurring = recurringNote(
     records,
@@ -207,6 +226,40 @@ List<RecurringNote> comboSuggestions(
 
 bool _counts(Record r) =>
     r.activityId != null && !r.isMidnightSplit && r.comment.trim().isNotEmpty;
+
+/// The key of [person] (any case) on [activityId]'s Records.
+String _groupKey(String activityId, String person) =>
+    '$activityId\n${person.toLowerCase()}';
+
+/// The reading group of each Person on each Activity in [records], keyed by
+/// [_groupKey]: People named on the same Record share a group, and so does
+/// anyone named with any of them. A group that meets with different People
+/// each time, or names them in another order, stays one group.
+Map<String, String> _readingGroups(Iterable<Record> records) {
+  final parent = <String, String>{};
+  String root(String key) {
+    var r = key;
+    while (parent[r] != r) {
+      r = parent[r]!;
+    }
+    return parent[key] = r;
+  }
+
+  for (final r in records) {
+    if (r.activityId == null) continue;
+    String? first;
+    for (final person in peopleIn(r.comment)) {
+      final key = _groupKey(r.activityId!, person);
+      parent.putIfAbsent(key, () => key);
+      if (first == null) {
+        first = root(key);
+      } else {
+        parent[root(key)] = first;
+      }
+    }
+  }
+  return {for (final key in parent.keys) key: root(key)};
+}
 
 String? _firstPerson(String comment) {
   final people = peopleIn(comment);
