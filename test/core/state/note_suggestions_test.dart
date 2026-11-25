@@ -55,10 +55,11 @@ void main() {
       );
     });
 
-    test('matches the first Person only, ignoring case', () {
+    test('follows the reading group, ignoring case', () {
       final records = [
         at(now - 3 * day, 'John 3 w/ Sam'),
-        at(now - day, 'Acts 9 w/ Ana, Sam'),
+        at(now - day, 'John 4 w/ Ana, Sam'),
+        at(now - day + hour, 'Rom 2 w/ Lee'),
       ];
       expect(
         suggestedReading(
@@ -67,8 +68,31 @@ void main() {
           firstPerson: 'sam',
           beforeEpochMs: now,
         ),
-        'John 4',
+        'John 5',
       );
+    });
+
+    test('keeps two groups apart however each meeting names its People', () {
+      // One group reads two chapters a night with whoever comes, named in any
+      // order; another reads one chapter with one Person.
+      final records = [
+        at(now - 6 * day, 'Amos 1-2 w/ Matt, Sam, Ana'),
+        at(now - 5 * day, 'Amos 3-4 w/ Matt, Fern'),
+        at(now - 5 * day + hour, 'Rev 2 w/ Noe'),
+        at(now - 4 * day, 'Rev 3 w/ Noe'),
+        at(now - 3 * day, 'Amos 5-6 w/ Matt, Sam'),
+      ];
+      String? next(String first) => suggestedReading(
+        records,
+        activityId: 'read',
+        firstPerson: first,
+        beforeEpochMs: now,
+      );
+      expect(next('Matt'), 'Amos 7-8');
+      expect(next('Sam'), 'Amos 7-8');
+      expect(next('Ana'), 'Amos 7-8');
+      expect(next('Fern'), 'Amos 7-8');
+      expect(next('Noe'), 'Rev 4');
     });
 
     test('with no Person, falls back to the Activity with no one named', () {
@@ -401,6 +425,20 @@ void main() {
           for (final c in combos(records, ['read', 'walk'])) c.comment,
         ],
         ['w/ Lee', 'John 4 w/ Sam'],
+      );
+    });
+
+    test('offers one combo per reading group', () {
+      final records = [
+        at(target - 4 * day, 'Rev 3 w/ Noe'),
+        at(target - 3 * day, 'Amos 3-4 w/ Matt, Fern'),
+        at(target - 2 * day, 'Amos 5-6 w/ Sam, Matt'),
+      ];
+      expect(
+        [
+          for (final c in combos(records, ['read'])) c.comment,
+        ],
+        ['Amos 7-8 w/ Sam, Matt', 'Rev 4 w/ Noe'],
       );
     });
 
