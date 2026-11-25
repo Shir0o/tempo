@@ -7,8 +7,8 @@ import 'package:tempo/data/database/tempo_database.dart';
 import 'package:tempo/data/models/models.dart';
 import 'package:tempo/ui/dashboard_view.dart';
 
-/// Long-press on a WITH NOTE suggestion offers the same feedback as on an
-/// Activity suggestion.
+/// Long-press on a WITH NOTE suggestion edits the note first. What is changed
+/// in it counts as feedback; the "Good suggestion?" bar is the only ask.
 void main() {
   setUpAll(() {
     sqfliteFfiInit();
@@ -67,76 +67,31 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
   }
 
-  testWidgets('Not useful on a note hides it and is kept with its People', (
-    WidgetTester tester,
-  ) async {
-    final (db, dayRecorder) = await open(tester);
+  testWidgets(
+    'Long-press edits the note first and logs it from the suggestion',
+    (WidgetTester tester) async {
+      final (db, dayRecorder) = await open(tester);
 
-    final chip = find.byKey(const ValueKey('combo-chip-0'));
-    expect(chip, findsOneWidget);
-    await tester.longPress(chip);
-    await tester.pumpAndSettle();
-    expect(find.text('Edit the note first'), findsOneWidget);
-    expect(find.text('Good suggestion'), findsOneWidget);
+      // Long-press goes straight to the note: there is no rating menu.
+      await tester.longPress(find.byKey(const ValueKey('combo-chip-0')));
+      await settle(tester);
+      expect(find.text('Good suggestion'), findsNothing);
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('suggestion-action-notUseful')));
-    await settle(tester);
+      await tester.tap(find.text('Log Outdoors'));
+      await settle(tester);
 
-    expect(chip, findsNothing);
-    final stored = (await SuggestionFeedbackStore.load(db)).single;
-    expect(stored.activityId, 'act-out');
-    expect(stored.vote, SuggestionVote.notUseful);
-    expect(stored.people, ['Britney']);
+      // Remembered as suggested, so what was changed in the note counts.
+      final stored = (await SuggestionFeedbackStore.load(db)).last;
+      expect(stored.vote, SuggestionVote.logged);
+      expect(stored.people, ['Britney']);
+      expect(stored.comment, 'w/ Britney');
+      expect(stored.recordId, isNotNull);
+      expect(find.text('Good suggestion?'), findsOneWidget);
 
-    await tester.pumpWidget(const SizedBox.shrink());
-    dayRecorder.dispose();
-    await db.close();
-  });
-
-  testWidgets('Good suggestion on a note is kept with its People', (
-    WidgetTester tester,
-  ) async {
-    final (db, dayRecorder) = await open(tester);
-
-    await tester.longPress(find.byKey(const ValueKey('combo-chip-0')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('suggestion-action-good')));
-    await settle(tester);
-
-    final stored = (await SuggestionFeedbackStore.load(db)).single;
-    expect(stored.vote, SuggestionVote.good);
-    expect(stored.people, ['Britney']);
-    expect(find.textContaining('This note will come up more'), findsOneWidget);
-
-    await tester.pumpWidget(const SizedBox.shrink());
-    dayRecorder.dispose();
-    await db.close();
-  });
-
-  testWidgets('Edit the note first logs it from the suggestion', (
-    WidgetTester tester,
-  ) async {
-    final (db, dayRecorder) = await open(tester);
-
-    await tester.longPress(find.byKey(const ValueKey('combo-chip-0')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('suggestion-action-note')));
-    await settle(tester);
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Log Outdoors'));
-    await settle(tester);
-
-    // Remembered as suggested, so what was changed in the note counts.
-    final stored = (await SuggestionFeedbackStore.load(db)).last;
-    expect(stored.vote, SuggestionVote.logged);
-    expect(stored.people, ['Britney']);
-    expect(stored.comment, 'w/ Britney');
-    expect(stored.recordId, isNotNull);
-    expect(find.text('Good suggestion?'), findsOneWidget);
-
-    await tester.pumpWidget(const SizedBox.shrink());
-    dayRecorder.dispose();
-    await db.close();
-  });
+      await tester.pumpWidget(const SizedBox.shrink());
+      dayRecorder.dispose();
+      await db.close();
+    },
+  );
 }

@@ -19,18 +19,10 @@ back at the same moment until history outweighs it.
 - **"Good suggestion?" bar:** after logging from a suggestion (SUGGESTED or
   WITH NOTE), a bar with 👍 and 👎 shows above the undo bar for 8 seconds. No
   answer is no feedback.
-- **Long-press a suggestion:** on a SUGGESTED or a WITH NOTE chip, a sheet
-  offers *Add a note first* (*Edit the note first* on a note, which opens
-  with its note), *Good suggestion* and *Not useful here*. A vote on a note
-  is kept with its People, like every other vote on it. Not useful hides the
-  chip until the Lap changes. Logging from the note sheet here counts as
-  logging from the suggestion: the rating bar shows, and what was changed
-  in the note counts as an edit.
-- **Rate it later:** a Record logged from a suggestion shows *Suggested by
-  Tempo* with *Good suggestion* and *Not useful* in its History edit sheet.
-  A tap counts at once (not on Save) and tapping it again takes it back. It
-  is the same rating the "Good suggestion?" bar gives, so a later one
-  replaces it.
+- **Long-press a suggestion:** on a SUGGESTED or a WITH NOTE chip, it opens
+  the note sheet first (with the suggested note, on a WITH NOTE chip). It asks
+  for no rating. Logging from it counts as logging from the suggestion: the
+  rating bar shows, and what was changed in the note counts as an edit.
 - **Pass it over:** suggestions shown on Today when a Lap is labeled some
   other way count as passed over, and one passed over many times ranks
   slowly lower (below).
@@ -52,9 +44,12 @@ entry is read against what that Record holds now:
 | Note: same reading, other People | light vote for the note |
 | Note: reading rewritten | not useful for the note |
 
-A rating the user gives on purpose (the bar, or the History edit sheet) is
-kept with the Record id and stands in for what the edits say; Tag edits still
+A rating the user gives on purpose on the bar is kept with the Record id and stands in for what the edits say; Tag edits still
 count.
+
+The bar is the only place to rate on purpose. A long-press rating menu and
+a rating in the History edit sheet were tried and removed, since the bar was
+the one in use; votes they already stored still count.
 
 A note suggestion is keyed by its Activity and People. Its votes do not touch
 the Activity's own ranking; on Today they reorder the WITH NOTE row and leave

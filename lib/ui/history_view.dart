@@ -10,7 +10,6 @@ import '../../core/state/day_recorder.dart';
 import '../../core/state/note_suggestions.dart';
 import '../../core/state/people_index.dart';
 import '../../core/state/record_commands.dart';
-import '../../core/state/suggestion_feedback.dart';
 import '../../core/sync/intent_queue.dart';
 import '../../data/database/tempo_database.dart';
 import '../../data/models/models.dart';
@@ -336,30 +335,6 @@ class _HistoryViewState extends State<HistoryView> {
 
   /// The edit sheet. Start, end, Activity, note and tags are staged and
   /// applied on Save; Split, Merge next and Untrack apply at once.
-  /// The suggestion [recordId] was logged from and its rating, or null when
-  /// it was not logged from one here or the feedback can't be read.
-  Future<({SuggestionFeedback logged, SuggestionVote? rating})?>
-  _suggestionRating(String recordId) async {
-    try {
-      return await SuggestionFeedbackStore.ratingFor(widget.database, recordId);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// Rates the suggestion [recordId] was logged from, or takes the rating
-  /// back. Feedback only shapes later suggestions, so a failure is quiet.
-  Future<void> _rateSuggestion(String recordId, SuggestionVote? vote) async {
-    try {
-      await SuggestionFeedbackStore.rate(
-        widget.database,
-        recordId: recordId,
-        vote: vote,
-        nowEpochMs: DateTime.now().millisecondsSinceEpoch,
-      );
-    } catch (_) {}
-  }
-
   Future<void> _openEditRecordDialog(Record record) async {
     final commentController = TextEditingController(text: record.comment);
     final next = _nextRecord(record);
@@ -394,11 +369,6 @@ class _HistoryViewState extends State<HistoryView> {
     );
     final around = [for (final id in aroundIds) _activitiesMap[id]!];
     final aroundLabel = 'Around ${DateFormat('HH:mm').format(startClock)}';
-
-    // A Record logged from a suggestion on this device can still be rated.
-    final suggested = await _suggestionRating(record.id);
-    var rating = suggested?.rating;
-    if (!mounted) return;
 
     /// Asks for a wall-clock time in [zone] on the date of [currentMs] and
     /// returns its instant, or null when dismissed. A time that falls on the
@@ -774,50 +744,6 @@ class _HistoryViewState extends State<HistoryView> {
                         caption: 'Only this Record changes',
                       ),
                       const SizedBox(height: 14),
-
-                      // Rating the suggestion it was logged from counts at
-                      // once, apart from Save; tapping it again takes it back.
-                      if (suggested != null) ...[
-                        const SheetOverline('Suggested by Tempo'),
-                        const SizedBox(height: 2),
-                        Wrap(
-                          spacing: 6,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            for (final (vote, label, icon) in [
-                              (
-                                SuggestionVote.good,
-                                'Good suggestion',
-                                Icons.thumb_up_outlined,
-                              ),
-                              (
-                                SuggestionVote.notUseful,
-                                'Not useful',
-                                Icons.thumb_down_outlined,
-                              ),
-                            ])
-                              SheetChip(
-                                key: ValueKey(
-                                  'record-rating-${vote.storageValue}',
-                                ),
-                                label: label,
-                                height: 32,
-                                leading: Icon(
-                                  icon,
-                                  size: 16,
-                                  color: TempoColors.ink,
-                                ),
-                                selected: rating == vote,
-                                onTap: () {
-                                  final next = rating == vote ? null : vote;
-                                  setModalState(() => rating = next);
-                                  _rateSuggestion(record.id, next);
-                                },
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 14),
-                      ],
 
                       // Note and tags
                       const SheetOverline('Note'),
