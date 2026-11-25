@@ -192,6 +192,12 @@ class BackupService {
   final Duration dirtyInterval;
   final Duration promotionInterval;
 
+  /// The shortest gap between uploads caused by leaving the app. Each upload
+  /// is a whole copy of the store, so switching apps every few minutes would
+  /// otherwise hand the cloud folder's sync a new large file each time and
+  /// trim older ones while they may still be uploading.
+  final Duration pauseInterval;
+
   BackupDestination? _destination;
   Timer? _scheduler;
   bool _tickRunning = false;
@@ -216,6 +222,7 @@ class BackupService {
     bool? supportsVacuumInto,
     this.dirtyInterval = const Duration(minutes: 5),
     this.promotionInterval = const Duration(hours: 1),
+    this.pauseInterval = const Duration(minutes: 15),
   }) : lifecycle = lifecycle ?? StoreLifecycle.instance,
        factory = factory ?? (lifecycle ?? StoreLifecycle.instance).factory,
        _localDirectoryOverride = localDirectory,
@@ -258,10 +265,15 @@ class BackupService {
 
   /// Promotion on app pause, so leaving the app never waits for the hour.
   /// Nothing is uploaded when the store has not changed since the newest
-  /// generation, so switching apps does not refill the destination.
+  /// generation, or when a generation went up less than [pauseInterval] ago,
+  /// so switching apps does not refill the destination.
   Future<void> onAppPause() async {
     if (!await _isBackupEnabled()) return;
-    await _runGuarded(() => promote(skipIfUnchanged: true));
+    await _runGuarded(() async {
+      final last = await _lastPromotedAt();
+      if (last != null && _now().difference(last) < pauseInterval) return;
+      await promote(skipIfUnchanged: true);
+    });
   }
 
   /// Snapshot and promote before a destructive action: a restore, an import

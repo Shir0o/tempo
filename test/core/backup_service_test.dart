@@ -359,11 +359,40 @@ CREATE TABLE IF NOT EXISTS changes (
         ]);
 
         await insertRecord('r3', base + 7200000, base + 10800000);
-        clock = clock.add(const Duration(minutes: 1));
+        clock = clock.add(const Duration(minutes: 15));
         await service.onAppPause();
         expect(await backups(), hasLength(2));
       },
     );
+
+    test('leaving the app again soon after an upload waits even when the store changed', () async {
+      await insertContiguousDay();
+      await database.setSetting(BackupService.backupEnabledSetting, 'true');
+      final destination = FilesystemBackupDestination(
+        rootPath: destinationRoot.path,
+      );
+      final service = buildService(destination: destination);
+
+      Future<List<String>> backups() async => [
+        for (final file in await destination.list('tempo/store-1'))
+          if (p.basename(file.path).startsWith('backup-'))
+            p.basename(file.path),
+      ];
+
+      await service.onAppPause();
+      expect(await backups(), hasLength(1));
+
+      await insertRecord('r3', base + 7200000, base + 10800000);
+      clock = clock.add(const Duration(minutes: 3));
+      await service.onAppPause();
+      clock = clock.add(const Duration(minutes: 3));
+      await service.onAppPause();
+      expect(await backups(), hasLength(1));
+
+      clock = clock.add(const Duration(minutes: 10));
+      await service.onAppPause();
+      expect(await backups(), hasLength(2));
+    });
 
     test('an explicit backup still writes a new generation', () async {
       await insertContiguousDay();
