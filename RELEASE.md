@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.25.0](https://github.com/Shir0o/tempo/compare/v1.24.0...v1.25.0) (2026-11-25)
+
+
+### Features
+
+* **suggestions:** keep the Good suggestion bar as the only rating ([#169](https://github.com/Shir0o/tempo/issues/169)) ([6878ccb](https://github.com/Shir0o/tempo/commit/6878ccb86862952f15ea27af888f2538ad5c8ac6))
+
+
+### Bug Fixes
+
+* **backup:** space out uploads when leaving the app ([#166](https://github.com/Shir0o/tempo/issues/166)) ([0c44997](https://github.com/Shir0o/tempo/commit/0c449975b875c996fd915d6c44cc13e3b7af57d8))
+* **notes:** follow the whole reading group for AutoAdvance ([#165](https://github.com/Shir0o/tempo/issues/165)) ([c650c80](https://github.com/Shir0o/tempo/commit/c650c80b564a72ca71c5dad3a9c593d73bb9019a))
+
 ## [1.24.0](https://github.com/Shir0o/tempo/compare/v1.23.0...v1.24.0) (2026-11-25)
 
 
