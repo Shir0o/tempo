@@ -85,7 +85,7 @@ Someone named after a NameMarker in a Record's comment. People are not stored se
 _Avoid_: Contact (as an entity), friend, attendee
 
 **AutoAdvance**:
-Prefilling a new Record's comment from the last Record with the same Activity and Person, with its trailing number moved forward (e.g., "John 1 w/ Sam" → "John 2 w/ Sam"). It keeps the cadence seen in history: the same number of chapters per meeting. A Bible reference moves by chapter only, following the 66-book Protestant order, and runs past a book's last chapter into the next book ("John 19-20" → "John 21, Acts 1"); Revelation wraps to Genesis. Always an editable suggestion, never applied silently.
+Prefilling a new Record's comment from the last Record with the same Activity and reading group, with its trailing number moved forward (e.g., "John 1 w/ Sam" → "John 2 w/ Sam"). A reading group is everyone ever named together on that Activity's Records, so a group that meets with whoever comes, named in any order, keeps one reading, apart from another group that never meets with it. It keeps the cadence seen in history: the same number of chapters per meeting. A Bible reference moves by chapter only, following the 66-book Protestant order, and runs past a book's last chapter into the next book ("John 19-20" → "John 21, Acts 1"); Revelation wraps to Genesis. Always an editable suggestion, never applied silently.
 _Avoid_: Auto-increment, template, macro
 
 **RecurringNote**:
