@@ -19,6 +19,7 @@ import 'activity_icon.dart';
 import 'helpers/ui_helpers.dart';
 import 'history/activity_picker_sheet.dart';
 import 'history/history_widgets.dart';
+import 'history/zone_picker_sheet.dart';
 import 'note_sheet.dart';
 import 'theme/tempo_theme.dart';
 
@@ -343,6 +344,8 @@ class _HistoryViewState extends State<HistoryView> {
 
     var pendingStartMs = record.startedAtEpochMs;
     var pendingEndMs = record.endedAtEpochMs;
+    var pendingStartZone = record.timezoneId;
+    var pendingEndZone = record.endTimezoneId;
     var pendingActivityId = record.activityId;
     List<String> selectedTagIds = List.from(record.tagIds);
 
@@ -425,6 +428,8 @@ class _HistoryViewState extends State<HistoryView> {
           final activityId = pendingActivityId;
           final startMs = pendingStartMs;
           final endMs = pendingEndMs;
+          final startZone = pendingStartZone;
+          final endZone = pendingEndZone;
           if (ctx.mounted) Navigator.of(ctx).pop();
 
           // Note and tags go through the commands seam so the CSV export
@@ -443,14 +448,22 @@ class _HistoryViewState extends State<HistoryView> {
           }
           // Both edges move together. Only this Record changes; time it gives
           // up becomes Untracked and time it takes must already be Untracked.
+          // A changed zone rides along: it relabels the clock, not the time.
           final startChanged = startMs != record.startedAtEpochMs;
           final endChanged = endMs != record.endedAtEpochMs;
-          if (startChanged || endChanged) {
+          final startZoneChanged = startZone != record.timezoneId;
+          final endZoneChanged = endZone != record.endTimezoneId;
+          if (startChanged ||
+              endChanged ||
+              startZoneChanged ||
+              endZoneChanged) {
             await _applyEdit(
               () => _commands.adjustEdges(
                 record.id,
                 startEpochMs: startChanged ? startMs : null,
                 endEpochMs: endChanged ? endMs : null,
+                startTimezoneId: startZoneChanged ? startZone : null,
+                endTimezoneId: endZoneChanged ? endZone : null,
               ),
             );
           }
@@ -515,7 +528,7 @@ class _HistoryViewState extends State<HistoryView> {
             final isUntracked = pendingActivityId == null;
             final name = pendingActivity?.name ?? 'Untracked';
             final dateLabel = DateFormat('EEE d MMM')
-                .format(wallClockAt(record.timezoneId, pendingStartMs));
+                .format(wallClockAt(pendingStartZone, pendingStartMs));
             final pendingDurationMs = math.max(
               0,
               pendingEndMs - pendingStartMs,
@@ -525,19 +538,19 @@ class _HistoryViewState extends State<HistoryView> {
             );
             final durationDeltaMs = pendingDurationMs - record.elapsedMs;
             final startTime = DateFormat('HH:mm')
-                .format(wallClockAt(record.timezoneId, pendingStartMs));
+                .format(wallClockAt(pendingStartZone, pendingStartMs));
             final endTime = DateFormat('HH:mm')
-                .format(wallClockAt(record.endTimezoneId, pendingEndMs));
+                .format(wallClockAt(pendingEndZone, pendingEndMs));
             final startZoneLabel = zoneAbbreviationAt(
-              record.timezoneId,
+              pendingStartZone,
               pendingStartMs,
             );
             final endZoneLabel = zoneAbbreviationAt(
-              record.endTimezoneId,
+              pendingEndZone,
               pendingEndMs,
             );
-            final startWall = wallClockAt(record.timezoneId, pendingStartMs);
-            final endWall = wallClockAt(record.endTimezoneId, pendingEndMs);
+            final startWall = wallClockAt(pendingStartZone, pendingStartMs);
+            final endWall = wallClockAt(pendingEndZone, pendingEndMs);
             final spansDays =
                 startWall.year != endWall.year ||
                 startWall.month != endWall.month ||
@@ -549,6 +562,22 @@ class _HistoryViewState extends State<HistoryView> {
                 ? DateFormat('EEE d MMM').format(endWall)
                 : null;
             final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+
+            // Zones offered first: this device's, then the ones in History,
+            // newest first, so a trip's zone is one tap away.
+            final recentZones = <String>{
+              for (final r in _records) ...[r.timezoneId, r.endTimezoneId],
+            };
+            Future<String?> pickZone(String edge, String zone, int atMs) {
+              return showZonePicker(
+                context,
+                edgeName: edge,
+                atEpochMs: atMs,
+                currentZone: zone,
+                deviceZone: localTimezoneId(),
+                recent: recentZones,
+              );
+            }
 
             // The staged Activity, the Record's own when it differs, then the
             // suggestions: at most four chips before "All".
@@ -682,6 +711,15 @@ class _HistoryViewState extends State<HistoryView> {
                                     '${startDayLabel == null ? '' : ' · $startDayLabel'}',
                                 edgeName: 'Start',
                                 time: startTime,
+                                onPickZone: () async {
+                                  final zone = await pickZone(
+                                    'Start',
+                                    pendingStartZone,
+                                    pendingStartMs,
+                                  );
+                                  if (zone == null) return;
+                                  setModalState(() => pendingStartZone = zone);
+                                },
                                 onEarlier: () => setModalState(
                                   () => pendingStartMs -= stepMs,
                                 ),
@@ -693,7 +731,7 @@ class _HistoryViewState extends State<HistoryView> {
                                 onPickTime: () async {
                                   final ms = await pickInstant(
                                     context,
-                                    record.timezoneId,
+                                    pendingStartZone,
                                     pendingStartMs,
                                     isEndEdge: false,
                                   );
@@ -710,6 +748,15 @@ class _HistoryViewState extends State<HistoryView> {
                                     '${endDayLabel == null ? '' : ' · $endDayLabel'}',
                                 edgeName: 'End',
                                 time: endTime,
+                                onPickZone: () async {
+                                  final zone = await pickZone(
+                                    'End',
+                                    pendingEndZone,
+                                    pendingEndMs,
+                                  );
+                                  if (zone == null) return;
+                                  setModalState(() => pendingEndZone = zone);
+                                },
                                 onEarlier:
                                     pendingEndMs - stepMs > pendingStartMs
                                     ? () => setModalState(
@@ -724,7 +771,7 @@ class _HistoryViewState extends State<HistoryView> {
                                 onPickTime: () async {
                                   final ms = await pickInstant(
                                     context,
-                                    record.endTimezoneId,
+                                    pendingEndZone,
                                     pendingEndMs,
                                     isEndEdge: true,
                                   );

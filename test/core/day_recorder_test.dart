@@ -662,6 +662,114 @@ void main() {
       expect(right.endTimezoneId, 'Asia/Tokyo');
     });
 
+    test('adjustEdges changes a Record\'s zones without moving it', () async {
+      await recordTwoHours();
+      final mealsBefore = await db.getRecordById(mealsRecord.id);
+
+      final moved = await recorder.adjustEdges(
+        sleepRecord.id,
+        startTimezoneId: 'America/Denver',
+        endTimezoneId: 'America/Denver',
+      );
+
+      expect(moved.id, sleepRecord.id);
+      expect(moved.startedAtEpochMs, morning);
+      expect(moved.endedAtEpochMs, at(10));
+      expect(moved.timezoneId, 'America/Denver');
+      expect(moved.endTimezoneId, 'America/Denver');
+      expect(moved.activityId, sleep.id);
+      expect(moved.comment, 'w/ Sam');
+      expect(moved.tagIds, [travelTag.id]);
+
+      final stored = await db.getRecordById(sleepRecord.id);
+      expect(stored!.timezoneId, 'America/Denver');
+      expect(stored.endTimezoneId, 'America/Denver');
+
+      // Neighbours and the open Lap are untouched.
+      final mealsAfter = await db.getRecordById(mealsRecord.id);
+      expect(mealsAfter, equals(mealsBefore));
+      expect(recorder.lap!.startedAtEpochMs, lapStart);
+      expect(await db.getRecords(), hasLength(2));
+    });
+
+    test('adjustEdges may change only the end zone', () async {
+      await recordTwoHours();
+
+      final moved = await recorder.adjustEdges(
+        sleepRecord.id,
+        endTimezoneId: 'America/Denver',
+      );
+
+      expect(moved.timezoneId, 'America/Los_Angeles');
+      expect(moved.endTimezoneId, 'America/Denver');
+      expect(moved.crossesTimezones, isTrue);
+      expect(moved.startedAtEpochMs, morning);
+      expect(moved.endedAtEpochMs, at(10));
+    });
+
+    test('adjustEdges moves an Edge and its zone together', () async {
+      await recordTwoHours();
+
+      final moved = await recorder.adjustEdges(
+        sleepRecord.id,
+        endEpochMs: at(9),
+        endTimezoneId: 'America/Denver',
+      );
+
+      expect(moved.endedAtEpochMs, at(9));
+      expect(moved.endTimezoneId, 'America/Denver');
+      final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+      expect(records, hasLength(3));
+      expect(records[1].isUntracked, isTrue);
+      expect(records[1].startedAtEpochMs, at(9));
+    });
+
+    test('adjustEdges refuses an unknown zone', () async {
+      await recordTwoHours();
+      final before = await db.getRecordById(sleepRecord.id);
+
+      await expectLater(
+        recorder.adjustEdges(sleepRecord.id, startTimezoneId: 'Not/AZone'),
+        throwsA(
+          isA<RecordEditRefused>().having(
+            (error) => error.message,
+            'message',
+            contains("isn't known"),
+          ),
+        ),
+      );
+      expect(await db.getRecordById(sleepRecord.id), equals(before));
+    });
+
+    test(
+      'a zone change that puts a Record across midnight splits it there',
+      () async {
+        // 20:30–21:30 in Los Angeles is 23:30–00:30 in New York.
+        zoneId = 'America/Los_Angeles';
+        nowUtc = wallMs(zoneId, 2026, 6, 1, 20, 30);
+        await recorder.initialize();
+        nowUtc = wallMs(zoneId, 2026, 6, 1, 21, 30);
+        final record = await recorder.label(sleep.id);
+        nowUtc = wallMs(zoneId, 2026, 6, 1, 22);
+
+        await recorder.adjustEdges(
+          record.id,
+          endTimezoneId: 'America/New_York',
+        );
+
+        final nyMidnight = wallMs('America/New_York', 2026, 6, 2, 0);
+        final records = await db.getRecords(orderBy: 'started_at_epoch_ms ASC');
+        expect(records, hasLength(2));
+        expect(records[0].id, record.id);
+        expect(records[0].endedAtEpochMs, nyMidnight);
+        expect(records[0].timezoneId, 'America/Los_Angeles');
+        expect(records[1].startedAtEpochMs, nyMidnight);
+        expect(records[1].endedAtEpochMs, record.endedAtEpochMs);
+        expect(records[1].timezoneId, 'America/New_York');
+        expect(records[1].activityId, sleep.id);
+      },
+    );
+
     test('splitRecord creates two neighbours that share everything', () async {
       await recordTwoHours();
       final splitAt = at(9, 30);

@@ -387,15 +387,23 @@ class DayRecorder {
   /// one; it may grow only into time that is already Untracked, so a change
   /// that would overlap a labelled Record is refused. A Record that would cross
   /// local midnight is split there, keeping its Activity, note and tags.
+  ///
+  /// [startTimezoneId] and [endTimezoneId] change the zone each Edge is shown
+  /// and exported in, for a Record logged in the wrong zone while travelling.
+  /// The instants stay as given; only the clock they are read in changes.
   Future<Record> adjustEdges(
     String recordId, {
     int? startEpochMs,
     int? endEpochMs,
+    String? startTimezoneId,
+    String? endTimezoneId,
   }) => _synchronized(
     () => _adjustEdgesLocked(
       recordId,
       startEpochMs: startEpochMs,
       endEpochMs: endEpochMs,
+      startTimezoneId: startTimezoneId,
+      endTimezoneId: endTimezoneId,
     ),
   );
 
@@ -403,14 +411,31 @@ class DayRecorder {
     String recordId, {
     int? startEpochMs,
     int? endEpochMs,
+    String? startTimezoneId,
+    String? endTimezoneId,
   }) async {
     await _ensureInitializedLocked();
-    final record = await _recordOrThrow(recordId);
-    final newStart = startEpochMs ?? record.startedAtEpochMs;
-    final newEnd = endEpochMs ?? record.endedAtEpochMs;
+    final stored = await _recordOrThrow(recordId);
+    final newStart = startEpochMs ?? stored.startedAtEpochMs;
+    final newEnd = endEpochMs ?? stored.endedAtEpochMs;
+    for (final zone in [startTimezoneId, endTimezoneId]) {
+      if (zone != null && utcOffsetAt(zone, newStart) == null) {
+        throw const RecordEditRefused(
+          "That time zone isn't known, so the change was not made.",
+        );
+      }
+    }
+    final record = stored.copyWith(
+      timezoneId: startTimezoneId,
+      endTimezoneId: endTimezoneId,
+    );
+    final zonesChanged =
+        record.timezoneId != stored.timezoneId ||
+        record.endTimezoneId != stored.endTimezoneId;
     if (newStart == record.startedAtEpochMs &&
-        newEnd == record.endedAtEpochMs) {
-      return record;
+        newEnd == record.endedAtEpochMs &&
+        !zonesChanged) {
+      return stored;
     }
     if (newStart >= newEnd) {
       throw const RecordEditRefused(
@@ -938,6 +963,8 @@ class DayRecorder {
             recordId,
             startEpochMs: intent.startEpochMs,
             endEpochMs: intent.endEpochMs,
+            startTimezoneId: intent.startTimezoneId,
+            endTimezoneId: intent.endTimezoneId,
           );
           return await _markApplied(intent, record.id, now);
 

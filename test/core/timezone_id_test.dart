@@ -81,4 +81,42 @@ void main() {
       );
     });
   });
+
+  group('timezoneChoices', () {
+    // 2026-11-25 12:00 UTC, winter time in the US.
+    final at = DateTime.utc(2026, 11, 25, 12).millisecondsSinceEpoch;
+
+    test('offers the device zone, then recent zones, then every zone', () {
+      final zones = timezoneChoices(
+        deviceZone: 'America/Denver',
+        recent: ['America/Los_Angeles', 'America/Denver', 'Asia/Tokyo'],
+        atEpochMs: at,
+      );
+
+      expect(zones.take(3), [
+        'America/Denver',
+        'America/Los_Angeles',
+        'Asia/Tokyo',
+      ]);
+      expect(zones.toSet(), hasLength(zones.length));
+      expect(zones, containsAll(knownTimezoneIds()));
+    });
+
+    test('finds a zone by city or by abbreviation', () {
+      final byCity = timezoneChoices(
+        deviceZone: 'America/Los_Angeles',
+        query: 'new york',
+        atEpochMs: at,
+      );
+      expect(byCity, ['America/New_York']);
+
+      final byAbbreviation = timezoneChoices(
+        deviceZone: 'America/Los_Angeles',
+        query: 'mst',
+        atEpochMs: at,
+      );
+      expect(byAbbreviation, contains('America/Denver'));
+      expect(byAbbreviation, isNot(contains('America/Los_Angeles')));
+    });
+  });
 }
