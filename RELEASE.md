@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.0](https://github.com/Shir0o/tempo/compare/v1.25.0...v1.26.0) (2026-11-26)
+
+
+### Features
+
+* **history:** change a Record's start and end time zones ([#170](https://github.com/Shir0o/tempo/issues/170)) ([aad8446](https://github.com/Shir0o/tempo/commit/aad8446c5ef74a181437c44292c867e1715ba8d3))
+
 ## [1.25.0](https://github.com/Shir0o/tempo/compare/v1.24.0...v1.25.0) (2026-11-25)
 
 
